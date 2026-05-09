@@ -1,0 +1,30 @@
+target/
+Cargo.lock
+
+# Rust toolchain
+*.rs.bk
+
+# Environment files
+.env
+.env.*
+
+# Logs
+*.log
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+dist/
+build/
+node_modules/
+
+
+# Test / coverage output
+coverage/
+*.lcov
