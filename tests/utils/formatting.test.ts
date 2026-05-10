@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { convertLedgerCloseTimeToSeconds, formatTimeToCloseLedger, classifyTTL, statusIndicator } from "../../src/utils/formatting";
+import { convertLedgerCloseTimeToSeconds, formatTimeToCloseLedger, classifyTTL, statusIndicator, formatContractID } from "../../src/utils/formatting";
 
 describe("convertLedgerCloseTimeToSeconds", () => {
     it("should convert ledger close time to seconds using 5.5s average", () => {
@@ -56,5 +56,24 @@ describe("statusIndicator", () => {
     expect(statusIndicator("warning")).toContain("WARNING");
     expect(statusIndicator("critical")).toContain("CRITICAL");
     expect(statusIndicator("expired")).toContain("EXPIRED");
+  });
+});
+
+describe("formatContractID", () => {
+  it("returns full contract ID if it's shorter than max length", () => {
+    const id = "CABDEf123456";
+    expect(formatContractID(id)).toBe(id);
+  });
+  it("returns truncated contract ID with ellipsis if it's longer than max length", () => {
+    const id = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+    const formatted = formatContractID(id);
+    expect(formatted).toBe("CBEOJUP5...KZW6");
+    expect(formatted.length).toBeLessThan(id.length);
+  });
+   it("respects custom maxLength", () => {
+    const id = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+    const formatted = formatContractID(id, 56);
+    expect(formatted).toBe(id);
+    expect(formatted.length).toBe(56);
   });
 });
