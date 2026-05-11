@@ -71,6 +71,11 @@ export function insertContract(db: Database.Database, contract: {id: string; nam
     db.prepare(`
         INSERT INTO contracts (id, name, network, wasm_hash, tags)
         VALUES (@id, @name, @network, @wasm_hash, @tags)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            network = excluded.network,
+            wasm_hash = excluded.wasm_hash,
+            tags = excluded.tags
     `).run({
       id: contract.id,
       name: contract.name ?? null,
