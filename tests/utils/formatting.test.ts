@@ -23,11 +23,18 @@ describe("formatTimeToCloseLedger", () => {
     it("formats time correctly for various ledger counts", () => {
         expect(formatTimeToCloseLedger(1)).toBe("~0m 5.5s");
         expect(formatTimeToCloseLedger(10)).toBe("~0m 55s");
+        expect(formatTimeToCloseLedger(11)).toBe("~1m 0.5s");
         expect(formatTimeToCloseLedger(100)).toBe("~9m 10s");
         expect(formatTimeToCloseLedger(1000)).toBe("~1h 31m");
         expect(formatTimeToCloseLedger(20000)).toBe("~1d 6h");
         expect(formatTimeToCloseLedger(50000)).toBe("~3d 4h");
         expect(formatTimeToCloseLedger(100000)).toBe("~6d 8h");
+    });
+
+    it("handles very large ledger counts (e.g. 1 year)", () => {
+        // 1 year is approx 31,536,000 seconds
+        // Ledgers: 31,536,000 / 5.5 = 5,733,818
+        expect(formatTimeToCloseLedger(6000000)).toBe("~381d 22h");
     });
 });
 
@@ -75,5 +82,17 @@ describe("formatContractID", () => {
     const formatted = formatContractID(id, 56);
     expect(formatted).toBe(id);
     expect(formatted.length).toBe(56);
+  });
+
+  it("handles very short custom maxLength", () => {
+    const id = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+    // If maxLength is e.g. 5, it should still truncate correctly using 8+ellipsis+4 pattern 
+    // Wait, the current implementation doesn't care about maxLength for the truncation logic itself, 
+    // it just checks IF it should truncate.
+    expect(formatContractID(id, 5)).toBe("CBEOJUP5...KZW6");
+  });
+
+  it.skip("TODO: Implement XDR entry key decoding for better labeling", () => {
+    // Phase 1/2 feature to make the 'status' output more readable
   });
 });
