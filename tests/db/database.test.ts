@@ -11,7 +11,9 @@ import {
     upsertExtensionPolicy,
     getExtensionPolicy,
     insertAlertConfig, getAlertConfigsForContract, deleteAlertConfig, hasUnresolvedAlert, recordAlertFired,
-    resolveAlerts
+    resolveAlerts,
+    recordExtension,
+    getExtensionHistory
 } from "../../src/db/repositories";
 import { getDatabaseForTesting } from "../../src/db/database";
 
@@ -89,6 +91,14 @@ describe("Contract Operations", () => {
 
         const retrievedContract = getContract(db, sampleContract4.id);
         expect(retrievedContract!.last_checked_ledger).toBe(12345678);
+    });
+
+    it.skip("TODO: Implement contract discovery via getEvents", () => {
+        // Phase 2 feature
+    });
+
+    it.skip("TODO: Implement contract health scoring", () => {
+        // Phase 3 feature
     });
 
     it("deletes a contract from the database", () => {
@@ -227,15 +237,55 @@ describe("Contract Entry Operations", () => {
         expect(persistent!.discovery_source).toBe("footprint");
     });
 
+    it("should throw error for invalid entry_type", () => {
+        expect(() => {
+            upsertEntry(db, {
+                contract_id: contractID,
+                entry_key_xdr: "INVALID_TYPE_TEST",
+                entry_type: "invalid_type" as any,
+            });
+        }).toThrow(); // SQLite CHECK constraint
+    });
+
+    it("should handle entries with null/missing values", () => {
+        upsertEntry(db, {
+            contract_id: contractID,
+            entry_key_xdr: "NULL_TEST",
+            entry_type: "temporary",
+        });
+        const entries = getEntriesForContract(db, contractID);
+        const entry = entries.find(e => e.entry_key_xdr === "NULL_TEST");
+        expect(entry).toBeDefined();
+        expect(entry!.label).toBeNull();
+        expect(entry!.live_until_ledger).toBeNull();
+        expect(entry!.discovery_source).toBe("deterministic");
+    });
+
     it("cascades delete when a contract is removed", () => {
         upsertEntry(db, {
             contract_id: contractID,
             entry_key_xdr: "BGDFRYHD097DNND0NKKHDE1GERVCJN4LJW5676HUHE32727UBHJNKJDHG276346UC39874109782BS464LLPEOOD4778348835HVAGKGHDAEGD",
             entry_type: "instance",
         });
+        
+        upsertExtensionPolicy(db, {
+            contract_id: contractID,
+            target_ttl_ledgers: 1000,
+            extend_when_below_ledgers: 100,
+        });
+
+        insertAlertConfig(db, {
+            contract_id: contractID,
+            channel_type: "webhook",
+            channel_target: "http://test",
+            threshold_ledgers: 500,
+        });
+
         deleteContract(db, contractID);
-        const entries = getEntriesForContract(db, contractID);
-        expect(entries).toHaveLength(0);
+        
+        expect(getEntriesForContract(db, contractID)).toHaveLength(0);
+        expect(getExtensionPolicy(db, contractID)).toBeUndefined();
+        expect(getAlertConfigsForContract(db, contractID)).toHaveLength(0);
     });
 });
 
@@ -436,7 +486,120 @@ describe("Alerts Fired Operations", () => {
         resolveAlerts(db, contractEntryID);
         expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
     });
+
+    it('should only resolve alerts for the specific entry', () => {
+        // Create another entry
+        upsertEntry(db, {
+            contract_id: contractID,
+            entry_key_xdr: "ANOTHER_ENTRY",
+            entry_type: "persistent",
+        });
+        const anotherEntryID = getEntriesForContract(db, contractID).find(e => e.entry_key_xdr === "ANOTHER_ENTRY")!.id;
+
+        recordAlertFired(db, {
+            alert_config_id: contractAlertConfigID,
+            contract_entry_id: contractEntryID,
+            fired_at_ledger: 100,
+            ttl_at_fire: 10,
+        });
+        recordAlertFired(db, {
+            alert_config_id: contractAlertConfigID,
+            contract_entry_id: anotherEntryID,
+            fired_at_ledger: 100,
+            ttl_at_fire: 10,
+        });
+
+        resolveAlerts(db, contractEntryID);
+        expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
+        expect(hasUnresolvedAlert(db, contractAlertConfigID, anotherEntryID)).toBe(true);
+    });
+
+    it.skip("TODO: Implement automatic alert resolution when TTL is extended", () => {
+        // This logic will likely be in the Monitor/Daemon, but the DB should support it
+    });
 });
 
 // --------------------- Database Operations Tests For Extension History ---------------------
-describe("Extension History Operations", () => {})
+describe("Extension History Operations", () => {
+    const contractID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+    let entryID: number;
+
+    beforeEach(() => {
+        insertContract(db, {
+            id: contractID,
+            name: "sample-contract",
+            network: "testnet",
+        });
+        upsertEntry(db, {
+            contract_id: contractID,
+            entry_key_xdr: "XDR_KEY_1",
+            entry_type: "instance",
+            live_until_ledger: 1000,
+        });
+        const entries = getEntriesForContract(db, contractID);
+        entryID = entries[0]!.id;
+    });
+
+    it("should record and retrieve extension history", () => {
+        const record = {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash123",
+            cost_xlm: 0.5,
+            executed_at_ledger: 12345,
+        };
+        recordExtension(db, record);
+
+        const history = getExtensionHistory(db, contractID);
+        expect(history).toHaveLength(1);
+        expect(history[0]).toMatchObject({
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash123",
+            cost_xlm: 0.5,
+            executed_at_ledger: 12345,
+        });
+    });
+
+    it.skip("TODO: Implement aggregate cost tracking by contract", () => {
+        // This is a Phase 2 feature mentioned in the roadmap
+    });
+
+    it.skip("TODO: Implement resource usage tracking (CPU/Memory)", () => {
+        // This is a Phase 2 feature mentioned in the roadmap
+    });
+
+    it("should filter history by days", () => {
+        recordExtension(db, {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 100,
+            new_ttl_ledgers: 200,
+            tx_hash: "old_hash",
+            executed_at_ledger: 10,
+        });
+        
+        // Manually update executed_at to be old
+        db.prepare("UPDATE extension_history SET executed_at = datetime('now', '-10 days') WHERE tx_hash = 'old_hash'").run();
+
+        recordExtension(db, {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 200,
+            new_ttl_ledgers: 300,
+            tx_hash: "new_hash",
+            executed_at_ledger: 20,
+        });
+
+        const all = getExtensionHistory(db, contractID);
+        expect(all).toHaveLength(2);
+
+        const recent = getExtensionHistory(db, contractID, 5);
+        expect(recent).toHaveLength(1);
+        expect(recent[0]!.tx_hash).toBe("new_hash");
+    });
+});
