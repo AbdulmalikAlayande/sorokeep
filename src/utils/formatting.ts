@@ -27,8 +27,8 @@ export type TTLStatus = "ok" | "warning" | "critical" | "expired";
 
 export function classifyTTL(remainingLedgers: number): TTLStatus {
     if (remainingLedgers <= 0) return "expired";
-    if (remainingLedgers <= 5000) return "critical";
-    if (remainingLedgers <= 20000) return "warning";
+    if (remainingLedgers < 5000) return "critical";
+    if (remainingLedgers < 20000) return "warning";
     return "ok";
 }
 
