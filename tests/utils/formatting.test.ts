@@ -25,9 +25,9 @@ describe("formatTimeToCloseLedger", () => {
         expect(formatTimeToCloseLedger(10)).toBe("~0m 55s");
         expect(formatTimeToCloseLedger(100)).toBe("~9m 10s");
         expect(formatTimeToCloseLedger(1000)).toBe("~1h 31m");
-        expect(formatTimeToCloseLedger(20000)).toBe("~3h 3m");
-        expect(formatTimeToCloseLedger(50000)).toBe("~6h 55m");
-        expect(formatTimeToCloseLedger(100000)).toBe("~13h 50m");
+        expect(formatTimeToCloseLedger(20000)).toBe("~1d 6h");
+        expect(formatTimeToCloseLedger(50000)).toBe("~3d 4h");
+        expect(formatTimeToCloseLedger(100000)).toBe("~6d 8h");
     });
 });
 
