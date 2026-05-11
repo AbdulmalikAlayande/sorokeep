@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { StellarRpcClient } from "../../src/rpc/client";
+import { Contract } from "@stellar/stellar-sdk";
 
 vi.mock("@stellar/stellar-sdk", async () =>  {
     const actualModule = await vi.importActual("@stellar/stellar-sdk");
@@ -19,7 +20,10 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
                 latestLedger: 2443398,
                 entries: [
                     {
-                        lastModifiedLedgerSeq: 2400000, liveUntilLedgerSeq: 2543398, key: "mock-key",
+                        lastModifiedLedgerSeq: 2400000, liveUntilLedgerSeq: 2543398, 
+                        key: {
+                            toXDR: (format: string) => "mock-entry-key-base64"
+                        },
                         val: {
                             contractData: () => ({
                                 val: () => ({
@@ -112,13 +116,13 @@ describe("StellarRpcClient", () => {
             const retrievedContractInstanceEntry = await client.getContractInstanceEntry(contractID);
 
             expect(retrievedContractInstanceEntry!.entryKeyXdr).toBeDefined();
-            expect(typeof retrievedContractInstanceEntry!.entryKeyXdr).toBe("mock-entry-key-xdr");
+            expect(typeof retrievedContractInstanceEntry!.entryKeyXdr).toBe("string");
         });
     });
 
     describe("Wasm Code Entry Operations with `getWasmCodeEntry(wasmHash)`",  () => {
         it('should return WASM code entry with TTL data', async () => {
-            const wasmHash = "ab".repeat(64);
+            const wasmHash = "ab".repeat(32);
             const wasmCodeEntry = await client.getWasmCodeEntry(wasmHash);
 
             expect(wasmCodeEntry!.entryKeyXdr).toBeDefined();
@@ -131,20 +135,19 @@ describe("StellarRpcClient", () => {
         it("returns the entry key XDR for storage in the database", async () => {
             const wasmHash = "ab".repeat(32);
             const wasmCodeEntry = await client.getWasmCodeEntry(wasmHash);
-
             expect(wasmCodeEntry!.entryKeyXdr).toBeDefined();
-            expect(typeof wasmCodeEntry!.entryKeyXdr).toBe("OPIYTRFGHBVSGDJHKNDIK098dh75GHDJHKuegw67u");
+            expect(typeof wasmCodeEntry!.entryKeyXdr).toBe("string");
         });
     });
 
     describe("getEntryTTLs", () => {
         it("accepts an array of base64 XDR keys and returns TTL data", async () => {
-            const mockKeys = ["AAAA==", "BBBB=="];
-            const results = await client.getEntryTTLs(mockKeys);
-
-            expect(results).toBeDefined();
-            expect(results.latestLedger).toBe(2443398);
-            expect(results.entries).toHaveLength(1);
+            const contract = new Contract("CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6");
+            const xdrKey = contract.getFootprint().toXDR("base64");
+            const retrievedEntryTTLs = await client.getEntryTTLs([xdrKey]);
+            expect(retrievedEntryTTLs).toBeDefined();
+            expect(retrievedEntryTTLs.latestLedger).toBe(2443398);
+            expect(retrievedEntryTTLs.entries).toHaveLength(1);
         });
     });
 
