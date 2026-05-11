@@ -2,11 +2,11 @@ import type Database from "better-sqlite3";
 
 export interface Contract {
     id: string;
-    name?: string | null;
+    name: string | null;
     network: string;
     wasm_hash: string | null;
-    tags?: string | null;
-    registered_at: string;
+    tags: string | null;
+    registered_at: Date;
     last_checked_ledger?: number | null;
 }
 
@@ -19,8 +19,8 @@ export interface ContractEntry {
     live_until_ledger: number;
     last_modified_ledger: number;
     discovery_source: "deterministic" | "manual" | "instance_scan" | "footprint";
-    first_seen_at: string;
-    last_checked_at?: string | null;
+    first_seen_at: Date;
+    last_checked_at: Date | null;
 }
 
 export interface ExtensionPolicy {
@@ -29,9 +29,9 @@ export interface ExtensionPolicy {
     enabled: boolean;
     target_ttl_ledgers: number;
     extend_when_below_ledgers: number;
-    key_pair_public?: string | null;
-    key_pair_source?: string | null;
-    created_at: string;
+    keypair_public: string | null;
+    keypair_source: string | null;
+    created_at: Date;
 }
 
 export interface AlertConfig {
@@ -40,7 +40,7 @@ export interface AlertConfig {
     channel_type: "email" | "slack" | "webhook";
     channel_target: string;
     threshold_ledgers: number;
-    created_at: string;
+    created_at: Date;
 }
 
 export interface AlertFired {
@@ -48,7 +48,7 @@ export interface AlertFired {
     alert_config_id: number;
     contract_entry_id: number;
     fired_at_ledger: number;
-    fired_at: string;
+    fired_at: Date;
     ttl_at_fire: number;
     resolved: boolean;
     resolved_at?: string | null;
@@ -67,11 +67,17 @@ export interface ExtensionRecord {
 }
 
 // ---------------------------- Database Access Functions For Schema: Contract ----------------------------
-export function insertContract(db: Database.Database, contract: Omit<Contract, "registered_at" | "last_checked_ledger">): void {
+export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string;}): void {
     db.prepare(`
         INSERT INTO contracts (id, name, network, wasm_hash, tags)
         VALUES (@id, @name, @network, @wasm_hash, @tags)
-    `).run(contract);
+    `).run({
+      id: contract.id,
+      name: contract.name ?? null,
+      network: contract.network,
+      wasm_hash: contract.wasm_hash ?? null,
+      tags: contract.tags ?? null,
+    });
 }
 
 export function getContract(db: Database.Database, id: string): Contract | undefined {
