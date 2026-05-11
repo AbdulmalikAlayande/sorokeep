@@ -15,8 +15,8 @@ function ensureSentinelDirExists(dir: string) {
 const SCHEMA_FILE_PATH = path.join(__dirname, 'schema.sql');
 
 const SCHEMA = fs.readFileSync(SCHEMA_FILE_PATH, 'utf-8')
-                .replace(/--.*\n/g, '') // Remove SQL comments
-                .replace(/\s+/g, ' ') // Collapse whitespace
+                .replace(/--.*\n/g, '') // Removes SQL comments
+                .replace(/\s+/g, ' ') // Collapse whitespaces
                 .trim();
 
 let db: Database.Database | null = null;
