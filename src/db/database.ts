@@ -43,8 +43,8 @@ const SCHEMA = `
         enabled BOOLEAN NOT NULL DEFAULT 0,
         target_ttl_ledgers INTEGER NOT NULL,
         extend_when_below_ledgers INTEGER NOT NULL,
-        key_pair_public TEXT,
-        key_pair_source TEXT,
+        keypair_public TEXT,
+        keypair_source TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(contract_id)
     );
@@ -72,7 +72,7 @@ const SCHEMA = `
     CREATE TABLE IF NOT EXISTS extension_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-        contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE
+        contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
         old_ttl_ledgers INTEGER NOT NULL,
         new_ttl_ledgers INTEGER NOT NULL,
         tx_hash TEXT NOT NULL,
