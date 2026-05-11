@@ -43,34 +43,34 @@ class LoggerWrapper implements Logger {
     private readonly logger: PinoLogger;
     private readonly bindings: Record<string, unknown>;
 
-    constructor(loggerInstance: PinoLogger, bindings?: Record<string, unknown>) {
+    constructor(loggerInstance: PinoLogger, bindings: Record<string, unknown> = {}) {
         this.logger = loggerInstance;
         this.bindings = bindings;
     }
 
     child(bindings: Record<string, unknown>): Logger {
-        const child = this.pino.child(bindings);
+        const child = this.logger.child(bindings);
         return new LoggerWrapper(child, { ...this.bindings, ...bindings });
     }
 
     debug(message: string, ...meta: unknown[]): void {
-        meta ? this.pino.debug(meta, msg) : this.pino.debug(msg);
+        meta ? this.logger.debug(meta, message) : this.logger.debug(message);
     }
 
     error(message: string, ...meta: unknown[]): void {
-        meta ? this.pino.error(meta, msg) : this.pino.error(msg);
+        meta ? this.logger.error(meta, message) : this.logger.error(message);
     }
 
     fatal(message: string, ...meta: unknown[]): void {
-        meta ? this.pino.fatal(meta, msg) : this.pino.fatal(msg);
+        meta ? this.logger.fatal(meta, message) : this.logger.fatal(message);
     }
 
     info(message: string, ...meta: unknown[]): void {
-        meta ? this.pino.info(meta, msg) : this.pino.info(msg);
+        meta ? this.logger.info(meta, message) : this.logger.info(message);
     }
 
     warn(message: string, ...meta: unknown[]): void {
-        meta ? this.pino.warn(meta, msg) : this.pino.warn(msg);
+        meta ? this.logger.warn(meta, message) : this.logger.warn(message);
     }
 }
 
