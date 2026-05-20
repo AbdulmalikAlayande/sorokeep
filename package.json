@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "description": "The missing operations layer for deployed Soroban smart contracts",
   "main": "dist/index.js",
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": ["dist", "README.md", "LICENSE", "CONTRIBUTING.md"],
   "bin": {
     "sentinel": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').copyFileSync('src/db/schema.sql', 'dist/db/schema.sql')\"",
     "dev": "tsx src/index.ts",
     "lint": "eslint src/",
     "test": "vitest run",
