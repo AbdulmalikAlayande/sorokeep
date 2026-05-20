@@ -6,9 +6,9 @@ Soroban Sentinel monitors the health of your deployed contracts — tracking sta
 
 ## Why this exists
 
-Soroban's storage model is uncommon among major smart contract platforms: **state expires.** Every ledger entry — contract instances, persistent storage, WASM code — has a Time-To-Live (TTL). When it runs out, the entry is archived. If a contract's instance entry expires, the entire contract stops working. If persistent storage entries expire, user data becomes inaccessible until someone pays to restore it.
+Soroban's storage model is uncommon among major smart contract platforms: **state expires.** Every ledger entry, contract instances, persistent storage, WASM code etc., all have a Time-To-Live (TTL). When it runs out, the entry is archived. If a contract's instance entry expires, the entire contract stops working. If persistent storage entries expire, user data becomes inaccessible until someone pays to restore it.
 
-This is by design — state archival keeps Stellar lean and scalable. But it means **you must actively manage the lifecycle of your contract's state, or it dies.**
+This is by design, state archival keeps Stellar lean and scalable. But it means **you must actively manage the lifecycle of your contract's state, or it dies.**
 
 There is currently no dedicated open-source tool that combines TTL monitoring, alerting, auto-extension, cost tracking, and restoration for Soroban contracts. Developers either use manual CLI commands, build ad-hoc scripts, or embed TTL extension logic directly in their contracts. Sentinel is the unified operations layer that handles all of this.
 
@@ -204,7 +204,7 @@ MIT
 
 ## Author
 
-**Abdulmalik Alayande** —
+**Abdulmalik Alayande**
 
 - GitHub: [AbdulmalikAlayande](https://github.com/AbdulmalikAlayande)
 - X: [@The_good_man02](https://twitter.com/The_good_man02)
