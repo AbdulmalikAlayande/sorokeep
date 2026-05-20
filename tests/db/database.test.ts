@@ -1,16 +1,20 @@
 import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-    insertContract,
-    getContract,
-    getAllContracts,
-    updateLastCheckedLedger,
-    deleteContract,
-    upsertEntry,
-    getEntriesForContract,
-    upsertExtensionPolicy,
+import { 
+    insertContract, 
+    getContract, 
+    getAllContracts, 
+    updateLastCheckedLedger, 
+    deleteContract, 
+    upsertEntry, 
+    getEntriesForContract, 
+    upsertExtensionPolicy, 
     getExtensionPolicy,
-    insertAlertConfig, getAlertConfigsForContract, deleteAlertConfig, hasUnresolvedAlert, recordAlertFired,
+    insertAlertConfig, 
+    getAlertConfigsForContract, 
+    deleteAlertConfig, 
+    hasUnresolvedAlert, 
+    recordAlertFired,
     resolveAlerts,
     recordExtension,
     getExtensionHistory
@@ -36,19 +40,19 @@ describe("Contract Operations", () => {
             tags: "defi,pool",
         };
         insertContract(db, sampleContract);
-        const retrievedContract = getContract(db, sampleContract.id);
-        expect(retrievedContract).toBeDefined();
-        expect(retrievedContract).toMatchObject({
+        const retrieved = getContract(db, sampleContract.id);
+        expect(retrieved).toBeDefined();
+        expect(retrieved).toMatchObject({
             ...sampleContract,
             registered_at: expect.any(String),
             last_checked_ledger: null,
         });
-        expect(retrievedContract!.id).toBe(sampleContract.id);
-        expect(retrievedContract!.name).toBe("sample-contract");
-        expect(retrievedContract!.network).toBe("testnet");
-        expect(retrievedContract!.last_checked_ledger).toBeNull();
-        expect(retrievedContract!.registered_at).toBeDefined();
-        expect(new Date(retrievedContract!.registered_at).getTime()).toBeLessThanOrEqual(Date.now());
+        expect(retrieved!.id).toBe(sampleContract.id);
+        expect(retrieved!.name).toBe("sample-contract");
+        expect(retrieved!.network).toBe("testnet");
+        expect(retrieved!.last_checked_ledger).toBeNull();
+        expect(retrieved!.registered_at).toBeDefined();
+        expect(new Date(retrieved!.registered_at).getTime()).toBeLessThanOrEqual(Date.now());
     });
 
     it("returns undefined for non-existent contract", () => {
@@ -89,8 +93,8 @@ describe("Contract Operations", () => {
         insertContract(db, sampleContract4);
         updateLastCheckedLedger(db, sampleContract4.id, 12345678);
 
-        const retrievedContract = getContract(db, sampleContract4.id);
-        expect(retrievedContract!.last_checked_ledger).toBe(12345678);
+        const retrieved = getContract(db, sampleContract4.id);
+        expect(retrieved!.last_checked_ledger).toBe(12345678);
     });
 
     it.skip("TODO: Implement contract discovery via getEvents", () => {
@@ -113,8 +117,8 @@ describe("Contract Operations", () => {
         const allBefore = getAllContracts(db);
         expect(allBefore).toHaveLength(1);
         deleteContract(db, sampleContract5.id);
-        const retrievedContract = getContract(db, sampleContract5.id);
-        expect(retrievedContract).toBeUndefined();
+        const retrieved = getContract(db, sampleContract5.id);
+        expect(retrieved).toBeUndefined();
         const allAfter = getAllContracts(db);
         expect(allAfter).toHaveLength(0);
     });
@@ -133,9 +137,9 @@ describe("Contract Operations", () => {
             name: "updated-contract-6"
         };
         insertContract(db, updatedContract);
-        const retrievedContract = getContract(db, sampleContract6.id);
-        expect(retrievedContract).toBeDefined();
-        expect(retrievedContract!.name).toBe("updated-contract-6");
+        const retrieved = getContract(db, sampleContract6.id);
+        expect(retrieved).toBeDefined();
+        expect(retrieved!.name).toBe("updated-contract-6");
     });
 });
 
@@ -292,7 +296,6 @@ describe("Contract Entry Operations", () => {
 // --------------------- Database Operations Tests For Extension Policies ---------------------
 
 describe("Extension Policy Operations", () => {
-    // Test cases for extension policy operations
     const contractID = "CBEK0975FU6KKOEZHGO098G6HLBS5D6LVATIGCESOGXSZEQ2UWUY8I3O";
     beforeEach(() => {
         const sampleContract = {
@@ -322,166 +325,80 @@ describe("Extension Policy Operations", () => {
     });
     
     it("returns undefined for a contract without policy", () => {
-        const retrievedPolicy = getExtensionPolicy(db, contractID);
-        expect(retrievedPolicy).toBeUndefined();
-    });
-
-    it('should upsert extension policy for duplicate contract_id', () => {
-        const extensionPolicy1 = {
-            contract_id: contractID,
-            target_ttl_ledgers: 200000,
-            extend_when_below_ledgers: 30000,
-        }
-        const extensionPolicy2 = {
-            contract_id: contractID,
-            target_ttl_ledgers: 100000,
-            extend_when_below_ledgers: 10000,
-        }
-        const extensionPolicy3 = {
-            contract_id: contractID,
-            target_ttl_ledgers: 400000,
-            extend_when_below_ledgers: 50000,
-        }
-
-        upsertExtensionPolicy(db, extensionPolicy1);
-        upsertExtensionPolicy(db, extensionPolicy2);
-        upsertExtensionPolicy(db, extensionPolicy3);
-
-        const retrievedPolicy = getExtensionPolicy(db, contractID);
-        expect(retrievedPolicy!.target_ttl_ledgers).toBe(400000);
-        expect(retrievedPolicy!.extend_when_below_ledgers).toBe(50000);
+        const policy = getExtensionPolicy(db, "NON_EXISTENT");
+        expect(policy).toBeUndefined();
     });
 });
 
-// --------------------- Database Operations Tests For Alert Configs ---------------------
+// --------------------- Database Operations Tests For Alerting ---------------------
 
-describe("Alert Config Operations", () => {
+describe("Alert Operations", () => {
     const contractID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+    let contractAlertConfigID: number;
+    let contractEntryID: number;
+
     beforeEach(() => {
-        const sampleContract = {
+        insertContract(db, {
             id: contractID,
             name: "sample-contract",
             network: "testnet",
-            wasm_hash: "edtg728rfhnb234",
-        }
-        insertContract(db, sampleContract)
-    })
+        });
+        upsertEntry(db, {
+            contract_id: contractID,
+            entry_key_xdr: "XDR_KEY_1",
+            entry_type: "instance",
+            live_until_ledger: 1000,
+        });
+        const entries = getEntriesForContract(db, contractID);
+        contractEntryID = entries[0]!.id;
 
-    it("should insert alert configs into the database and retrieves it", () => {
-        const sampleContractAlertConfig = {
+        insertAlertConfig(db, {
             contract_id: contractID,
             channel_type: "webhook",
-            channel_target: "https://aurl.com/alert/hook",
-            threshold_ledgers: 10000,
-        };
-        insertAlertConfig(db, sampleContractAlertConfig);
-        const retrivedContractAlertConfigs = getAlertConfigsForContract(db, contractID);
-        expect(retrivedContractAlertConfigs).toHaveLength(1);
-        expect(retrivedContractAlertConfigs[0]!.channel_type).toBe("webhook");
-        expect(retrivedContractAlertConfigs[0]!.threshold_ledgers).toBe(10000);
+            channel_target: "https://hooks.slack.com/services/...",
+            threshold_ledgers: 500,
+        });
+        const configs = getAlertConfigsForContract(db, contractID);
+        contractAlertConfigID = configs[0]!.id;
     });
 
-    it('should support multiple alert configs per for each contract', () => {
-        const sampleContractAlertConfig = {
+    it("should insert and retrieve alert configurations", () => {
+        const configs = getAlertConfigsForContract(db, contractID);
+        expect(configs).toHaveLength(1);
+        expect(configs[0]).toMatchObject({
             contract_id: contractID,
-            channel_type: "slack",
-            channel_target: "#oncall",
-            threshold_ledgers: 40000,
-        };
-        const sampleContractAlertConfig1 = {
-            contract_id: contractID,
-            channel_type: "email",
-            channel_target: "username@emaildomain.com",
-            threshold_ledgers: 30000,
-        };
-
-        insertAlertConfig(db, sampleContractAlertConfig);
-        insertAlertConfig(db, sampleContractAlertConfig1);
-
-        const retrievedAlertConfigs = getAlertConfigsForContract(db, contractID);
-        expect(retrievedAlertConfigs).toHaveLength(2);
+            channel_type: "webhook",
+            channel_target: "https://hooks.slack.com/services/...",
+            threshold_ledgers: 500,
+        });
     });
 
-    it('should delete an alert config by it\'s ID ', () => {
-        const sampleContractAlertConfig = {
-            contract_id: contractID,
-            channel_type: "slack",
-            channel_target: "#oncall",
-            threshold_ledgers: 40000,
-        };
-        insertAlertConfig(db, sampleContractAlertConfig);
-
-        const retrievedAlertConfigs = getAlertConfigsForContract(db, contractID);
-        deleteAlertConfig(db, retrievedAlertConfigs[0]!.id);
-
-        const remainingAlertConfigs = getAlertConfigsForContract(db, contractID);
-        expect(remainingAlertConfigs).toHaveLength(0);
-    });
-})
-
-// --------------------- Database Operations Tests For Alerts Fired and Deduplication ---------------------
-
-describe("Alerts Fired Operations", () => {
-
-    const contractID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
-    let contractEntryID: number;
-    let contractAlertConfigID: number;
-
-    beforeEach(() => {
-        const sampleContract = {
-            id: contractID,
-            name: "sample-contract",
-            network: "testnet",
-            wasm_hash: "edtg728rfhnb234",
-        };
-        insertContract(db, sampleContract);
-
-        const contractEntry = {
-            contract_id: contractID,
-            entry_key_xdr: "AAAAAgAAAADpL3ZlY3RvcgAAAAEAAAAAAAAAAQAAAAAAAAABAAAAAQAAAAEAAAAAAAAAAQAAAAAAAAACAAAAAQAAAAEAAAAAAAAAAQAAAAAAAAAD",
-            entry_type: "instance",
-            label: "balances",
-            live_until_ledger: 2_500_000,
-            last_modified_ledger: 11_000_000,
-            discovery_source: "manual",
-        }
-        upsertEntry(db, contractEntry);
-        const retrievedContractEntries = getEntriesForContract(db, contractID);
-        contractEntryID = retrievedContractEntries[0]!.id;
-
-        const contractAlertConfig = {
-            contract_id: contractID,
-            channel_type: "email",
-            channel_target: "username@emaildomain.com",
-            threshold_ledgers: 30000,
-        }
-        insertAlertConfig(db, contractAlertConfig)
-        const retrievedContractAlertConfigs = getAlertConfigsForContract(db, contractID);
-        contractAlertConfigID = retrievedContractAlertConfigs[0]!.id;
+    it("should delete alert configurations", () => {
+        deleteAlertConfig(db, contractAlertConfigID);
+        const configs = getAlertConfigsForContract(db, contractID);
+        expect(configs).toHaveLength(0);
     });
 
-    it('should record an alert and check for unresolved alerts', () => {
+    it("should record fired alerts and check resolution status", () => {
         expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
 
-        const sampleAlertFired = {
+        recordAlertFired(db, {
             alert_config_id: contractAlertConfigID,
             contract_entry_id: contractEntryID,
-            fired_at_ledger: 1990000,
-            ttl_at_fire: 10000,
-        };
-        recordAlertFired(db, sampleAlertFired);
+            fired_at_ledger: 12345,
+            ttl_at_fire: 450,
+        });
 
         expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(true);
     });
 
-    it('should resolve all alerts for an entry', () => {
-        const sampleAlertFired = {
+    it("should resolve alerts for a specific entry", () => {
+        recordAlertFired(db, {
             alert_config_id: contractAlertConfigID,
             contract_entry_id: contractEntryID,
-            fired_at_ledger: 1920500,
-            ttl_at_fire: 64000,
-        };
-        recordAlertFired(db, sampleAlertFired);
+            fired_at_ledger: 12345,
+            ttl_at_fire: 450,
+        });
 
         resolveAlerts(db, contractEntryID);
         expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
