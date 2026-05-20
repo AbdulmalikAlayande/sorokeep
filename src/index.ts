@@ -55,8 +55,4 @@ program
         console.log("restore command — not yet implemented");
     });
 
-program.parse();
-
-
-
 program.parse(process.argv);
