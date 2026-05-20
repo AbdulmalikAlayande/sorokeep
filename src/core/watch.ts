@@ -134,7 +134,6 @@ export async function watchContract(db: Database.Database, options: WatchOptions
 
         // Update last checked ledger
         updateLastCheckedLedger(db, contractId, instanceEntry.latestLedger);
-        logger.info(`Contract ${contractId} registered successfully on ${network}`);
         return {
             success: true,
             contractId,
@@ -152,3 +151,5 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         };
     }
 }
+
+

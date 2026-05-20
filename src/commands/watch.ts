@@ -27,36 +27,32 @@ export const registerWatchCommand = (program: Command): void => {
                 }
                 spinner.succeed(chalk.green(`Contract ${options.name || displayId} registered successfully.`));
                 const entryCount = 1 + (watchResult.wasm ? 1 : 0) + (options.storageKeys ? options.storageKeys.split(",").length : 0);
-                logger.info(`Entries indexed: ${entryCount}`);
 
                 // Contract Summary/Details
-                logger.info(`Contract: ${options.name ?? displayId} (${displayId})`);
-                logger.info(`Network: ${options.network}`);
+                console.log(`\n  Contract: ${chalk.cyan(options.name ?? displayId)} (${chalk.dim(displayId)})`);
+                console.log(`  Network:  ${chalk.cyan(options.network)}`);
+                console.log(`  Entries:  ${chalk.cyan(entryCount)} discovered`);
 
                 // Contract Instance TimeToLive
-                const instanceTTLStatus = classifyTTL(watchResult.instance.remainingTTL);
-                logger.info(`Contract Instance TTL: ${instanceTTLStatus.toLocaleString()} 
-                    ledgers (${formatTimeToCloseLedger(watchResult.instance.remainingTTL)}) 
-                    ${statusIndicator(instanceTTLStatus)}
-                `)
+                const instanceTTL = watchResult.instance.remainingTTL;
+                const instanceStatus = classifyTTL(instanceTTL);
+                console.log(`  Instance TTL: ${instanceTTL.toLocaleString()} ledgers (${formatTimeToCloseLedger(instanceTTL)})  ${statusIndicator(instanceStatus)}`);
 
                 // WASM TimeToLive
-                if(watchResult.wasm) {
-                    const wasmTTLStatus = classifyTTL(watchResult.wasm.remainingTTL);
-                    logger.info(`WASM Code TTL: ${wasmTTLStatus.toLocaleString()} 
-                        ledgers (${formatTimeToCloseLedger(watchResult.wasm.remainingTTL)}) 
-                        ${statusIndicator(wasmTTLStatus)}
-                    `);
+                if (watchResult.wasm) {
+                    const wasmTTL = watchResult.wasm.remainingTTL;
+                    const wasmStatus = classifyTTL(wasmTTL);
+                    console.log(`  WASM Code TTL: ${wasmTTL.toLocaleString()} ledgers (${formatTimeToCloseLedger(wasmTTL)})  ${statusIndicator(wasmStatus)}`);
                 }
 
                 // Warnings
                 if (watchResult.wasmWarning) {
-                    logger.warn(`\n  ⚠ ${watchResult.wasmWarning}`)
+                    console.warn(chalk.yellow(`\n  ⚠ ${watchResult.wasmWarning}`))
                 }
 
 
-                logger.info(chalk.dim("\n  Run 'sentinel status " + formatContractID(contractId) + "' to check TTLs anytime."));
-                logger.info(chalk.dim("  Run 'sentinel guard " + formatContractID(contractId) + "' to enable auto-extension."));
+                console.log(chalk.dim("\n  Run 'sentinel status " + formatContractID(contractId) + "' to check TTLs anytime."));
+                console.log(chalk.dim("  Run 'sentinel guard " + formatContractID(contractId) + "' to enable auto-extension."));
             }
             catch(error: any){
                 const errorMessage = error instanceof Error ? error.message : String(error);
