@@ -1,6 +1,9 @@
 import type Database from "better-sqlite3";
 import { StellarRpcClient, ContractInstanceResult, SentinelLedgerEntryResult } from "../rpc/client";
 import { insertContract, upsertEntry, updateLastCheckedLedger, getContract } from "../db/repositories";
+import {getLogger} from "../logging";
+
+const logger = getLogger()
 
 export interface WatchOptions {
     contractId: string;
@@ -28,10 +31,12 @@ export type WatchResult =
  * - This is `Layer 1` of the architecture.
  */
 export async function watchContract(db: Database.Database, options: WatchOptions): Promise<WatchResult> {
+    logger.debug(`Watching contract ${options.contractId} on ${options.network}`);
     const { contractId, network, name, rpcUrl, storageKeys } = options;
 
     // Basic Validation
     if (!contractId.startsWith("C") || contractId.length !== 56) {
+        logger.error(`Invalid Contract ID format: ${contractId}`);
         return {
             success: false,
             contractId,
@@ -45,6 +50,7 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         // 0. Check if already registered on a different network
         const existing = getContract(db, contractId);
         if (existing && existing.network !== network) {
+            logger.warn(`Contract ${contractId} is already registered on ${existing.network}. To watch on ${network}, unwatch it first.`);
             return {
                 success: false,
                 contractId,
@@ -128,7 +134,7 @@ export async function watchContract(db: Database.Database, options: WatchOptions
 
         // Update last checked ledger
         updateLastCheckedLedger(db, contractId, instanceEntry.latestLedger);
-
+        logger.info(`Contract ${contractId} registered successfully on ${network}`);
         return {
             success: true,
             contractId,
@@ -138,6 +144,7 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         };
 
     } catch (error: any) {
+        logger.error(`Error watching contract ${contractId}: ${error.message}`, error);
         return {
             success: false,
             contractId,
