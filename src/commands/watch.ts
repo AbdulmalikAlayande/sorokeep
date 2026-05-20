@@ -1,100 +1,70 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
-import { StellarRpcClient } from "../rpc/client";
 import { getDatabase } from "../db/database";
-import { insertContract, upsertEntry } from "../db/repositories";
 import { getLogger } from "../logging";
-import { formatContractID } from "../utils/formatting";
+import {classifyTTL, formatContractID, formatTimeToCloseLedger, statusIndicator} from "../utils/formatting";
+import {watchContract} from "../core/watch";
 
 const logger = getLogger().child({ component: 'WatchCommand' });
 
-export const watchCommand = new Command("watch")
-    .description("Register and start watching a contract")
-    .argument("<contract-id>", "The Soroban contract ID (C...)")
-    .option("-n, --name <name>", "A human-readable name for the contract")
-    .option("--network <network>", "The network to use (testnet, mainnet)", "testnet")
-    .option("-r, --rpc-url <url>", "Custom RPC URL")
-    .option("--storage-keys <keys>", "Comma-separated base64 XDR storage keys to watch")
-    .action(async (contractId, options) => {
-        const spinner = ora(`Registering contract ${formatContractID(contractId)}...`).start();
-        
-        try {
-            const client = new StellarRpcClient(options.network, options.rpcUrl);
-            const db = getDatabase();
-            
-            logger.debug(`Watching contract ${contractId} on ${options.network}`);
-
-            // 1. Fetch Contract Instance
-            spinner.text = "Fetching contract instance...";
-            const instanceEntry = await client.getContractInstanceEntry(contractId);
-            
-            if (!instanceEntry) {
-                spinner.fail(chalk.red(`Contract ${contractId} not found on ${options.network}.`));
-                return;
-            }
-
-            // 2. Save Contract to DB
-            insertContract(db, {
-                id: contractId,
-                name: options.name,
-                network: options.network,
-                wasm_hash: instanceEntry.wasmHash ?? undefined,
-            });
-
-            // 3. Save Instance Entry
-            upsertEntry(db, {
-                contract_id: contractId,
-                entry_key_xdr: instanceEntry.entryKeyXdr,
-                entry_type: "instance",
-                label: "Contract Instance",
-                live_until_ledger: instanceEntry.liveUntilLedgerSeq,
-                last_modified_ledger: instanceEntry.lastModifiedLedgerSeq,
-                discovery_source: "manual",
-            });
-
-            // 4. If WASM exists, fetch and save WASM Entry
-            if (instanceEntry.wasmHash) {
-                spinner.text = "Fetching WASM entry...";
-                const wasmEntry = await client.getWasmCodeEntry(instanceEntry.wasmHash);
-                if (wasmEntry) {
-                    upsertEntry(db, {
-                        contract_id: contractId,
-                        entry_key_xdr: wasmEntry.entryKeyXdr,
-                        entry_type: "wasm",
-                        label: "WASM Code",
-                        live_until_ledger: wasmEntry.liveUntilLedgerSeq,
-                        last_modified_ledger: wasmEntry.lastModifiedLedgerSeq,
-                        discovery_source: "instance_scan",
-                    });
+export const registerWatchCommand = (program: Command): void => {
+    program.command("watch <contract-id>")
+        .description("Register and start watching a contract")
+        .option("-n, --name <name>", "A human-readable name for the contract")
+        .option("--network <network>", "The stellar network to use (testnet, mainnet)", "testnet")
+        .option("-r, --rpc-url <url>", "Custom RPC URL")
+        .option("--storage-keys <keys>", "Comma-separated base64 XDR storage keys to watch")
+        .action(async (contractId, options) => {
+            const displayId = formatContractID(contractId);
+            const spinner = ora(`Registering contract ${formatContractID(contractId)} and discovering entries...`).start();
+            try {
+                const db = getDatabase();
+                const watchResult = await watchContract(db, {contractId, network: options.network, name: options.name, rpcUrl: options.rpcUrl, storageKeys: options.storageKeys});
+                if (!watchResult.success) {
+                    spinner.fail(chalk.red(watchResult.error))
+                    process.exit(1);
                 }
-            }
+                spinner.succeed(chalk.green(`Contract ${options.name || displayId} registered successfully.`));
+                const entryCount = 1 + (watchResult.wasm ? 1 : 0) + (options.storageKeys ? options.storageKeys.split(",").length : 0);
+                logger.info(`Entries indexed: ${entryCount}`);
 
-            // 5. If manual storage keys provided, fetch and save them
-            if (options.storageKeys) {
-                const keys = options.storageKeys.split(",").map((k: string) => k.trim());
-                spinner.text = `Fetching ${keys.length} storage entries...`;
-                const ttls = await client.getEntryTTLs(keys);
-                
-                for (const entry of ttls.entries) {
-                    upsertEntry(db, {
-                        contract_id: contractId,
-                        entry_key_xdr: entry.entryKeyXdr,
-                        entry_type: "persistent", // Defaulting to persistent for manual keys for now
-                        label: "Manual Storage Entry",
-                        live_until_ledger: entry.liveUntilLedgerSeq,
-                        last_modified_ledger: entry.lastModifiedLedgerSeq,
-                        discovery_source: "manual",
-                    });
+                // Contract Summary/Details
+                logger.info(`Contract: ${options.name ?? displayId} (${displayId})`);
+                logger.info(`Network: ${options.network}`);
+
+                // Contract Instance TimeToLive
+                const instanceTTLStatus = classifyTTL(watchResult.instance.remainingTTL);
+                logger.info(`Contract Instance TTL: ${instanceTTLStatus.toLocaleString()} 
+                    ledgers (${formatTimeToCloseLedger(watchResult.instance.remainingTTL)}) 
+                    ${statusIndicator(instanceTTLStatus)}
+                `)
+
+                // WASM TimeToLive
+                if(watchResult.wasm) {
+                    const wasmTTLStatus = classifyTTL(watchResult.wasm.remainingTTL);
+                    logger.info(`WASM Code TTL: ${wasmTTLStatus.toLocaleString()} 
+                        ledgers (${formatTimeToCloseLedger(watchResult.wasm.remainingTTL)}) 
+                        ${statusIndicator(wasmTTLStatus)}
+                    `);
                 }
+
+                // Warnings
+                if (watchResult.wasmWarning) {
+                    logger.warn(`\n  ⚠ ${watchResult.wasmWarning}`)
+                }
+
+
+                logger.info(chalk.dim("\n  Run 'sentinel status " + formatContractID(contractId) + "' to check TTLs anytime."));
+                logger.info(chalk.dim("  Run 'sentinel guard " + formatContractID(contractId) + "' to enable auto-extension."));
+            }
+            catch(error: any){
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                spinner.fail(chalk.red(`Failed to watch contract: ${errorMessage}`));
+                logger.error("Watch command failed",  { error: errorMessage });
+                process.exit(1);
             }
 
-            spinner.succeed(chalk.green(`Contract ${options.name || formatContractID(contractId)} registered successfully.`));
-            console.log(chalk.gray(`Network: ${options.network}`));
-            console.log(chalk.gray(`Entries indexed: ${options.storageKeys ? 2 + options.storageKeys.split(",").length : 2}`));
+        })
 
-        } catch (error: any) {
-            spinner.fail(chalk.red(`Failed to watch contract: ${error.message}`));
-            logger.error("Watch command failed", error);
-        }
-    });
+}
