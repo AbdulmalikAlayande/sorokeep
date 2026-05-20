@@ -566,7 +566,7 @@ describe("runMonitorCycle", () => {
             expect(hasUnresolvedAlert(db, configs[0]!.id, wasmEntry.id)).toBe(true);
         });
 
-        it("does not fire resolution when there was never an alert to resolve", async () => {
+        it("does not spuriously increment alertsResolved when no alert was ever fired", async () => {
             seedContract(db, "CONTRACT_NO_PRIOR_ALERT", "testnet", [
                 { keyXdr: "npa-key", type: "instance", liveUntil: LEDGER + 80000 },
             ]);
