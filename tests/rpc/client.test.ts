@@ -15,31 +15,28 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
         /*
         Returns mock entries that match actual real life Stellar RPC response, matching the expected response
          */
-        async getLedgerEntries(...keys: unknown[]) {
-            return{
+        async getLedgerEntries(...keys: any[]) {
+            return {
                 latestLedger: 2443398,
-                entries: [
-                    {
-                        lastModifiedLedgerSeq: 2400000, liveUntilLedgerSeq: 2543398, 
-                        key: {
-                            toXDR: (format: string) => "mock-entry-key-base64"
-                        },
-                        val: {
-                            contractData: () => ({
-                                val: () => ({
-                                    instance: () => ({
-                                        executable: () => ({
-                                            switch: () => ({ name: "contractExecutableWasm" }),
-                                            wasmHash: () => Buffer.from("ab".repeat(32), "hex"),
-                                        }),
-                                        storage: () => null,
+                entries: keys.map(k => ({
+                    lastModifiedLedgerSeq: 2400000,
+                    liveUntilLedgerSeq: 2543398,
+                    key: k,
+                    val: {
+                        contractData: () => ({
+                            val: () => ({
+                                instance: () => ({
+                                    executable: () => ({
+                                        switch: () => ({ name: "contractExecutableWasm" }),
+                                        wasmHash: () => Buffer.from("ab".repeat(32), "hex"),
                                     }),
+                                    storage: () => null,
                                 }),
                             }),
-                        },
-                        xdr: "mock-xdr"
+                        }),
                     },
-                ],
+                    xdr: "mock-xdr"
+                })),
             };
         }
     }
@@ -148,6 +145,8 @@ describe("StellarRpcClient", () => {
             expect(retrievedEntryTTLs).toBeDefined();
             expect(retrievedEntryTTLs.latestLedger).toBe(2443398);
             expect(retrievedEntryTTLs.entries).toHaveLength(1);
+            // Verify that it correctly uses the passed key
+            expect(retrievedEntryTTLs.entries[0]!.entryKeyXdr).toBe(xdrKey);
         });
     });
 
