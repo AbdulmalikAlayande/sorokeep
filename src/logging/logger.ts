@@ -1,5 +1,7 @@
 import {Logger, LogLevel} from "./types";
+import chalk from "chalk";
 import pino, { LoggerOptions as PinoLoggerOptions, Logger as PinoLogger} from "pino"
+import util from "util"
 
 export interface LoggerConfig {
     level: LogLevel;
@@ -39,6 +41,38 @@ function createLoggerInstance(config: LoggerConfig): PinoLogger {
     return pino(options);
 }
 
+function formatMetaForLog(meta: unknown[]): string {
+    if (!meta || meta.length === 0) return "";
+    return meta.map(item => {
+        if (item instanceof Error) {
+            console.log(item.stack) // Prints stack if available
+            return item.stack ?? item.message;
+        }
+        if (typeof item === "string") return item;
+        try {
+            return util.inspect(item, { depth: 2, colors: false });
+        } catch {
+            return String(item);
+        }
+    }).join(" ");
+}
+
+function styleForLevel(level: string, text: string): string {
+    switch (level) {
+        case "debug":
+            return chalk.cyan.dim(text);
+        case "info":
+            return chalk.green.bold(text);
+        case "warn":
+            return chalk.yellow.bold(text);
+        case "error":
+            return chalk.red.bold(text);
+        case "fatal":
+            return chalk.bgRed.white.bold(text);
+        default:
+            return text;
+    }
+}
 class LoggerWrapper implements Logger {
     private readonly logger: PinoLogger;
     private readonly bindings: Record<string, unknown>;
@@ -53,24 +87,36 @@ class LoggerWrapper implements Logger {
         return new LoggerWrapper(child, { ...this.bindings, ...bindings });
     }
 
+    private logWithStyle(level: "debug" | "info" | "warn" | "error" | "fatal", message: string, meta: unknown[]) {
+        const metaStr = formatMetaForLog(meta);
+        const styledMessage = styleForLevel(level, message);
+        const styledMeta = metaStr ? chalk.gray.dim(metaStr) : "";
+
+        if (metaStr) {
+            this.logger[level]({ ...this.bindings, meta }, `${styledMessage} ${styledMeta}`);
+        } else {
+            this.logger[level]({ ...this.bindings }, styledMessage);
+        }
+    }
+
     debug(message: string, ...meta: unknown[]): void {
-        meta ? this.logger.debug(meta, message) : this.logger.debug(message);
+        this.logWithStyle("debug", message, meta);
     }
 
     error(message: string, ...meta: unknown[]): void {
-        meta ? this.logger.error(meta, message) : this.logger.error(message);
+        this.logWithStyle("error", message, meta);
     }
 
     fatal(message: string, ...meta: unknown[]): void {
-        meta ? this.logger.fatal(meta, message) : this.logger.fatal(message);
+        this.logWithStyle("fatal", message, meta);
     }
 
     info(message: string, ...meta: unknown[]): void {
-        meta ? this.logger.info(meta, message) : this.logger.info(message);
+        this.logWithStyle("info", message, meta);
     }
 
     warn(message: string, ...meta: unknown[]): void {
-        meta ? this.logger.warn(meta, message) : this.logger.warn(message);
+        this.logWithStyle("warn", message, meta);
     }
 }
 
