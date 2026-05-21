@@ -34,6 +34,19 @@ export function getDatabase(customPath?: string): Database.Database {
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA);
+
+    // ── Live migrations ───────────────────────────────────────────────────────
+    // ALTER TABLE is idempotent-safe here: we catch the "duplicate column" error
+    // that SQLite throws when the column already exists. This handles existing
+    // sentinel.db files created before these columns were added to schema.sql.
+    const migrations = [
+        `ALTER TABLE alerts_fired ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`,
+        `ALTER TABLE alerts_fired ADD COLUMN delivered_at TEXT`,
+    ];
+    for (const sql of migrations) {
+        try { db.exec(sql); } catch { /* column already exists — no-op */ }
+    }
+
     return db;
 }
 
