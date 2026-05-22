@@ -43,10 +43,17 @@ export async function deliverPendingAlerts(
         failed: 0,
         errors: [],
     };
+
     const pending = getUndeliveredAlerts(db, network);
+
     if (pending.length === 0) return result;
+
+    logger.debug(`Dispatcher: ${pending.length} undelivered alert(s) for network ${network}`);
+
     for (const alert of pending) {
         result.attempted++;
+
+        // Build the AlertEvent payload from the joined row.
         const event = buildAlertEvent({
             type: "threshold_crossed",
             contractId: alert.contractId,
@@ -59,15 +66,33 @@ export async function deliverPendingAlerts(
             remainingTTL: alert.remainingTTL,
             firedAtLedger: alert.firedAtLedger,
         });
+
         try {
             await route(alert.channelType, alert.channelTarget, event);
             markAlertDelivered(db, alert.alertFiredId);
             result.delivered++;
-        } catch (err: any) {
+
+            logger.info(
+                `Alert delivered — id: ${alert.alertFiredId}, ` +
+                `channel: ${alert.channelType}, contract: ${alert.contractId}`,
+            );
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
             result.failed++;
-            result.errors.push(err.message || String(err));
+            result.errors.push(message);
+
+            logger.warn(
+                `Alert delivery failed — id: ${alert.alertFiredId}, ` +
+                `channel: ${alert.channelType}, error: ${message}. Will retry next cycle.`,
+            );
         }
     }
+
+    logger.debug(
+        `Dispatcher finished — attempted: ${result.attempted}, ` +
+        `delivered: ${result.delivered}, failed: ${result.failed}`,
+    );
+
     return result;
 }
 
