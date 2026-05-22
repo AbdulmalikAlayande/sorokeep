@@ -249,4 +249,54 @@ describe("getUndeliveredAlerts", () => {
 
     // =========================================================================
     // 4. MULTIPLE ALERTS PER CONTRACT
+    // =========================================================================
+    describe("Multiple alerts per contract/entry", () => {
+        it("returns one row per alert_fired record, not per contract", () => {
+            insertContract(db, { id: "CA", network: "testnet" });
+            upsertEntry(db, {
+                contract_id: "CA",
+                entry_key_xdr: "key-a",
+                entry_type: "instance",
+                live_until_ledger: 3_000_000,
+                discovery_source: "deterministic",
+            });
+            const entry = db
+                .prepare("SELECT id FROM contract_entries WHERE contract_id = ?")
+                .get("CA") as { id: number };
+
+            // Two different alert configs (webhook + slack)
+            insertAlertConfig(db, {
+                contract_id: "CA",
+                channel_type: "webhook",
+                channel_target: "https://example.com/hook",
+                threshold_ledgers: 20_000,
+            });
+            insertAlertConfig(db, {
+                contract_id: "CA",
+                channel_type: "slack",
+                channel_target: "#oncall",
+                threshold_ledgers: 5_000,
+            });
+
+            const configs = db
+                .prepare("SELECT id FROM alert_configs WHERE contract_id = ?")
+                .all("CA") as { id: number }[];
+
+            for (const config of configs) {
+                recordAlertFired(db, {
+                    alert_config_id: config.id,
+                    contract_entry_id: entry.id,
+                    fired_at_ledger: 2_500_000,
+                    ttl_at_fire: 3_000,
+                });
+            }
+
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result).toHaveLength(2);
+            const channelTypes = result.map((r) => r.channelType).sort();
+            expect(channelTypes).toEqual(["slack", "webhook"]);
+        });
+    });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
