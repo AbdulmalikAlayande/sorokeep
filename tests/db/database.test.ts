@@ -431,8 +431,27 @@ describe("Alert Operations", () => {
         expect(hasUnresolvedAlert(db, contractAlertConfigID, anotherEntryID)).toBe(true);
     });
 
-    it.skip("TODO: Implement automatic alert resolution when TTL is extended", () => {
-        // This logic will likely be in the Monitor/Daemon, but the DB should support it
+    it("should resolve alerts when resolveAlerts is called after TTL is extended", () => {
+        recordAlertFired(db, {
+            alert_config_id: contractAlertConfigID,
+            contract_entry_id: contractEntryID,
+            fired_at_ledger: 100,
+            ttl_at_fire: 450,
+        });
+        expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(true);
+
+        // Simulate TTL extension by upserting with a higher TTL
+        upsertEntry(db, {
+            contract_id: contractID,
+            entry_key_xdr: "XDR_KEY_1",
+            entry_type: "instance",
+            live_until_ledger: 2000,
+        });
+
+        // Resolve the alerts for this entry (monitor would trigger this on the next cycle)
+        resolveAlerts(db, contractEntryID);
+
+        expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
     });
 });
 
