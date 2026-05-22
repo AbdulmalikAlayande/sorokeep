@@ -123,4 +123,30 @@ describe("sendWebhookAlert", () => {
 
     // =========================================================================
     // 2. SUCCESS HANDLING
+    // =========================================================================
+    describe("Success handling", () => {
+        it("resolves without throwing on 200", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse(200));
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).resolves.not.toThrow();
+        });
+
+        it("resolves without throwing on 201", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse(201));
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).resolves.not.toThrow();
+        });
+
+        it("resolves without throwing on 204", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse(204));
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).resolves.not.toThrow();
+        });
+    });
+
+    // =========================================================================
+    // 3. ERROR HANDLING
 });
