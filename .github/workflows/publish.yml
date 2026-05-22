@@ -24,12 +24,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-         with:
-           node-version: 22
-           registry-url: https://npm.pkg.github.com
-           scope: "@abdulmalikalayande"
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@abdulmalikalayande"
       - run: npm ci
       - run: npm run build
+      - name: Rewrite package.json for GitHub Packages
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.name = '@abdulmalikalayande/soroban-sentinel';
+            pkg.publishConfig = { registry: 'https://npm.pkg.github.com' };
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2), 'utf8');
+          "
       - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -40,12 +49,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-         with:
-           node-version: 22
-           registry-url: https://registry.npmjs.org
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm run build
-      # Override registry config and publish scoped package publicly
-      - run: npm publish --registry=https://registry.npmjs.org --access=public
+      - run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

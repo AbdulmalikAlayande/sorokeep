@@ -1,5 +1,5 @@
 {
-  "name": "@abdulmalikalayande/soroban-sentinel",
+  "name": "soroban-sentinel",
   "version": "0.1.0",
   "description": "The missing operations layer for deployed Soroban smart contracts",
   "main": "dist/index.js",
@@ -28,9 +28,6 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/AbdulmalikAlayande/soroban-sentinel.git"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.1.0",
