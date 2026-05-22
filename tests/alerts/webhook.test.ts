@@ -210,4 +210,37 @@ describe("sendWebhookAlert", () => {
 
     // =========================================================================
     // 4. REQUEST CONFIGURATION
+    // =========================================================================
+    describe("Request configuration", () => {
+        it("sets a signal for abort / timeout control", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse());
+
+            await sendWebhookAlert("https://example.com/hook", makeAlertEvent());
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            // signal must be an AbortSignal instance
+            expect(options.signal).toBeDefined();
+        });
+
+        it("does not send extra unexpected top-level keys in the body", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse());
+            const event = makeAlertEvent();
+
+            await sendWebhookAlert("https://example.com/hook", event);
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            const keys = Object.keys(body).sort();
+            expect(keys).toEqual([
+                "contractId",
+                "contractName",
+                "entry",
+                "firedAtLedger",
+                "network",
+                "threshold",
+                "timestamp",
+                "type",
+            ]);
+        });
+    });
 });
