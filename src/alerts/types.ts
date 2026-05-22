@@ -26,3 +26,41 @@ export interface AlertEvent {
     /** ISO 8601 timestamp. */
     timestamp: string;
 }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Build an AlertEvent from raw data.  Keeps the assembly logic in one place
+ * so both the dispatcher and any future test fixtures share it.
+ */
+export function buildAlertEvent(opts: {
+    type: AlertEvent["type"];
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    entryKeyXdr: string;
+    entryType: string;
+    entryLabel: string | null;
+    configuredLedgers: number;
+    remainingTTL: number;
+    firedAtLedger: number;
+}): AlertEvent {
+    return {
+        type: opts.type,
+        contractId: opts.contractId,
+        contractName: opts.contractName,
+        network: opts.network,
+        entry: {
+            keyXdr: opts.entryKeyXdr,
+            type: opts.entryType,
+            label: opts.entryLabel,
+        },
+        threshold: {
+            configuredLedgers: opts.configuredLedgers,
+            currentRemainingLedgers: opts.remainingTTL,
+            approximateTimeRemaining: formatTimeToCloseLedger(opts.remainingTTL),
+        },
+        firedAtLedger: opts.firedAtLedger,
+        timestamp: new Date().toISOString(),
+    };
+}
