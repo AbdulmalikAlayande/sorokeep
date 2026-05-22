@@ -129,7 +129,8 @@ describe("watchContract - Deep Coverage Suite", () => {
         expect(entries).toHaveLength(1); // Only instance stored
     });
 
-    it.skip("TODO: supports discovery of manual storage keys during initial watch", async () => {        mockGetContractInstanceEntry.mockResolvedValue({
+    it("supports discovery of manual storage keys during initial watch", async () => {
+        mockGetContractInstanceEntry.mockResolvedValue({
             entryKeyXdr: "instance-key-xdr",
             wasmHash: null,
             latestLedger: MOCK_LEDGER,
