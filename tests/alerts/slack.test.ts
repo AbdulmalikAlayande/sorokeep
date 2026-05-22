@@ -217,4 +217,67 @@ describe("sendSlackAlert", () => {
 
     // =========================================================================
     // 4. ERROR HANDLING
+    // =========================================================================
+    describe("Error handling", () => {
+        it("throws when Slack API returns ok: false", async () => {
+            mockFetch.mockResolvedValue(makeSlackErrorResponse("channel_not_found"));
+
+            await expect(
+                sendSlackAlert("#oncall", makeAlertEvent()),
+            ).rejects.toThrow("channel_not_found");
+        });
+
+        it("throws when Slack API returns ok: false with invalid_auth", async () => {
+            mockFetch.mockResolvedValue(makeSlackErrorResponse("invalid_auth"));
+
+            await expect(
+                sendSlackAlert("#oncall", makeAlertEvent()),
+            ).rejects.toThrow("invalid_auth");
+        });
+
+        it("throws when fetch itself rejects (network error)", async () => {
+            mockFetch.mockRejectedValue(new Error("ECONNREFUSED"));
+
+            await expect(
+                sendSlackAlert("#oncall", makeAlertEvent()),
+            ).rejects.toThrow("ECONNREFUSED");
+        });
+
+        it("throws on HTTP 500 from Slack", async () => {
+            mockFetch.mockResolvedValue(
+                new Response("Internal Server Error", { status: 500 }),
+            );
+
+            await expect(
+                sendSlackAlert("#oncall", makeAlertEvent()),
+            ).rejects.toBeDefined();
+        });
+    });
+
+    // =========================================================================
+    // 5. BODY STRUCTURE
+    // =========================================================================
+    describe("Body structure", () => {
+        it("includes a blocks array in the body", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+
+            await sendSlackAlert("#oncall", makeAlertEvent());
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            expect(Array.isArray(body.blocks)).toBe(true);
+            expect(body.blocks.length).toBeGreaterThan(0);
+        });
+
+        it("includes a fallback text field", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+
+            await sendSlackAlert("#oncall", makeAlertEvent());
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            expect(typeof body.text).toBe("string");
+            expect(body.text.length).toBeGreaterThan(0);
+        });
+    });
 });
