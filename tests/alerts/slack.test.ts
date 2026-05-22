@@ -136,4 +136,85 @@ describe("sendSlackAlert", () => {
 
     // =========================================================================
     // 3. MESSAGE CONTENT
+    // =========================================================================
+    describe("Message content", () => {
+        it("includes the contract name in the message text", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+            const event = makeAlertEvent({ contractName: "defi-pool-v2" });
+
+            await sendSlackAlert("#oncall", event);
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            const text = body.text ?? JSON.stringify(body.blocks);
+            expect(text).toContain("defi-pool-v2");
+        });
+
+        it("includes the remaining TTL in the message", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+            const event = makeAlertEvent({
+                threshold: {
+                    configuredLedgers: 10_000,
+                    currentRemainingLedgers: 4_200,
+                    approximateTimeRemaining: "~6h 25m",
+                },
+            });
+
+            await sendSlackAlert("#oncall", event);
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            const text = body.text ?? JSON.stringify(body.blocks);
+            expect(text).toMatch(/4.?200|4200/); // either 4,200 or 4200
+        });
+
+        it("includes the network name in the message", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+            const event = makeAlertEvent({ network: "mainnet" });
+
+            await sendSlackAlert("#oncall", event);
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            const text = body.text ?? JSON.stringify(body.blocks);
+            expect(text).toContain("mainnet");
+        });
+
+        it("uses a warning emoji / indicator for threshold_crossed events", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+            const event = makeAlertEvent({ type: "threshold_crossed" });
+
+            await sendSlackAlert("#oncall", event);
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            const text = body.text ?? JSON.stringify(body.blocks);
+            // Should contain a warning indicator — emoji or text
+            expect(text.toLowerCase()).toMatch(/warning|⚠|alert|critical|ttl/i);
+        });
+
+        it("uses a resolved indicator for alert_resolved events", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+            const event = makeAlertEvent({ type: "alert_resolved" });
+
+            await sendSlackAlert("#oncall", event);
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            const text = body.text ?? JSON.stringify(body.blocks);
+            expect(text.toLowerCase()).toMatch(/resolved|recovered|✅|ok/i);
+        });
+
+        it("falls back gracefully when contractName is null", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+            const event = makeAlertEvent({ contractName: null });
+
+            await expect(
+                sendSlackAlert("#oncall", event),
+            ).resolves.not.toThrow();
+        });
+    });
+
+    // =========================================================================
+    // 4. ERROR HANDLING
 });
