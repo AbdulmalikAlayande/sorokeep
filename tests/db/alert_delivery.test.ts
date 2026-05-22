@@ -205,4 +205,48 @@ describe("getUndeliveredAlerts", () => {
 
     // =========================================================================
     // 3. DELIVERED FILTERING
+    // =========================================================================
+    describe("Delivered filtering", () => {
+        it("excludes alerts that have already been delivered", () => {
+            const { alertFiredId } = seedFull(db, {
+                contractId: "CA",
+                network: "testnet",
+            });
+            markAlertDelivered(db, alertFiredId);
+
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result).toHaveLength(0);
+        });
+
+        it("returns only undelivered when some are delivered and some are not", () => {
+            const { alertFiredId } = seedFull(db, {
+                contractId: "CA",
+                network: "testnet",
+                entryKeyXdr: "key-a",
+            });
+            seedFull(db, {
+                contractId: "CB",
+                network: "testnet",
+                entryKeyXdr: "key-b",
+            });
+
+            markAlertDelivered(db, alertFiredId);
+
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result).toHaveLength(1);
+            expect(result[0]!.contractId).toBe("CB");
+        });
+
+        it("does not exclude resolved alerts — resolved != delivered", () => {
+            const { entryId } = seedFull(db, { contractId: "CA", network: "testnet" });
+            resolveAlerts(db, entryId);
+
+            // resolved = 1, but delivered = 0 — still needs to be sent
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result).toHaveLength(1);
+        });
+    });
+
+    // =========================================================================
+    // 4. MULTIPLE ALERTS PER CONTRACT
 });
