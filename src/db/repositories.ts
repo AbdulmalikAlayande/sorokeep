@@ -246,3 +246,29 @@ export function getExtensionHistory(db: Database.Database, contractId: string, d
     SELECT * FROM extension_history WHERE contract_id = ? ORDER BY executed_at DESC
   `).all(contractId) as ExtensionRecord[];
 }
+
+// ---------------------------- Alert Delivery ----------------------------
+
+/**
+ * The fully-joined shape returned by getUndeliveredAlerts.
+ * Contains everything the dispatcher needs to build and route an AlertEvent
+ * without any further DB lookups.
+ */
+export interface UndeliveredAlert {
+    alertFiredId: number;
+    alertConfigId: number;
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    entryId: number;
+    entryKeyXdr: string;
+    entryType: string;
+    entryLabel: string | null;
+    channelType: "webhook" | "slack" | "email";
+    channelTarget: string;
+    thresholdLedgers: number;
+    /** TTL remaining at the moment the alert fired (ttl_at_fire). */
+    remainingTTL: number;
+    firedAtLedger: number;
+    firedAt: string;
+}
