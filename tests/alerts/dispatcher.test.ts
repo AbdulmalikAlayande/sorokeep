@@ -208,4 +208,72 @@ describe("deliverPendingAlerts", () => {
 
     // =========================================================================
     // 3. DELIVERED FLAG MANAGEMENT
+    // =========================================================================
+    describe("Delivered flag management", () => {
+        it("marks the alert as delivered in the DB after successful send", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            const { alertFiredId } = seedContractWithAlert(db, { contractId: "CA" });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const row = db
+                .prepare("SELECT delivered FROM alerts_fired WHERE id = ?")
+                .get(alertFiredId) as { delivered: number };
+            expect(row.delivered).toBe(1);
+        });
+
+        it("does NOT mark as delivered when send fails", async () => {
+            mockSendWebhookAlert.mockRejectedValue(new Error("connection refused"));
+            const { alertFiredId } = seedContractWithAlert(db, { contractId: "CA" });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const row = db
+                .prepare("SELECT delivered FROM alerts_fired WHERE id = ?")
+                .get(alertFiredId) as { delivered: number };
+            expect(row.delivered).toBe(0);
+        });
+
+        it("does not re-deliver already-delivered alerts", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, { contractId: "CA" });
+
+            // First delivery
+            await deliverPendingAlerts(db, "testnet");
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
+
+            // Second delivery cycle — already marked as delivered
+            await deliverPendingAlerts(db, "testnet");
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
+        });
+
+        it("retries a failed alert on the next cycle", async () => {
+            mockSendWebhookAlert
+                .mockRejectedValueOnce(new Error("Slack down"))
+                .mockResolvedValue(undefined);
+
+            const { alertFiredId } = seedContractWithAlert(db, { contractId: "CA" });
+
+            // First cycle — fails
+            await deliverPendingAlerts(db, "testnet");
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
+
+            let row = db
+                .prepare("SELECT delivered FROM alerts_fired WHERE id = ?")
+                .get(alertFiredId) as { delivered: number };
+            expect(row.delivered).toBe(0);
+
+            // Second cycle — succeeds
+            await deliverPendingAlerts(db, "testnet");
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(2);
+
+            row = db
+                .prepare("SELECT delivered FROM alerts_fired WHERE id = ?")
+                .get(alertFiredId) as { delivered: number };
+            expect(row.delivered).toBe(1);
+        });
+    });
+
+    // =========================================================================
+    // 4. ERROR RESILIENCE
 });
