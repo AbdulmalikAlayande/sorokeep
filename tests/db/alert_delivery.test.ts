@@ -180,4 +180,29 @@ describe("getUndeliveredAlerts", () => {
 
     // =========================================================================
     // 2. NETWORK FILTERING
+    // =========================================================================
+    describe("Network filtering", () => {
+        it("only returns alerts for the specified network", () => {
+            seedFull(db, { contractId: "TESTNET_C", network: "testnet" });
+            seedFull(db, { contractId: "MAINNET_C", network: "mainnet" });
+
+            const testnetAlerts = getUndeliveredAlerts(db, "testnet");
+            const mainnetAlerts = getUndeliveredAlerts(db, "mainnet");
+
+            expect(testnetAlerts).toHaveLength(1);
+            expect(testnetAlerts[0]!.network).toBe("testnet");
+
+            expect(mainnetAlerts).toHaveLength(1);
+            expect(mainnetAlerts[0]!.network).toBe("mainnet");
+        });
+
+        it("returns empty array for a network with no alerts", () => {
+            seedFull(db, { contractId: "TESTNET_C", network: "testnet" });
+            const result = getUndeliveredAlerts(db, "mainnet");
+            expect(result).toHaveLength(0);
+        });
+    });
+
+    // =========================================================================
+    // 3. DELIVERED FILTERING
 });
