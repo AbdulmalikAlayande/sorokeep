@@ -309,3 +309,15 @@ export function getUndeliveredAlerts(
 
     return rows;
 }
+
+/**
+ * Mark a single alerts_fired record as delivered.
+ * Idempotent — safe to call more than once.
+ */
+export function markAlertDelivered(db: Database.Database, alertFiredId: number): void {
+    db.prepare(`
+        UPDATE alerts_fired
+        SET delivered = 1, delivered_at = datetime('now')
+        WHERE id = ?
+    `).run(alertFiredId);
+}
