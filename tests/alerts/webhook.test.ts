@@ -149,4 +149,65 @@ describe("sendWebhookAlert", () => {
 
     // =========================================================================
     // 3. ERROR HANDLING
+    // =========================================================================
+    describe("Error handling", () => {
+        it("throws on 400 Bad Request", async () => {
+            mockFetch.mockResolvedValue(makeErrorResponse(400));
+
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).rejects.toThrow("400");
+        });
+
+        it("throws on 401 Unauthorized", async () => {
+            mockFetch.mockResolvedValue(makeErrorResponse(401));
+
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).rejects.toThrow("401");
+        });
+
+        it("throws on 404 Not Found", async () => {
+            mockFetch.mockResolvedValue(makeErrorResponse(404));
+
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).rejects.toThrow("404");
+        });
+
+        it("throws on 500 Internal Server Error", async () => {
+            mockFetch.mockResolvedValue(makeErrorResponse(500));
+
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).rejects.toThrow("500");
+        });
+
+        it("throws on 503 Service Unavailable", async () => {
+            mockFetch.mockResolvedValue(makeErrorResponse(503));
+
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).rejects.toThrow("503");
+        });
+
+        it("throws when fetch itself rejects (network unreachable)", async () => {
+            mockFetch.mockRejectedValue(new Error("ECONNREFUSED"));
+
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).rejects.toThrow("ECONNREFUSED");
+        });
+
+        it("throws when fetch rejects with a non-Error value", async () => {
+            mockFetch.mockRejectedValue("network gone");
+
+            await expect(
+                sendWebhookAlert("https://example.com/hook", makeAlertEvent()),
+            ).rejects.toBeDefined();
+        });
+    });
+
+    // =========================================================================
+    // 4. REQUEST CONFIGURATION
 });
