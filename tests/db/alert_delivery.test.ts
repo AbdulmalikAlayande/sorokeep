@@ -300,3 +300,53 @@ describe("getUndeliveredAlerts", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe("markAlertDelivered", () => {
+    let db: Database.Database;
+
+    beforeEach(() => {
+        db = getDatabaseForTesting();
+    });
+
+    it("sets delivered = 1 on the target record", () => {
+        const { alertFiredId } = seedFull(db, { contractId: "CA", network: "testnet" });
+
+        markAlertDelivered(db, alertFiredId);
+
+        const row = db
+            .prepare("SELECT delivered FROM alerts_fired WHERE id = ?")
+            .get(alertFiredId) as { delivered: number };
+        expect(row.delivered).toBe(1);
+    });
+
+    it("sets delivered_at to a non-null timestamp", () => {
+        const { alertFiredId } = seedFull(db, { contractId: "CA", network: "testnet" });
+
+        markAlertDelivered(db, alertFiredId);
+
+        const row = db
+            .prepare("SELECT delivered_at FROM alerts_fired WHERE id = ?")
+            .get(alertFiredId) as { delivered_at: string | null };
+        expect(row.delivered_at).not.toBeNull();
+    });
+
+    it("does not affect other alert fired records", () => {
+        const { alertFiredId: id1 } = seedFull(db, {
+            contractId: "CA",
+            network: "testnet",
+            entryKeyXdr: "key-a",
+        });
+        const { alertFiredId: id2 } = seedFull(db, {
+            contractId: "CB",
+            network: "testnet",
+            entryKeyXdr: "key-b",
+        });
+
+        markAlertDelivered(db, id1);
+
+        const row = db
+            .prepare("SELECT delivered FROM alerts_fired WHERE id = ?")
+            .get(id2) as { delivered: number };
+        expect(row.delivered).toBe(0);
+    });
+});
