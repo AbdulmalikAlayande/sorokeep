@@ -93,4 +93,44 @@ export async function sendSlackAlert(channel: string, event: AlertEvent): Promis
             "Export your Slack Bot Token before starting the daemon.",
         );
     }
+
+    logger.debug(`Sending Slack alert to ${channel}`, { type: event.type, contractId: event.contractId });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+    let response: Response;
+    try {
+        response = await fetch(SLACK_API_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+                channel,
+                text: buildFallbackText(event),
+                blocks: buildBlocks(event),
+            }),
+            signal: controller.signal,
+        });
+    } finally {
+        clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+        throw new Error(
+            `Slack API request failed: HTTP ${response.status}`,
+        );
+    }
+
+    // Slack always returns HTTP 200, but errors are in the body as ok: false
+    const body = await response.json() as { ok: boolean; error?: string };
+    if (!body.ok) {
+        throw new Error(
+            `Slack API error: ${body.error ?? "unknown error"}`,
+        );
+    }
+
+    logger.debug(`Slack alert delivered successfully to ${channel}`);
 }
