@@ -349,4 +349,16 @@ describe("markAlertDelivered", () => {
             .get(id2) as { delivered: number };
         expect(row.delivered).toBe(0);
     });
+
+    it("is idempotent — calling it twice does not throw", () => {
+        const { alertFiredId } = seedFull(db, { contractId: "CA", network: "testnet" });
+        expect(() => {
+            markAlertDelivered(db, alertFiredId);
+            markAlertDelivered(db, alertFiredId);
+        }).not.toThrow();
+    });
+
+    it("is a no-op for a non-existent id — does not throw", () => {
+        expect(() => markAlertDelivered(db, 99999)).not.toThrow();
+    });
 });
