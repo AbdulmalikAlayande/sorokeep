@@ -28,4 +28,12 @@ export async function sendWebhookAlert(url: string, event: AlertEvent): Promise<
     } finally {
         clearTimeout(timeout);
     }
+
+    if (!response.ok) {
+        throw new Error(
+            `Webhook delivery failed: HTTP ${response.status} from ${url}`,
+        );
+    }
+
+    logger.debug(`Webhook alert delivered successfully to ${url}`);
 }
