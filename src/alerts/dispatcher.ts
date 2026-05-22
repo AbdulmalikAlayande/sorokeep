@@ -45,6 +45,29 @@ export async function deliverPendingAlerts(
     };
     const pending = getUndeliveredAlerts(db, network);
     if (pending.length === 0) return result;
+    for (const alert of pending) {
+        result.attempted++;
+        const event = buildAlertEvent({
+            type: "threshold_crossed",
+            contractId: alert.contractId,
+            contractName: alert.contractName,
+            network: alert.network,
+            entryKeyXdr: alert.entryKeyXdr,
+            entryType: alert.entryType,
+            entryLabel: alert.entryLabel,
+            configuredLedgers: alert.thresholdLedgers,
+            remainingTTL: alert.remainingTTL,
+            firedAtLedger: alert.firedAtLedger,
+        });
+        try {
+            await route(alert.channelType, alert.channelTarget, event);
+            markAlertDelivered(db, alert.alertFiredId);
+            result.delivered++;
+        } catch (err: any) {
+            result.failed++;
+            result.errors.push(err.message || String(err));
+        }
+    }
     return result;
 }
 
