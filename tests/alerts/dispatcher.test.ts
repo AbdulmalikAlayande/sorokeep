@@ -276,4 +276,174 @@ describe("deliverPendingAlerts", () => {
 
     // =========================================================================
     // 4. ERROR RESILIENCE
+    // =========================================================================
+    describe("Error resilience", () => {
+        it("never throws even if all deliveries fail", async () => {
+            mockSendWebhookAlert.mockRejectedValue(new Error("all down"));
+            seedContractWithAlert(db, { contractId: "CA", entryKeyXdr: "key-a" });
+            seedContractWithAlert(db, { contractId: "CB", entryKeyXdr: "key-b" });
+
+            await expect(
+                deliverPendingAlerts(db, "testnet"),
+            ).resolves.not.toThrow();
+        });
+
+        it("continues delivering subsequent alerts even if one fails", async () => {
+            mockSendWebhookAlert
+                .mockRejectedValueOnce(new Error("first failed"))
+                .mockResolvedValue(undefined);
+
+            seedContractWithAlert(db, { contractId: "CA", entryKeyXdr: "key-a" });
+            seedContractWithAlert(db, { contractId: "CB", entryKeyXdr: "key-b" });
+
+            const result = await deliverPendingAlerts(db, "testnet");
+
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(2);
+            expect(result.delivered).toBe(1);
+            expect(result.failed).toBe(1);
+        });
+
+        it("collects error messages for all failed deliveries", async () => {
+            mockSendWebhookAlert.mockRejectedValue(new Error("connection timeout"));
+            seedContractWithAlert(db, { contractId: "CA", entryKeyXdr: "key-a" });
+            seedContractWithAlert(db, { contractId: "CB", entryKeyXdr: "key-b" });
+
+            const result = await deliverPendingAlerts(db, "testnet");
+
+            expect(result.errors).toHaveLength(2);
+            for (const err of result.errors) {
+                expect(err).toContain("connection timeout");
+            }
+        });
+
+        it("handles non-Error exceptions from delivery handlers", async () => {
+            mockSendWebhookAlert.mockRejectedValue("string error");
+            seedContractWithAlert(db, { contractId: "CA" });
+
+            const result = await deliverPendingAlerts(db, "testnet");
+
+            expect(result.failed).toBe(1);
+            expect(result.errors).toHaveLength(1);
+        });
+    });
+
+    // =========================================================================
+    // 5. COUNTING
+    // =========================================================================
+    describe("Result counting", () => {
+        it("counts attempted as total alerts processed regardless of outcome", async () => {
+            mockSendWebhookAlert
+                .mockResolvedValueOnce(undefined)
+                .mockRejectedValueOnce(new Error("fail"));
+
+            seedContractWithAlert(db, { contractId: "CA", entryKeyXdr: "key-a" });
+            seedContractWithAlert(db, { contractId: "CB", entryKeyXdr: "key-b" });
+
+            const result = await deliverPendingAlerts(db, "testnet");
+
+            expect(result.attempted).toBe(2);
+            expect(result.delivered).toBe(1);
+            expect(result.failed).toBe(1);
+        });
+
+        it("counts all successful deliveries across channels", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            mockSendSlackAlert.mockResolvedValue(undefined);
+
+            seedContractWithAlert(db, {
+                contractId: "CA",
+                entryKeyXdr: "key-a",
+                channelType: "webhook",
+            });
+            seedContractWithAlert(db, {
+                contractId: "CB",
+                entryKeyXdr: "key-b",
+                channelType: "slack",
+                channelTarget: "#alerts",
+            });
+
+            const result = await deliverPendingAlerts(db, "testnet");
+
+            expect(result.attempted).toBe(2);
+            expect(result.delivered).toBe(2);
+            expect(result.failed).toBe(0);
+        });
+    });
+
+    // =========================================================================
+    // 6. NETWORK ISOLATION
+    // =========================================================================
+    describe("Network isolation", () => {
+        it("only delivers alerts for the specified network", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, { contractId: "TESTNET_C", network: "testnet" });
+            seedContractWithAlert(db, { contractId: "MAINNET_C", network: "mainnet" });
+
+            const result = await deliverPendingAlerts(db, "testnet");
+
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
+            expect(result.attempted).toBe(1);
+        });
+
+        it("delivers nothing when no alerts exist for the given network", async () => {
+            seedContractWithAlert(db, { contractId: "MAINNET_C", network: "mainnet" });
+
+            const result = await deliverPendingAlerts(db, "testnet");
+
+            expect(mockSendWebhookAlert).not.toHaveBeenCalled();
+            expect(result.attempted).toBe(0);
+        });
+    });
+
+    // =========================================================================
+    // 7. PAYLOAD CORRECTNESS
+    // =========================================================================
+    describe("Payload correctness", () => {
+        it("event timestamp is a valid ISO 8601 string", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, { contractId: "CA" });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const [, event] = mockSendWebhookAlert.mock.calls[0]!;
+            expect(() => new Date(event.timestamp)).not.toThrow();
+            expect(new Date(event.timestamp).toISOString()).toBe(event.timestamp);
+        });
+
+        it("event entry.keyXdr matches the stored entry_key_xdr", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, {
+                contractId: "CA",
+                entryKeyXdr: "special-xdr-key",
+            });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const [, event] = mockSendWebhookAlert.mock.calls[0]!;
+            expect(event.entry.keyXdr).toBe("special-xdr-key");
+        });
+
+        it("event firedAtLedger matches the stored fired_at_ledger", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, {
+                contractId: "CA",
+            });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const [, event] = mockSendWebhookAlert.mock.calls[0]!;
+            expect(event.firedAtLedger).toBe(2_500_000);
+        });
+
+        it("approximateTimeRemaining is a non-empty string", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, { contractId: "CA", ttlAtFire: 50_000 });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const [, event] = mockSendWebhookAlert.mock.calls[0]!;
+            expect(typeof event.threshold.approximateTimeRemaining).toBe("string");
+            expect(event.threshold.approximateTimeRemaining.length).toBeGreaterThan(0);
+        });
+    });
 });
