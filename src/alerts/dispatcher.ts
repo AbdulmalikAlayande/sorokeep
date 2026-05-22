@@ -37,7 +37,15 @@ export async function deliverPendingAlerts(
     db: Database.Database,
     network: string,
 ): Promise<DeliveryResult> {
-    return { attempted: 0, delivered: 0, failed: 0, errors: [] };
+    const result: DeliveryResult = {
+        attempted: 0,
+        delivered: 0,
+        failed: 0,
+        errors: [],
+    };
+    const pending = getUndeliveredAlerts(db, network);
+    if (pending.length === 0) return result;
+    return result;
 }
 
 // ─── Private ─────────────────────────────────────────────────────────────────
