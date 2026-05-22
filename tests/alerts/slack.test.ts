@@ -94,4 +94,46 @@ describe("sendSlackAlert", () => {
 
     // =========================================================================
     // 2. HTTP REQUEST SHAPE
+    // =========================================================================
+    describe("HTTP request shape", () => {
+        it("calls the Slack chat.postMessage endpoint", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+
+            await sendSlackAlert("#oncall", makeAlertEvent());
+
+            const [url] = mockFetch.mock.calls[0]!;
+            expect(url).toContain("chat.postMessage");
+        });
+
+        it("uses HTTP POST", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+
+            await sendSlackAlert("#oncall", makeAlertEvent());
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            expect(options.method).toBe("POST");
+        });
+
+        it("sets Content-Type to application/json", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+
+            await sendSlackAlert("#oncall", makeAlertEvent());
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            expect(options.headers["Content-Type"]).toBe("application/json");
+        });
+
+        it("sends the correct channel in the body", async () => {
+            mockFetch.mockResolvedValue(makeSlackOkResponse());
+
+            await sendSlackAlert("#my-alerts", makeAlertEvent());
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            expect(body.channel).toBe("#my-alerts");
+        });
+    });
+
+    // =========================================================================
+    // 3. MESSAGE CONTENT
 });
