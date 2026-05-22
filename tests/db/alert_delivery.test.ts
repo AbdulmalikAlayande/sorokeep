@@ -78,3 +78,106 @@ function seedFull(
 
     return { entryId: entry.id, alertConfigId: config.id, alertFiredId: fired.id };
 }
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+describe("getUndeliveredAlerts", () => {
+    let db: Database.Database;
+
+    beforeEach(() => {
+        db = getDatabaseForTesting();
+    });
+
+    // =========================================================================
+    // 1. BASIC RETRIEVAL
+    // =========================================================================
+    describe("Basic retrieval", () => {
+        it("returns an empty array when no alerts have been fired", () => {
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result).toEqual([]);
+        });
+
+        it("returns one undelivered alert with correct shape", () => {
+            seedFull(db, {
+                contractId: "CONTRACT_A",
+                contractName: "MyContract",
+                network: "testnet",
+                entryKeyXdr: "key-xdr-a",
+                entryType: "instance",
+                channelType: "webhook",
+                channelTarget: "https://example.com/hook",
+                thresholdLedgers: 20_000,
+                ttlAtFire: 8_000,
+                firedAtLedger: 2_500_000,
+            });
+
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result).toHaveLength(1);
+
+            const alert = result[0]!;
+            expect(alert.contractId).toBe("CONTRACT_A");
+            expect(alert.contractName).toBe("MyContract");
+            expect(alert.network).toBe("testnet");
+            expect(alert.entryKeyXdr).toBe("key-xdr-a");
+            expect(alert.entryType).toBe("instance");
+            expect(alert.channelType).toBe("webhook");
+            expect(alert.channelTarget).toBe("https://example.com/hook");
+            expect(alert.thresholdLedgers).toBe(20_000);
+            expect(alert.remainingTTL).toBe(8_000);
+            expect(alert.firedAtLedger).toBe(2_500_000);
+            expect(typeof alert.alertFiredId).toBe("number");
+            expect(typeof alert.entryId).toBe("number");
+            expect(typeof alert.alertConfigId).toBe("number");
+        });
+
+        it("returns multiple undelivered alerts", () => {
+            seedFull(db, { contractId: "CA", network: "testnet", entryKeyXdr: "key-a" });
+            seedFull(db, { contractId: "CB", network: "testnet", entryKeyXdr: "key-b" });
+
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result).toHaveLength(2);
+        });
+
+        it("sets entryLabel to null when no label is stored", () => {
+            seedFull(db, { contractId: "CA", network: "testnet" });
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result[0]!.entryLabel).toBeNull();
+        });
+
+        it("returns the entryLabel when one is set", () => {
+            insertContract(db, { id: "CA", network: "testnet" });
+            upsertEntry(db, {
+                contract_id: "CA",
+                entry_key_xdr: "key-a",
+                entry_type: "instance",
+                label: "Contract Instance",
+                live_until_ledger: 3_000_000,
+                discovery_source: "deterministic",
+            });
+            const entry = db
+                .prepare("SELECT id FROM contract_entries WHERE contract_id = ?")
+                .get("CA") as { id: number };
+            insertAlertConfig(db, {
+                contract_id: "CA",
+                channel_type: "webhook",
+                channel_target: "https://example.com/hook",
+                threshold_ledgers: 20_000,
+            });
+            const config = db
+                .prepare("SELECT id FROM alert_configs WHERE contract_id = ?")
+                .get("CA") as { id: number };
+            recordAlertFired(db, {
+                alert_config_id: config.id,
+                contract_entry_id: entry.id,
+                fired_at_ledger: 2_500_000,
+                ttl_at_fire: 5_000,
+            });
+
+            const result = getUndeliveredAlerts(db, "testnet");
+            expect(result[0]!.entryLabel).toBe("Contract Instance");
+        });
+    });
+
+    // =========================================================================
+    // 2. NETWORK FILTERING
+});
