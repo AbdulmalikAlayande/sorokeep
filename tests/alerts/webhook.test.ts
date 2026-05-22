@@ -58,4 +58,69 @@ describe("sendWebhookAlert", () => {
         vi.unstubAllGlobals();
         vi.stubGlobal("fetch", mockFetch);
     });
+
+    // =========================================================================
+    // 1. HTTP REQUEST SHAPE
+    // =========================================================================
+    describe("HTTP request shape", () => {
+        it("calls fetch with the correct URL", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse());
+            const url = "https://ops.example.com/webhook";
+
+            await sendWebhookAlert(url, makeAlertEvent());
+
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+            const [calledUrl] = mockFetch.mock.calls[0]!;
+            expect(calledUrl).toBe(url);
+        });
+
+        it("uses HTTP POST method", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse());
+
+            await sendWebhookAlert("https://example.com/hook", makeAlertEvent());
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            expect(options.method).toBe("POST");
+        });
+
+        it("sets Content-Type to application/json", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse());
+
+            await sendWebhookAlert("https://example.com/hook", makeAlertEvent());
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            expect(options.headers["Content-Type"]).toBe("application/json");
+        });
+
+        it("sends the full AlertEvent as the JSON body", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse());
+            const event = makeAlertEvent({ contractId: "UNIQUE_CONTRACT_ID" });
+
+            await sendWebhookAlert("https://example.com/hook", event);
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            expect(body.type).toBe("threshold_crossed");
+            expect(body.contractId).toBe("UNIQUE_CONTRACT_ID");
+            expect(body.contractName).toBe("my-defi-pool");
+            expect(body.network).toBe("testnet");
+            expect(body.entry.type).toBe("instance");
+            expect(body.threshold.configuredLedgers).toBe(20_000);
+            expect(body.firedAtLedger).toBe(2_500_000);
+        });
+
+        it("sends alert_resolved events with type = 'alert_resolved'", async () => {
+            mockFetch.mockResolvedValue(makeOkResponse());
+            const event = makeAlertEvent({ type: "alert_resolved" });
+
+            await sendWebhookAlert("https://example.com/hook", event);
+
+            const [, options] = mockFetch.mock.calls[0]!;
+            const body = JSON.parse(options.body as string);
+            expect(body.type).toBe("alert_resolved");
+        });
+    });
+
+    // =========================================================================
+    // 2. SUCCESS HANDLING
 });
