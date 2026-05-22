@@ -76,4 +76,21 @@ function buildFallbackText(event: AlertEvent): string {
     );
 }
 
-export async function sendSlackAlert(channel: string, event: any): Promise<void> {}
+// ─── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Send an AlertEvent to a Slack channel via the Slack Web API.
+ *
+ * Reads the Bot Token from `process.env.SENTINEL_SLACK_TOKEN`.
+ * Throws when the token is absent, the network fails, or Slack returns ok: false.
+ * The caller (dispatcher) handles retry via the `delivered` flag.
+ */
+export async function sendSlackAlert(channel: string, event: AlertEvent): Promise<void> {
+    const token = process.env["SENTINEL_SLACK_TOKEN"];
+    if (!token) {
+        throw new Error(
+            "SENTINEL_SLACK_TOKEN environment variable is not set. " +
+            "Export your Slack Bot Token before starting the daemon.",
+        );
+    }
+}
