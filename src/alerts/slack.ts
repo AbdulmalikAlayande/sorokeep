@@ -62,4 +62,18 @@ function buildBlocks(event: AlertEvent): SlackBlock[] {
     return [header, details, footer];
 }
 
+function buildFallbackText(event: AlertEvent): string {
+    const isAlert = event.type === "threshold_crossed";
+    const icon = isAlert ? "⚠️" : "✅";
+    const status = isAlert ? "TTL Warning" : "Alert Resolved";
+    const contractDisplay = event.contractName ?? event.contractId;
+
+    return (
+        `${icon} ${status} — ${contractDisplay} (${event.network}) | ` +
+        `Remaining: ${event.threshold.currentRemainingLedgers.toLocaleString()} ledgers ` +
+        `(${event.threshold.approximateTimeRemaining}) | ` +
+        `Threshold: ${event.threshold.configuredLedgers.toLocaleString()} ledgers`
+    );
+}
+
 export async function sendSlackAlert(channel: string, event: any): Promise<void> {}
