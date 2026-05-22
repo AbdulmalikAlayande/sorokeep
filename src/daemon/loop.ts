@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
+import { deliverPendingAlerts } from "../alerts/dispatcher.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "DaemonLoop" });
