@@ -4,6 +4,7 @@ import { initLogger } from "./logging";
 import { registerWatchCommand } from "./commands/watch";
 import { registerStatusCommand } from "./commands/status";
 import { registerDaemonCommand } from "./commands/daemon";
+import { registerAlertsCommand } from "./commands/alerts";
 
 initLogger({ mode: "cli" });
 
@@ -17,16 +18,13 @@ program
 registerWatchCommand(program);
 registerStatusCommand(program);
 registerDaemonCommand(program);
+registerAlertsCommand(program);
+
 // Placeholder commands — future milestones
 program
     .command("guard <contractId>")
     .description("Configure auto-extension policy for a contract")
     .action(() => console.log("guard command — not yet implemented"));
-
-program
-    .command("alerts")
-    .description("Manage alert configurations")
-    .action(() => console.log("alerts command — not yet implemented"));
 
 program
     .command("costs <contractId>")
