@@ -80,4 +80,51 @@ export function registerAlertsCommand(program: Command): void {
 
     alerts
         .command("list")
+        .description("List alert configurations for a contract")
+        .requiredOption("--contract <id>", "The contract ID to list alerts for")
+        .action((options) => {
+            const contractId = options.contract;
+            const db = getDatabase();
+
+            const contract = getContract(db, contractId);
+            if (!contract) {
+                console.error(chalk.red(`Error: Contract ${formatContractID(contractId)} is not registered.`));
+                process.exit(1);
+            }
+
+            const configs = getAlertConfigsForContract(db, contractId);
+            if (configs.length === 0) {
+                console.log(chalk.yellow(`No alert configurations found for contract ${formatContractID(contractId)}.`));
+                return;
+            }
+
+            console.log();
+            console.log(chalk.bold(`  Alert Configurations for ${contract.name ?? formatContractID(contractId)}`));
+            console.log();
+            for (const config of configs) {
+                console.log(
+                    `  ID: ${chalk.cyan(config.id.toString().padEnd(4))} | ` +
+                    `Type: ${chalk.yellow(config.channel_type.padEnd(8))} | ` +
+                    `Target: ${chalk.green(config.channel_target.padEnd(30))} | ` +
+                    `Threshold: ${chalk.magenta(config.threshold_ledgers.toLocaleString())} ledgers`
+                );
+            }
+            console.log();
+        });
+
+    alerts
+        .command("remove")
+        .description("Remove an alert configuration")
+        .requiredOption("--id <id>", "The alert configuration ID to remove")
+        .action((options) => {
+            const id = parseInt(options.id, 10);
+            if (isNaN(id)) {
+                console.error(chalk.red("Error: --id must be a number."));
+                process.exit(1);
+            }
+
+            const db = getDatabase();
+            deleteAlertConfig(db, id);
+            console.log(chalk.green(`Successfully removed alert config ID ${id}.`));
+        });
 }
