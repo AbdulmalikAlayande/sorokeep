@@ -6,9 +6,14 @@ import type { MonitorCycleResult } from "../../src/core/monitor";
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
 const mockRunMonitorCycle = vi.fn();
+const mockDeliverPendingAlerts = vi.fn();
 
 vi.mock("../../src/core/monitor.js", () => ({
     runMonitorCycle: (...args: unknown[]) => mockRunMonitorCycle(...args),
+}));
+
+vi.mock("../../src/alerts/dispatcher.js", () => ({
+    deliverPendingAlerts: (...args: unknown[]) => mockDeliverPendingAlerts(...args),
 }));
 
 import { startDaemon, stopDaemon } from "../../src/daemon/loop.js";
@@ -37,6 +42,13 @@ describe("daemon loop", () => {
         db = getDatabaseForTesting();
         vi.clearAllMocks();
         vi.useFakeTimers();
+        // Default: deliver succeeds silently so loop tests focus on cycle behaviour
+        mockDeliverPendingAlerts.mockResolvedValue({
+            attempted: 0,
+            delivered: 0,
+            failed: 0,
+            errors: [],
+        });
     });
 
     afterEach(() => {
