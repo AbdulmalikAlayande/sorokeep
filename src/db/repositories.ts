@@ -272,3 +272,40 @@ export interface UndeliveredAlert {
     firedAtLedger: number;
     firedAt: string;
 }
+
+/**
+ * Return all undelivered (delivered = 0) alerts for the given network,
+ * joining alerts_fired → alert_configs → contract_entries → contracts.
+ */
+export function getUndeliveredAlerts(
+    db: Database.Database,
+    network: string,
+): UndeliveredAlert[] {
+    const rows = db.prepare(`
+        SELECT
+            af.id            AS alertFiredId,
+            ac.id            AS alertConfigId,
+            c.id             AS contractId,
+            c.name           AS contractName,
+            c.network        AS network,
+            ce.id            AS entryId,
+            ce.entry_key_xdr AS entryKeyXdr,
+            ce.entry_type    AS entryType,
+            ce.label         AS entryLabel,
+            ac.channel_type  AS channelType,
+            ac.channel_target AS channelTarget,
+            ac.threshold_ledgers AS thresholdLedgers,
+            af.ttl_at_fire   AS remainingTTL,
+            af.fired_at_ledger AS firedAtLedger,
+            af.fired_at      AS firedAt
+        FROM alerts_fired af
+        JOIN alert_configs ac  ON ac.id  = af.alert_config_id
+        JOIN contract_entries ce ON ce.id = af.contract_entry_id
+        JOIN contracts c       ON c.id  = ce.contract_id
+        WHERE af.delivered = 0
+          AND c.network = ?
+        ORDER BY af.fired_at ASC
+    `).all(network) as UndeliveredAlert[];
+
+    return rows;
+}
