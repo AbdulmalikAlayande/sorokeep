@@ -1,8 +1,8 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { getDatabase } from "../db/database";
-import { startDaemon, stopDaemon } from "../daemon/loop";
-import { getLogger } from "../logging";
+import { getDatabase } from "../db/database.js";
+import { startDaemon, stopDaemon } from "../daemon/loop.js";
+import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "DaemonCommand" });
 

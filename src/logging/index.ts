@@ -1,5 +1,5 @@
-import {Logger} from "./types";
-import {createLogger} from "./logger";
+import {Logger} from "./types.js";
+import {createLogger} from "./logger.js";
 
 export type AppMode = "cli" | "daemon" | "test";
 

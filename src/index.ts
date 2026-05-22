@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { initLogger } from "./logging";
-import { registerWatchCommand } from "./commands/watch";
-import { registerStatusCommand } from "./commands/status";
-import { registerDaemonCommand } from "./commands/daemon";
-import { registerAlertsCommand } from "./commands/alerts";
+import { initLogger } from "./logging/index.js";
+import { registerWatchCommand } from "./commands/watch.js";
+import { registerStatusCommand } from "./commands/status.js";
+import { registerDaemonCommand } from "./commands/daemon.js";
+import { registerAlertsCommand } from "./commands/alerts.js";
 
 initLogger({ mode: "cli" });
 

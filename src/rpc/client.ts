@@ -1,5 +1,5 @@
 import { Contract, rpc, xdr } from "@stellar/stellar-sdk";
-import { getLogger } from "../logging";
+import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "StellarRpcClient" });
 

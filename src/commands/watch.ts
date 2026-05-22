@@ -1,10 +1,10 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
-import { getDatabase } from "../db/database";
-import { getLogger } from "../logging";
-import {classifyTTL, formatContractID, formatTimeToCloseLedger, statusIndicator} from "../utils/formatting";
-import {watchContract} from "../core/watch";
+import { getDatabase } from "../db/database.js";
+import { getLogger } from "../logging/index.js";
+import {classifyTTL, formatContractID, formatTimeToCloseLedger, statusIndicator} from "../utils/formatting.js";
+import {watchContract} from "../core/watch.js";
 
 const logger = getLogger().child({ component: 'WatchCommand' });
 

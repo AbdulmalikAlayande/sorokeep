@@ -1,13 +1,13 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { getDatabase } from "../db/database";
+import { getDatabase } from "../db/database.js";
 import {
     insertAlertConfig,
     getAlertConfigsForContract,
     deleteAlertConfig,
     getContract,
-} from "../db/repositories";
-import { formatContractID } from "../utils/formatting";
+} from "../db/repositories.js";
+import { formatContractID } from "../utils/formatting.js";
 
 export function registerAlertsCommand(program: Command): void {
     const alerts = program

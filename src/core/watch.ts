@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
-import { StellarRpcClient, ContractInstanceResult, SentinelLedgerEntryResult } from "../rpc/client";
-import { insertContract, upsertEntry, updateLastCheckedLedger, getContract } from "../db/repositories";
-import {getLogger} from "../logging";
+import { StellarRpcClient, ContractInstanceResult, SentinelLedgerEntryResult } from "../rpc/client.js";
+import { insertContract, upsertEntry, updateLastCheckedLedger, getContract } from "../db/repositories.js";
+import {getLogger} from "../logging/index.js";
 
 const logger = getLogger()
 

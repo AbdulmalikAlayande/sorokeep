@@ -1,4 +1,4 @@
-import {Logger, LogLevel} from "./types";
+import {Logger, LogLevel} from "./types.js";
 import chalk from "chalk";
 import pino, { LoggerOptions as PinoLoggerOptions, Logger as PinoLogger} from "pino"
 import util from "util"

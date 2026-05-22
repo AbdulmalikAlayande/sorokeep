@@ -1,13 +1,13 @@
 import { Command } from "commander";
 import chalk from "chalk";
-import { getDatabase } from "../db/database";
-import { getContract, getEntriesForContract } from "../db/repositories";
+import { getDatabase } from "../db/database.js";
+import { getContract, getEntriesForContract } from "../db/repositories.js";
 import {
     classifyTTL,
     statusIndicator,
     formatTimeToCloseLedger,
     formatContractID,
-} from "../utils/formatting";
+} from "../utils/formatting.js";
 
 export function registerStatusCommand(program: Command): void {
     program
