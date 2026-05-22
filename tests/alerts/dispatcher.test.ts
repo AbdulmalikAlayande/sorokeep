@@ -120,4 +120,92 @@ describe("deliverPendingAlerts", () => {
 
     // =========================================================================
     // 2. CHANNEL ROUTING
+    // =========================================================================
+    describe("Channel routing", () => {
+        it("routes webhook alerts to sendWebhookAlert", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, {
+                contractId: "CA",
+                channelType: "webhook",
+                channelTarget: "https://example.com/hook",
+            });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
+            expect(mockSendSlackAlert).not.toHaveBeenCalled();
+        });
+
+        it("routes slack alerts to sendSlackAlert", async () => {
+            mockSendSlackAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, {
+                contractId: "CA",
+                channelType: "slack",
+                channelTarget: "#oncall",
+            });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            expect(mockSendSlackAlert).toHaveBeenCalledTimes(1);
+            expect(mockSendWebhookAlert).not.toHaveBeenCalled();
+        });
+
+        it("calls sendWebhookAlert with the correct URL and event payload", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, {
+                contractId: "CTEST1234",
+                contractName: "test-contract",
+                channelType: "webhook",
+                channelTarget: "https://ops.example.com/hook",
+                thresholdLedgers: 15_000,
+                ttlAtFire: 7_000,
+            });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const [url, event] = mockSendWebhookAlert.mock.calls[0]!;
+            expect(url).toBe("https://ops.example.com/hook");
+            expect(event.type).toBe("threshold_crossed");
+            expect(event.contractId).toBe("CTEST1234");
+            expect(event.contractName).toBe("test-contract");
+            expect(event.network).toBe("testnet");
+            expect(event.threshold.configuredLedgers).toBe(15_000);
+            expect(event.threshold.currentRemainingLedgers).toBe(7_000);
+            expect(typeof event.threshold.approximateTimeRemaining).toBe("string");
+            expect(typeof event.timestamp).toBe("string");
+        });
+
+        it("calls sendSlackAlert with the correct channel and event", async () => {
+            mockSendSlackAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, {
+                contractId: "CA",
+                channelType: "slack",
+                channelTarget: "#my-alerts",
+            });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const [channel, event] = mockSendSlackAlert.mock.calls[0]!;
+            expect(channel).toBe("#my-alerts");
+            expect(event.type).toBe("threshold_crossed");
+        });
+
+        it("does not call any handler for email channel type (not yet implemented)", async () => {
+            seedContractWithAlert(db, {
+                contractId: "CA",
+                channelType: "email",
+                channelTarget: "ops@example.com",
+            });
+
+            const result = await deliverPendingAlerts(db, "testnet");
+
+            expect(mockSendWebhookAlert).not.toHaveBeenCalled();
+            expect(mockSendSlackAlert).not.toHaveBeenCalled();
+            // email should be counted as skipped — not failed, not delivered
+            expect(result.attempted).toBe(1);
+        });
+    });
+
+    // =========================================================================
+    // 3. DELIVERED FLAG MANAGEMENT
 });
