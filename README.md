@@ -34,7 +34,15 @@ $ sentinel watch CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --netw
   Run 'sentinel guard CDLZFC3S...CYSC' to enable auto-extension.
 ```
 
-**Monitor cycle (core logic, not yet exposed as CLI)** — Polls all registered contracts, refreshes TTL values, detects when entries cross alert thresholds, records alerts with deduplication (won't spam), and auto-resolves alerts when TTLs recover. This is the engine that the `daemon` command will use.
+**`sentinel status <contractId>`** — Display current TTL health, live until ledger, and remaining TTL for a watched contract in a clean, human-readable terminal format.
+
+**`sentinel daemon`** — Run the long-running daemon process. Every polling cycle (default 5 minutes), it re-checks contract entries, updates database states, records alert threshold crossings, resolves alerts when TTLs recover, and dispatches pending alerts to external notification channels.
+
+**`sentinel alerts`** — Manage notification configurations. Supports subcommands to `add`, `list`, and `remove` alert channels (webhooks, Slack channel targets) per contract with custom ledger thresholds.
+
+**Alert Delivery Dispatcher** — Background delivery engine for fired alerts:
+- **Webhook**: Posts a detailed JSON payload containing the event context, complete with connection timeouts and HTTP status check.
+- **Slack**: Sends rich messages using Slack Block Kit, with built-in token validation.
 
 **Database layer** — SQLite schema for contracts, entries, extension policies, alert configs, fired alerts, and extension history. All with foreign key cascades, upsert support, and an in-memory mode for testing.
 
@@ -42,9 +50,6 @@ $ sentinel watch CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --netw
 
 These are concrete next steps, not a wish list:
 
-- **`sentinel status`** — Show current TTL health for a registered contract
-- **`sentinel daemon`** — Long-running process that polls every 5 minutes and triggers alerts
-- **`sentinel alerts`** — Configure webhook and Slack alerts with TTL thresholds
 - **`sentinel guard`** — Auto-extend TTLs by submitting `ExtendFootprintTTLOp` transactions
 - **`sentinel costs`** — Track rent spending per contract over time
 - **`sentinel restore`** — Restore archived entries via `RestoreFootprintOp`
@@ -180,13 +185,15 @@ npx vitest run tests/core/monitor.test.ts
 npx vitest
 ```
 
-92 tests covering:
+201 tests covering:
 
 - Formatting utilities (TTL conversion, status classification)
-- Database operations (CRUD, cascades, upserts, deduplication)
+- Database operations (CRUD, cascades, upserts, deduplication, alert delivery, and query joining)
 - RPC client (contract instance, WASM code, batch TTL queries)
 - Watch command (registration, re-watch, SAC contracts, error handling, network isolation)
 - Monitor cycle (TTL refresh, threshold detection, alert deduplication, resolution, fault isolation, multi-threshold escalation, partial RPC responses)
+- Alert Delivery system (webhook integration, Slack Block Kit messages, dispatcher routing and retry logic)
+- CLI status, daemon, and alerts commands
 
 ## Why TypeScript, not Rust?
 
