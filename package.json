@@ -1,6 +1,6 @@
 {
   "name": "soroban-sentinel",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "The missing operations layer for deployed Soroban smart contracts",
   "main": "dist/index.js",
   "files": ["dist", "README.md", "LICENSE", "CONTRIBUTING.md"],
