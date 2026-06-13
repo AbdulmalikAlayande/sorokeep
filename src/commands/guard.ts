@@ -13,7 +13,6 @@ export function registerGuardCommand(program: Command): void {
     program
         .command("guard <contractId>")
         .description("Configure auto-extension policy for a contract")
-        .option("--network <network>", "Stellar network", "testnet")
         .option("--target-ttl <ledgers>", "Target TTL in ledgers after extension", "100000")
         .option("--threshold <ledgers>", "Extend when TTL drops below this many ledgers", "20000")
         .option("--keypair <secret>", "Stellar secret key for signing extension transactions")
@@ -79,8 +78,8 @@ export function registerGuardCommand(program: Command): void {
 
                 // Save policy
                 if (options.autoExtend) {
-                    if (!keypairSource) {
-                        console.error(chalk.red("--keypair or --keypair-env required for auto-extension"));
+                    if (!options.keypairEnv) {
+                        console.error(chalk.red("--auto-extend requires --keypair-env so the daemon can resolve the key at runtime"));
                         process.exit(1);
                     }
 
@@ -94,7 +93,7 @@ export function registerGuardCommand(program: Command): void {
                         target_ttl_ledgers: targetTTL,
                         extend_when_below_ledgers: threshold,
                         keypair_public: kp.publicKey(),
-                        keypair_source: keypairSource.startsWith("env:") ? keypairSource : `env:SENTINEL_SECRET_KEY`,
+                        keypair_source: keypairSource!,
                     });
 
                     console.log(chalk.green(`\nAuto-extension enabled for ${contract.name ?? formatContractID(contractId)}`));
