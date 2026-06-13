@@ -50,7 +50,9 @@ export function loadConfig(customPath?: string): SentinelConfig {
         return {
             network: parsed.network ?? DEFAULT_CONFIG.network,
             rpcUrl: parsed.rpcUrl,
-            pollingIntervalSeconds: parsed.pollingIntervalSeconds ?? DEFAULT_CONFIG.pollingIntervalSeconds,
+            pollingIntervalSeconds: typeof parsed.pollingIntervalSeconds === "number" && parsed.pollingIntervalSeconds > 0
+                ? parsed.pollingIntervalSeconds
+                : DEFAULT_CONFIG.pollingIntervalSeconds,
             slackToken: parsed.slackToken,
         };
     } catch (err: unknown) {
@@ -72,7 +74,7 @@ export function saveConfig(config: SentinelConfig, customPath?: string): void {
     }
 
     const yamlStr = YAML.stringify(config);
-    fs.writeFileSync(configPath, yamlStr, "utf-8");
+    fs.writeFileSync(configPath, yamlStr, { encoding: "utf-8", mode: 0o600 });
     logger.debug(`Config saved to ${configPath}`);
 }
 
