@@ -23,7 +23,7 @@ export function registerRestoreCommand(program: Command): void {
                 const contract = getContract(db, contractId);
 
                 if (!contract) {
-                    console.error(chalk.red(`Contract ${formatContractID(contractId)} not found. Run 'sentinel watch' first.`));
+                    console.error(chalk.red(`Contract ${formatContractID(contractId)} not found. Run 'sorokeep watch' first.`));
                     process.exit(1);
                 }
 
@@ -77,7 +77,7 @@ export function registerRestoreCommand(program: Command): void {
                     spinner.succeed(chalk.green(`Restored ${result.entriesRestored} entries for ${displayName}`));
                     console.log(`  Tx hash: ${result.txHash}`);
                     console.log(`  Ledger:  ${result.ledger}`);
-                    console.log(chalk.dim(`\n  Run 'sentinel status ${formatContractID(contractId)}' to verify.`));
+                    console.log(chalk.dim(`\n  Run 'sorokeep status ${formatContractID(contractId)}' to verify.`));
                 } else {
                     spinner.fail(chalk.red(`Restore failed: ${result.error}`));
                     if (result.txHash) {

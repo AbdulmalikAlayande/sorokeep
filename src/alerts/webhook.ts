@@ -9,7 +9,7 @@ const TIMEOUT_MS = 10_000;
 /**
  * Send an AlertEvent to a webhook URL via HTTP POST.
  *
- * If a `secret` is provided, the request includes an `X-Sentinel-Signature`
+ * If a `secret` is provided, the request includes an `X-Sorokeep-Signature`
  * header with an HMAC-SHA256 hex digest of the body, allowing receivers to
  * verify authenticity.
  *
@@ -24,7 +24,7 @@ export async function sendWebhookAlert(url: string, event: AlertEvent, secret?: 
 
     if (secret) {
         const signature = createHmac("sha256", secret).update(body).digest("hex");
-        headers["X-Sentinel-Signature"] = `sha256=${signature}`;
+        headers["X-Sorokeep-Signature"] = `sha256=${signature}`;
     }
 
     const controller = new AbortController();

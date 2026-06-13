@@ -4,11 +4,11 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import Database from "better-sqlite3";
-const SENTINEL_DIR = path.join(os.homedir(), '.soroban-sentinel');
+const SOROKEEP_DIR = path.join(os.homedir(), '.sorokeep');
 
-const DB_PATH = path.join(SENTINEL_DIR, 'sentinel.db');
+const DB_PATH = path.join(SOROKEEP_DIR, 'sorokeep.db');
 
-function ensureSentinelDirExists(dir: string) {
+function ensureDataDirExists(dir: string) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -28,7 +28,7 @@ export function getDatabase(customPath?: string): Database.Database {
     if (db) return db;
 
     const dbPath = customPath ?? DB_PATH;
-    ensureSentinelDirExists(path.dirname(dbPath));
+    ensureDataDirExists(path.dirname(dbPath));
 
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
@@ -38,7 +38,7 @@ export function getDatabase(customPath?: string): Database.Database {
     // ── Live migrations ───────────────────────────────────────────────────────
     // ALTER TABLE is idempotent-safe here: we catch the "duplicate column" error
     // that SQLite throws when the column already exists. This handles existing
-    // sentinel.db files created before these columns were added to schema.sql.
+    // sorokeep.db files created before these columns were added to schema.sql.
     const migrations = [
         `ALTER TABLE alerts_fired ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`,
         `ALTER TABLE alerts_fired ADD COLUMN delivered_at TEXT`,

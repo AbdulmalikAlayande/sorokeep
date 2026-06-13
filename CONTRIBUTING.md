@@ -1,13 +1,13 @@
 
-# Contributing to Soroban Sentinel
+# Contributing to Sorokeep
 
-Sentinel is an open-source project and contributions are welcome. This document explains how the project works, how to set up your environment, and what we expect from contributions.
+Sorokeep is an open-source project and contributions are welcome. This document explains how the project works, how to set up your environment, and what we expect from contributions.
 
 ## Before you start
 
-Read the [README](README.md) to understand what Sentinel does and how it's structured. The short version: Sentinel monitors Soroban smart contract TTLs and alerts developers before their contract state expires. It's a TypeScript CLI that reads from the Stellar RPC and stores data in local SQLite.
+Read the [README](README.md) to understand what Sorokeep does and how it's structured. The short version: Sorokeep monitors Soroban smart contract TTLs and alerts developers before their contract state expires. It's a TypeScript CLI that reads from the Stellar RPC and stores data in local SQLite.
 
-If you want to work on something, check the [open issues](https://github.com/AbdulmalikAlayande/soroban-sentinel/issues) first. If there's no issue for what you want to do, open one and describe the change before writing code. This prevents wasted effort on changes that don't fit the project direction.
+If you want to work on something, check the [open issues](https://github.com/AbdulmalikAlayande/sorokeep/issues) first. If there's no issue for what you want to do, open one and describe the change before writing code. This prevents wasted effort on changes that don't fit the project direction.
 
 ## Setting up your development environment
 
@@ -20,8 +20,8 @@ You need:
 Clone and install:
 
 ```bash
-git clone https://github.com/AbdulmalikAlayande/soroban-sentinel.git
-cd soroban-sentinel
+git clone https://github.com/AbdulmalikAlayande/sorokeep.git
+cd sorokeep
 npm install
 ```
 
@@ -95,7 +95,7 @@ npx tsx src/index.ts --help
 
 ### Database
 
-Sentinel uses SQLite stored at `~/.soroban-sentinel/sentinel.db`. The schema is in `src/db/schema.sql`.
+Sorokeep uses SQLite stored at `~/.sorokeep/sorokeep.db`. The schema is in `src/db/schema.sql`.
 
 Tests use an in-memory SQLite database (`getDatabaseForTesting()`) so they're fast and don't touch your local state.
 
@@ -103,10 +103,10 @@ If you need to reset your local database during development, delete the file:
 
 ```bash
 # Linux/macOS
-rm ~/.soroban-sentinel/sentinel.db
+rm ~/.sorokeep/sorokeep.db
 
 # Windows PowerShell
-Remove-Item "$HOME\.soroban-sentinel\sentinel.db"
+Remove-Item "$HOME\.sorokeep\sorokeep.db"
 ```
 
 ## Code conventions
@@ -183,11 +183,11 @@ For anything beyond small fixes, open an issue first to discuss the approach. Th
 
 ### Why SQLite, not PostgreSQL?
 
-Sentinel runs locally as a CLI tool. SQLite requires zero setup, has no external process, and the database file lives alongside the tool. If we add a web dashboard later, we may introduce a client-server database, but for the core tool, SQLite is the right choice.
+Sorokeep runs locally as a CLI tool. SQLite requires zero setup, has no external process, and the database file lives alongside the tool. If we add a web dashboard later, we may introduce a client-server database, but for the core tool, SQLite is the right choice.
 
 ### Why Commander.js, not oclif?
 
-Commander is 180KB with zero dependencies. oclif is 12MB with 30+ dependencies. For a CLI that runs quick one-off commands like `sentinel status`, the 85-135ms startup overhead of oclif is noticeable. Commander's API is also simpler for our use case.
+Commander is 180KB with zero dependencies. oclif is 12MB with 30+ dependencies. For a CLI that runs quick one-off commands like `sorokeep status`, the 85-135ms startup overhead of oclif is noticeable. Commander's API is also simpler for our use case.
 
 ### Why a polling daemon, not event-driven?
 
@@ -195,7 +195,7 @@ The Stellar RPC doesn't support WebSocket subscriptions for ledger entry changes
 
 ### Why not write contracts in Rust?
 
-Sentinel is an off-chain monitoring tool, not a smart contract. The Stellar JS SDK is the most actively maintained client library for Soroban RPC interactions, and TypeScript maximizes the contributor pool.
+Sorokeep is an off-chain monitoring tool, not a smart contract. The Stellar JS SDK is the most actively maintained client library for Soroban RPC interactions, and TypeScript maximizes the contributor pool.
 
 ## Getting help
 

@@ -10,18 +10,18 @@ const TIMEOUT_MS = 10_000;
 
 /**
  * Resolve the Slack Bot Token from config or environment.
- * Priority: SENTINEL_SLACK_TOKEN env var > config.slackToken
+ * Priority: SOROKEEP_SLACK_TOKEN env var > config.slackToken
  */
 function resolveSlackToken(): string {
-    const envToken = process.env["SENTINEL_SLACK_TOKEN"];
+    const envToken = process.env["SOROKEEP_SLACK_TOKEN"];
     if (envToken) return envToken;
 
     const config = loadConfig();
     if (config.slackToken) return config.slackToken;
 
     throw new Error(
-        "Slack token not configured. Set SENTINEL_SLACK_TOKEN environment variable " +
-        "or add slackToken to ~/.soroban-sentinel/config.yaml.",
+        "Slack token not configured. Set SOROKEEP_SLACK_TOKEN environment variable " +
+        "or add slackToken to ~/.sorokeep/config.yaml.",
     );
 }
 
@@ -81,7 +81,7 @@ function buildBlocks(event: AlertEvent): SlackBlock[] {
         elements: [
             {
                 type: "mrkdwn",
-                text: `Severity: *${event.severity}* | Run \`sentinel status ${event.contractId}\` for details.`,
+                text: `Severity: *${event.severity}* | Run \`sorokeep status ${event.contractId}\` for details.`,
             },
         ],
     };
@@ -109,7 +109,7 @@ function buildFallbackText(event: AlertEvent): string {
 /**
  * Send an AlertEvent to a Slack channel via the Slack Web API.
  *
- * Resolves the Bot Token from env (SENTINEL_SLACK_TOKEN) or config (slackToken).
+ * Resolves the Bot Token from env (SOROKEEP_SLACK_TOKEN) or config (slackToken).
  * Throws when the token is absent, the network fails, or Slack returns ok: false.
  * The caller (dispatcher) handles retry via the `delivered` flag.
  */

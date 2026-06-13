@@ -54,11 +54,11 @@ function makeSlackErrorResponse(error: string): Response {
 describe("sendSlackAlert", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        process.env["SENTINEL_SLACK_TOKEN"] = VALID_TOKEN;
+        process.env["SOROKEEP_SLACK_TOKEN"] = VALID_TOKEN;
     });
 
     afterEach(() => {
-        delete process.env["SENTINEL_SLACK_TOKEN"];
+        delete process.env["SOROKEEP_SLACK_TOKEN"];
         vi.unstubAllGlobals();
         vi.stubGlobal("fetch", mockFetch);
     });
@@ -68,15 +68,15 @@ describe("sendSlackAlert", () => {
     // =========================================================================
     describe("Token validation", () => {
         it("throws a clear error when no Slack token is configured", async () => {
-            delete process.env["SENTINEL_SLACK_TOKEN"];
+            delete process.env["SOROKEEP_SLACK_TOKEN"];
 
             await expect(
                 sendSlackAlert("#oncall", makeAlertEvent()),
             ).rejects.toThrow(/[Ss]lack token/);
         });
 
-        it("throws when SENTINEL_SLACK_TOKEN is an empty string and no config token", async () => {
-            process.env["SENTINEL_SLACK_TOKEN"] = "";
+        it("throws when SOROKEEP_SLACK_TOKEN is an empty string and no config token", async () => {
+            process.env["SOROKEEP_SLACK_TOKEN"] = "";
 
             await expect(
                 sendSlackAlert("#oncall", makeAlertEvent()),

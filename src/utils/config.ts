@@ -8,7 +8,7 @@ const logger = getLogger().child({ component: "Config" });
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export interface SentinelConfig {
+export interface SorokeepConfig {
     /** Default network to use. */
     network: string;
     /** Default RPC URL override. */
@@ -21,21 +21,21 @@ export interface SentinelConfig {
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
-const DEFAULT_CONFIG: SentinelConfig = {
+const DEFAULT_CONFIG: SorokeepConfig = {
     network: "testnet",
     pollingIntervalSeconds: 300,
 };
 
-const SENTINEL_DIR = path.join(os.homedir(), ".soroban-sentinel");
-const CONFIG_FILE = path.join(SENTINEL_DIR, "config.yaml");
+const SOROKEEP_DIR = path.join(os.homedir(), ".sorokeep");
+const CONFIG_FILE = path.join(SOROKEEP_DIR, "config.yaml");
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
 /**
- * Load configuration from ~/.soroban-sentinel/config.yaml.
+ * Load configuration from ~/.sorokeep/config.yaml.
  * Returns defaults if the file does not exist.
  */
-export function loadConfig(customPath?: string): SentinelConfig {
+export function loadConfig(customPath?: string): SorokeepConfig {
     const configPath = customPath ?? CONFIG_FILE;
 
     if (!fs.existsSync(configPath)) {
@@ -45,7 +45,7 @@ export function loadConfig(customPath?: string): SentinelConfig {
 
     try {
         const raw = fs.readFileSync(configPath, "utf-8");
-        const parsed = YAML.parse(raw) as Partial<SentinelConfig>;
+        const parsed = YAML.parse(raw) as Partial<SorokeepConfig>;
 
         return {
             network: parsed.network ?? DEFAULT_CONFIG.network,
@@ -63,9 +63,9 @@ export function loadConfig(customPath?: string): SentinelConfig {
 }
 
 /**
- * Save configuration to ~/.soroban-sentinel/config.yaml.
+ * Save configuration to ~/.sorokeep/config.yaml.
  */
-export function saveConfig(config: SentinelConfig, customPath?: string): void {
+export function saveConfig(config: SorokeepConfig, customPath?: string): void {
     const configPath = customPath ?? CONFIG_FILE;
     const dir = path.dirname(configPath);
 
@@ -79,8 +79,8 @@ export function saveConfig(config: SentinelConfig, customPath?: string): void {
 }
 
 /**
- * Get the Sentinel data directory path.
+ * Get the Sorokeep data directory path.
  */
-export function getSentinelDir(): string {
-    return SENTINEL_DIR;
+export function getSorokeepDir(): string {
+    return SOROKEEP_DIR;
 }
