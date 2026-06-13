@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { getUndeliveredAlerts, markAlertDelivered } from "../db/repositories.js";
+import { getUndeliveredAlerts, markAlertDelivered, incrementRetryCount, MAX_RETRY_COUNT } from "../db/repositories.js";
 import { buildAlertEvent, type AlertEvent } from "./types.js";
 import { sendWebhookAlert } from "./webhook.js";
 import { sendSlackAlert } from "./slack.js";
@@ -10,12 +10,14 @@ const logger = getLogger().child({ component: "AlertDispatcher" });
 // ─── Public contract ─────────────────────────────────────────────────────────
 
 export interface DeliveryResult {
-    /** Total alerts processed (includes email-skipped and failed). */
+    /** Total alerts processed (includes failed). */
     attempted: number;
     /** Alerts successfully sent and marked delivered = 1. */
     delivered: number;
-    /** Alerts that threw during delivery — left as delivered = 0 for retry. */
+    /** Alerts that threw during delivery — retry count incremented. */
     failed: number;
+    /** Alerts that exceeded max retries and were abandoned. */
+    abandoned: number;
     /** Error messages for each failed delivery. */
     errors: string[];
 }
@@ -27,11 +29,8 @@ export interface DeliveryResult {
  * dispatch them to the appropriate channel handler.
  *
  * Per-alert errors are caught and collected — this function never throws.
- * Failed deliveries are left with `delivered = 0` so the next daemon cycle
- * retries them automatically.
- *
- * Email channel type is not yet implemented and will be counted as attempted
- * but not delivered or failed.
+ * Failed deliveries have their retry_count incremented. Alerts exceeding
+ * MAX_RETRY_COUNT are excluded from future queries automatically.
  */
 export async function deliverPendingAlerts(
     db: Database.Database,
@@ -41,6 +40,7 @@ export async function deliverPendingAlerts(
         attempted: 0,
         delivered: 0,
         failed: 0,
+        abandoned: 0,
         errors: [],
     };
 
@@ -68,7 +68,7 @@ export async function deliverPendingAlerts(
         });
 
         try {
-            await route(alert.channelType, alert.channelTarget, event);
+            await route(alert.channelType, alert.channelTarget, event, alert.webhookSecret);
             markAlertDelivered(db, alert.alertFiredId);
             result.delivered++;
 
@@ -81,19 +81,50 @@ export async function deliverPendingAlerts(
             result.failed++;
             result.errors.push(message);
 
-            logger.warn(
-                `Alert delivery failed — id: ${alert.alertFiredId}, ` +
-                `channel: ${alert.channelType}, error: ${message}. Will retry next cycle.`,
-            );
+            incrementRetryCount(db, alert.alertFiredId);
+            const nextRetry = alert.retryCount + 1;
+
+            if (nextRetry >= MAX_RETRY_COUNT) {
+                result.abandoned++;
+                logger.error(
+                    `Alert abandoned after ${MAX_RETRY_COUNT} retries — id: ${alert.alertFiredId}, ` +
+                    `channel: ${alert.channelType}, error: ${message}`,
+                );
+            } else {
+                logger.warn(
+                    `Alert delivery failed (attempt ${nextRetry}/${MAX_RETRY_COUNT}) — ` +
+                    `id: ${alert.alertFiredId}, channel: ${alert.channelType}, error: ${message}`,
+                );
+            }
         }
     }
 
     logger.debug(
         `Dispatcher finished — attempted: ${result.attempted}, ` +
-        `delivered: ${result.delivered}, failed: ${result.failed}`,
+        `delivered: ${result.delivered}, failed: ${result.failed}, abandoned: ${result.abandoned}`,
     );
 
     return result;
+}
+
+/**
+ * Deliver a single AlertEvent directly (used for resolution notifications).
+ * Returns true on success, false on failure.
+ */
+export async function deliverSingleAlert(
+    channelType: string,
+    channelTarget: string,
+    event: AlertEvent,
+    webhookSecret?: string | null,
+): Promise<boolean> {
+    try {
+        await route(channelType, channelTarget, event, webhookSecret ?? null);
+        return true;
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        logger.warn(`Resolution alert delivery failed — channel: ${channelType}, error: ${message}`);
+        return false;
+    }
 }
 
 // ─── Private ─────────────────────────────────────────────────────────────────
@@ -102,18 +133,14 @@ async function route(
     channelType: string,
     channelTarget: string,
     event: AlertEvent,
+    webhookSecret: string | null,
 ): Promise<void> {
     switch (channelType) {
         case "webhook":
-            await sendWebhookAlert(channelTarget, event);
+            await sendWebhookAlert(channelTarget, event, webhookSecret);
             break;
         case "slack":
             await sendSlackAlert(channelTarget, event);
-            break;
-        case "email":
-            // Email delivery is not yet implemented.
-            // Log and return without marking as delivered or failed.
-            logger.debug(`Email delivery not yet implemented — skipping alert to ${channelTarget}`);
             break;
         default:
             throw new Error(`Unknown channel type: ${channelType}`);
