@@ -1,4 +1,13 @@
-import { Contract, rpc, xdr } from "@stellar/stellar-sdk";
+import {
+    Contract,
+    rpc,
+    xdr,
+    TransactionBuilder,
+    Networks,
+    Account,
+    Operation,
+    Keypair,
+} from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "StellarRpcClient" });
@@ -28,6 +37,31 @@ export interface EntryTTLsResult {
     latestLedger: number;
     entries: SentinelLedgerEntryResult[];
 }
+
+export interface SimulateExtensionResult {
+    /** Estimated fee in stroops. */
+    minResourceFee: number;
+    /** Whether the simulation succeeded. */
+    success: boolean;
+    /** Error message if simulation failed. */
+    error?: string;
+}
+
+export interface SubmitTransactionResult {
+    /** Whether the transaction succeeded. */
+    success: boolean;
+    /** Transaction hash. */
+    txHash: string;
+    /** Ledger the transaction was included in. */
+    ledger: number;
+    /** Error message if the transaction failed. */
+    error?: string;
+}
+
+const NETWORK_PASSPHRASES: Record<string, string> = {
+    testnet: Networks.TESTNET,
+    mainnet: Networks.PUBLIC,
+};
 
 export class StellarRpcClient {
     private readonly network: string;
@@ -154,5 +188,232 @@ export class StellarRpcClient {
         });
 
         return { latestLedger, entries };
+    }
+
+    /**
+     * Simulate an ExtendFootprintTTLOp to estimate fees before submitting.
+     */
+    async simulateExtension(
+        entryKeyXdrs: string[],
+        extendToLedgers: number,
+        sourcePublicKey: string,
+    ): Promise<SimulateExtensionResult> {
+        const passphrase = this.getNetworkPassphrase();
+        const account = new Account(sourcePublicKey, "0");
+
+        const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
+
+        const tx = new TransactionBuilder(account, {
+            fee: "100",
+            networkPassphrase: passphrase,
+        })
+            .addOperation(
+                Operation.extendFootprintTtl({
+                    extendTo: extendToLedgers,
+                }),
+            )
+            .setTimeout(30)
+            .setSorobanData(
+                new (rpc as any).SorobanDataBuilder()
+                    .setReadOnly(keys)
+                    .build(),
+            )
+            .build();
+
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            return {
+                success: false,
+                minResourceFee: 0,
+                error: sim.error ?? "Simulation failed",
+            };
+        }
+
+        const successSim = sim as rpc.Api.SimulateTransactionSuccessResponse;
+        return {
+            success: true,
+            minResourceFee: Number(successSim.minResourceFee ?? 0),
+        };
+    }
+
+    /**
+     * Build, sign, and submit an ExtendFootprintTTLOp transaction.
+     * Uses simulation to prepare the transaction with correct resource parameters.
+     */
+    async submitExtension(
+        entryKeyXdrs: string[],
+        extendToLedgers: number,
+        secretKey: string,
+    ): Promise<SubmitTransactionResult> {
+        const passphrase = this.getNetworkPassphrase();
+        const keypair = Keypair.fromSecret(secretKey);
+        const publicKey = keypair.publicKey();
+
+        // Fetch account sequence number
+        const accountResponse = await this.server.getAccount(publicKey);
+        const account = new Account(publicKey, accountResponse.sequenceNumber());
+
+        const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
+
+        const tx = new TransactionBuilder(account, {
+            fee: "100",
+            networkPassphrase: passphrase,
+        })
+            .addOperation(
+                Operation.extendFootprintTtl({
+                    extendTo: extendToLedgers,
+                }),
+            )
+            .setTimeout(30)
+            .setSorobanData(
+                new (rpc as any).SorobanDataBuilder()
+                    .setReadOnly(keys)
+                    .build(),
+            )
+            .build();
+
+        // Simulate to prepare the transaction
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            return {
+                success: false,
+                txHash: "",
+                ledger: 0,
+                error: sim.error ?? "Simulation failed",
+            };
+        }
+
+        // Assemble the transaction with simulation results
+        const prepared = rpc.assembleTransaction(tx, sim).build();
+        prepared.sign(keypair);
+
+        // Submit and poll for result
+        const sendResult = await this.server.sendTransaction(prepared);
+
+        if (sendResult.status === "ERROR") {
+            return {
+                success: false,
+                txHash: sendResult.hash,
+                ledger: 0,
+                error: `Transaction send error: ${sendResult.status}`,
+            };
+        }
+
+        // Poll for completion
+        const txResult = await this.pollTransaction(sendResult.hash);
+        return txResult;
+    }
+
+    /**
+     * Build, sign, and submit a RestoreFootprintOp transaction to restore archived entries.
+     */
+    async submitRestore(
+        entryKeyXdrs: string[],
+        secretKey: string,
+    ): Promise<SubmitTransactionResult> {
+        const passphrase = this.getNetworkPassphrase();
+        const keypair = Keypair.fromSecret(secretKey);
+        const publicKey = keypair.publicKey();
+
+        const accountResponse = await this.server.getAccount(publicKey);
+        const account = new Account(publicKey, accountResponse.sequenceNumber());
+
+        const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
+
+        const tx = new TransactionBuilder(account, {
+            fee: "100",
+            networkPassphrase: passphrase,
+        })
+            .addOperation(
+                Operation.restoreFootprint({}),
+            )
+            .setTimeout(30)
+            .setSorobanData(
+                new (rpc as any).SorobanDataBuilder()
+                    .setReadWrite(keys)
+                    .build(),
+            )
+            .build();
+
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            return {
+                success: false,
+                txHash: "",
+                ledger: 0,
+                error: sim.error ?? "Simulation failed",
+            };
+        }
+
+        const prepared = rpc.assembleTransaction(tx, sim).build();
+        prepared.sign(keypair);
+
+        const sendResult = await this.server.sendTransaction(prepared);
+
+        if (sendResult.status === "ERROR") {
+            return {
+                success: false,
+                txHash: sendResult.hash,
+                ledger: 0,
+                error: `Transaction send error: ${sendResult.status}`,
+            };
+        }
+
+        return this.pollTransaction(sendResult.hash);
+    }
+
+    // ─── Private helpers ─────────────────────────────────────────────────────
+
+    private getNetworkPassphrase(): string {
+        const passphrase = NETWORK_PASSPHRASES[this.network];
+        if (!passphrase) {
+            throw new Error(
+                `No network passphrase for "${this.network}". Use "testnet" or "mainnet".`,
+            );
+        }
+        return passphrase;
+    }
+
+    /**
+     * Poll getTransaction until it reaches a terminal state (SUCCESS or FAILED).
+     */
+    private async pollTransaction(
+        txHash: string,
+        maxAttempts = 30,
+        intervalMs = 1000,
+    ): Promise<SubmitTransactionResult> {
+        for (let i = 0; i < maxAttempts; i++) {
+            const txResponse = await this.server.getTransaction(txHash);
+
+            if (txResponse.status === "SUCCESS") {
+                return {
+                    success: true,
+                    txHash,
+                    ledger: txResponse.latestLedger,
+                };
+            }
+
+            if (txResponse.status === "FAILED") {
+                return {
+                    success: false,
+                    txHash,
+                    ledger: txResponse.latestLedger,
+                    error: "Transaction failed on-chain",
+                };
+            }
+
+            // NOT_FOUND — still pending
+            await new Promise(resolve => setTimeout(resolve, intervalMs));
+        }
+
+        return {
+            success: false,
+            txHash,
+            ledger: 0,
+            error: `Transaction polling timed out after ${maxAttempts} attempts`,
+        };
     }
 }
