@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { rpc, xdr } from "@stellar/stellar-sdk";
+import { rpc, xdr, StrKey } from "@stellar/stellar-sdk";
 import { getEntriesForContract, upsertEntry, getAllContracts } from "../db/repositories.js";
 import { getLogger } from "../logging/index.js";
 
@@ -85,38 +85,51 @@ export async function discoverStorageKeys(
         const existingEntries = getEntriesForContract(db, contractId);
         const existingKeys = new Set(existingEntries.map(e => e.entry_key_xdr));
 
-        // Fetch events for this contract
-        const events = await server.getEvents({
-            startLedger,
-            filters: [
-                {
-                    type: "contract",
-                    contractIds: [contractId],
-                },
-            ],
-            limit: 100,
-        });
+        // Fetch events for this contract with cursor-based pagination
+        const allEvents: rpc.Api.EventResponse[] = [];
+        let cursor: string | undefined;
 
-        if (!events.events || events.events.length === 0) {
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            const request: any = {
+                filters: [
+                    {
+                        type: "contract",
+                        contractIds: [contractId],
+                    },
+                ],
+                limit: 100,
+            };
+
+            if (cursor) {
+                request.pagination = { cursor };
+            } else {
+                request.startLedger = startLedger;
+            }
+
+            const page = await server.getEvents(request);
+            if (page.events && page.events.length > 0) {
+                allEvents.push(...page.events);
+            }
+
+            // Continue if there's a cursor for the next page
+            if ((page as any).cursor && page.events && page.events.length === 100) {
+                cursor = (page as any).cursor;
+            } else {
+                break;
+            }
+        }
+
+        if (allEvents.length === 0) {
             logger.debug(`No events found for ${contractId} since ledger ${startLedger}`);
             return result;
         }
 
-        result.transactionsScanned = events.events.length;
-
-        // Extract unique transaction IDs to fetch their footprints
-        const txIds = new Set<string>();
-        for (const event of events.events) {
-            if (event.id) {
-                // Event IDs encode the transaction — extract the ledger entry keys
-                // from the event topic/value which may reference storage keys
-                txIds.add(event.id);
-            }
-        }
+        result.transactionsScanned = allEvents.length;
 
         // For each event, try to extract ledger keys from the event data.
         // Contract storage events often encode the storage key in the topic.
-        for (const event of events.events) {
+        for (const event of allEvents) {
             try {
                 // Events have topic entries that may contain storage key references
                 if (event.topic && event.topic.length > 0) {
@@ -246,10 +259,7 @@ function buildContractDataKey(
  * Decode a Stellar contract ID (C...) to raw 32-byte buffer.
  */
 function decodeContractId(contractId: string): Buffer {
-    // Use stellar-sdk's StrKey to decode, but since we're dealing with
-    // contract addresses, we need to handle the C-prefix encoding
     try {
-        const { StrKey } = require("@stellar/stellar-sdk");
         return Buffer.from(StrKey.decodeContract(contractId));
     } catch {
         // Fallback: assume hex
