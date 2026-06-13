@@ -37,9 +37,10 @@ export interface ExtensionPolicy {
 export interface AlertConfig {
     id: number;
     contract_id: string;
-    channel_type: "email" | "slack" | "webhook";
+    channel_type: "slack" | "webhook";
     channel_target: string;
     threshold_ledgers: number;
+    webhook_secret: string | null;
     created_at: Date;
 }
 
@@ -171,11 +172,19 @@ export function insertAlertConfig(db: Database.Database, config: {
   channel_type: string;
   channel_target: string;
   threshold_ledgers: number;
+  webhook_secret?: string;
 }): void {
   db.prepare(`
-    INSERT INTO alert_configs (contract_id, channel_type, channel_target, threshold_ledgers)
-    VALUES (@contract_id, @channel_type, @channel_target, @threshold_ledgers)
-  `).run(config);
+    INSERT INTO alert_configs (contract_id, channel_type, channel_target, threshold_ledgers, webhook_secret)
+    VALUES (@contract_id, @channel_type, @channel_target, @threshold_ledgers, @webhook_secret)
+  `).run({
+    ...config,
+    webhook_secret: config.webhook_secret ?? null,
+  });
+}
+
+export function getAlertConfigById(db: Database.Database, id: number): AlertConfig | undefined {
+  return db.prepare("SELECT * FROM alert_configs WHERE id = ?").get(id) as AlertConfig | undefined;
 }
 
 export function getAlertConfigsForContract(db: Database.Database, contractId: string): AlertConfig[] {
@@ -208,11 +217,20 @@ export function hasUnresolvedAlert(db: Database.Database, alertConfigId: number,
   return row !== undefined;
 }
 
-export function resolveAlerts(db: Database.Database, entryId: number): void {
-  db.prepare(`
-    UPDATE alerts_fired SET resolved = 1, resolved_at = datetime('now')
+export function resolveAlerts(db: Database.Database, entryId: number): number[] {
+  const rows = db.prepare(`
+    SELECT alert_config_id FROM alerts_fired
     WHERE contract_entry_id = ? AND resolved = 0
-  `).run(entryId);
+  `).all(entryId) as { alert_config_id: number }[];
+
+  if (rows.length > 0) {
+    db.prepare(`
+      UPDATE alerts_fired SET resolved = 1, resolved_at = datetime('now')
+      WHERE contract_entry_id = ? AND resolved = 0
+    `).run(entryId);
+  }
+
+  return rows.map(r => r.alert_config_id);
 }
 
 // ---------------------------- Database Access Functions For Other Schema: ExtensionRecord----------------------------
@@ -264,18 +282,24 @@ export interface UndeliveredAlert {
     entryKeyXdr: string;
     entryType: string;
     entryLabel: string | null;
-    channelType: "webhook" | "slack" | "email";
+    channelType: "webhook" | "slack";
     channelTarget: string;
     thresholdLedgers: number;
+    webhookSecret: string | null;
     /** TTL remaining at the moment the alert fired (ttl_at_fire). */
     remainingTTL: number;
     firedAtLedger: number;
     firedAt: string;
+    retryCount: number;
 }
+
+/** Maximum number of delivery attempts before giving up on an alert. */
+export const MAX_RETRY_COUNT = 5;
 
 /**
  * Return all undelivered (delivered = 0) alerts for the given network,
  * joining alerts_fired → alert_configs → contract_entries → contracts.
+ * Alerts that have exceeded MAX_RETRY_COUNT are excluded.
  */
 export function getUndeliveredAlerts(
     db: Database.Database,
@@ -295,17 +319,20 @@ export function getUndeliveredAlerts(
             ac.channel_type  AS channelType,
             ac.channel_target AS channelTarget,
             ac.threshold_ledgers AS thresholdLedgers,
+            ac.webhook_secret AS webhookSecret,
             af.ttl_at_fire   AS remainingTTL,
             af.fired_at_ledger AS firedAtLedger,
-            af.fired_at      AS firedAt
+            af.fired_at      AS firedAt,
+            af.retry_count   AS retryCount
         FROM alerts_fired af
         JOIN alert_configs ac  ON ac.id  = af.alert_config_id
         JOIN contract_entries ce ON ce.id = af.contract_entry_id
         JOIN contracts c       ON c.id  = ce.contract_id
         WHERE af.delivered = 0
+          AND af.retry_count < ?
           AND c.network = ?
         ORDER BY af.fired_at ASC
-    `).all(network) as UndeliveredAlert[];
+    `).all(MAX_RETRY_COUNT, network) as UndeliveredAlert[];
 
     return rows;
 }
@@ -320,4 +347,67 @@ export function markAlertDelivered(db: Database.Database, alertFiredId: number):
         SET delivered = 1, delivered_at = datetime('now')
         WHERE id = ?
     `).run(alertFiredId);
+}
+
+/**
+ * Increment the retry count for a failed alert delivery.
+ */
+export function incrementRetryCount(db: Database.Database, alertFiredId: number): void {
+    db.prepare(`
+        UPDATE alerts_fired
+        SET retry_count = retry_count + 1
+        WHERE id = ?
+    `).run(alertFiredId);
+}
+
+/**
+ * Get alert history for a contract. Returns fired alerts with config and entry info.
+ */
+export interface AlertHistoryRecord {
+    alertFiredId: number;
+    channelType: string;
+    channelTarget: string;
+    entryKeyXdr: string;
+    entryType: string;
+    entryLabel: string | null;
+    thresholdLedgers: number;
+    ttlAtFire: number;
+    firedAtLedger: number;
+    firedAt: string;
+    resolved: number;
+    resolvedAt: string | null;
+    delivered: number;
+    deliveredAt: string | null;
+    retryCount: number;
+}
+
+export function getAlertHistory(db: Database.Database, contractId: string, limit?: number): AlertHistoryRecord[] {
+    const sql = `
+        SELECT
+            af.id              AS alertFiredId,
+            ac.channel_type    AS channelType,
+            ac.channel_target  AS channelTarget,
+            ce.entry_key_xdr   AS entryKeyXdr,
+            ce.entry_type      AS entryType,
+            ce.label           AS entryLabel,
+            ac.threshold_ledgers AS thresholdLedgers,
+            af.ttl_at_fire     AS ttlAtFire,
+            af.fired_at_ledger AS firedAtLedger,
+            af.fired_at        AS firedAt,
+            af.resolved        AS resolved,
+            af.resolved_at     AS resolvedAt,
+            af.delivered        AS delivered,
+            af.delivered_at    AS deliveredAt,
+            af.retry_count     AS retryCount
+        FROM alerts_fired af
+        JOIN alert_configs ac  ON ac.id  = af.alert_config_id
+        JOIN contract_entries ce ON ce.id = af.contract_entry_id
+        WHERE ac.contract_id = ?
+        ORDER BY af.fired_at DESC
+        ${limit ? "LIMIT ?" : ""}
+    `;
+    return (limit
+        ? db.prepare(sql).all(contractId, limit)
+        : db.prepare(sql).all(contractId)
+    ) as AlertHistoryRecord[];
 }
