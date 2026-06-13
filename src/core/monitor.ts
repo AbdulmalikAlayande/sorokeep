@@ -5,11 +5,14 @@ import {
     upsertEntry,
     updateLastCheckedLedger,
     getAlertConfigsForContract,
+    getAlertConfigById,
     hasUnresolvedAlert,
     recordAlertFired,
     resolveAlerts,
 } from "../db/repositories.js";
 import { StellarRpcClient } from "../rpc/client.js";
+import { deliverSingleAlert } from "../alerts/dispatcher.js";
+import { buildAlertEvent } from "../alerts/types.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "MonitorCycle" });
@@ -83,7 +86,7 @@ export async function runMonitorCycle(
         result.contractsChecked++;
 
         try {
-            await processContract(db, client, contract.id, result);
+            await processContract(db, client, contract.id, network, result);
         } catch (error: unknown) {
             // Fault isolation: record the failure, move to next contract.
             const message = error instanceof Error ? error.message : String(error);
@@ -116,6 +119,7 @@ async function processContract(
     db: Database.Database,
     client: StellarRpcClient,
     contractId: string,
+    network: string,
     result: MonitorCycleResult,
 ): Promise<void> {
     const entries = getEntriesForContract(db, contractId);
@@ -196,7 +200,7 @@ async function processContract(
             } else {
                 // 5. TTL is at or above threshold — resolve any open alert.
                 if (hasUnresolvedAlert(db, alertConfig.id, entry.id)) {
-                    resolveAlerts(db, entry.id);
+                    const resolvedConfigIds = resolveAlerts(db, entry.id);
                     result.alertsResolved++;
 
                     logger.info(
@@ -205,6 +209,33 @@ async function processContract(
                         `remainingTTL: ${remainingTTL}, ` +
                         `threshold: ${alertConfig.threshold_ledgers}`,
                     );
+
+                    // Send resolution notifications (best-effort, errors don't block).
+                    for (const configId of resolvedConfigIds) {
+                        const config = getAlertConfigById(db, configId);
+                        if (!config) continue;
+
+                        const event = buildAlertEvent({
+                            type: "alert_resolved",
+                            contractId,
+                            contractName: null,
+                            network,
+                            entryKeyXdr: entry.entry_key_xdr,
+                            entryType: entry.entry_type,
+                            entryLabel: entry.label,
+                            configuredLedgers: config.threshold_ledgers,
+                            remainingTTL,
+                            firedAtLedger: rpcResult.latestLedger,
+                        });
+
+                        // Fire and forget — resolution is best-effort
+                        void deliverSingleAlert(
+                            config.channel_type,
+                            config.channel_target,
+                            event,
+                            config.webhook_secret,
+                        );
+                    }
                 }
             }
         }

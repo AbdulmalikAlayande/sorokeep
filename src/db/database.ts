@@ -42,6 +42,8 @@ export function getDatabase(customPath?: string): Database.Database {
     const migrations = [
         `ALTER TABLE alerts_fired ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`,
         `ALTER TABLE alerts_fired ADD COLUMN delivered_at TEXT`,
+        `ALTER TABLE alerts_fired ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
+        `ALTER TABLE alert_configs ADD COLUMN webhook_secret TEXT`,
     ];
     for (const sql of migrations) {
         try { db.exec(sql); } catch { /* column already exists — no-op */ }
