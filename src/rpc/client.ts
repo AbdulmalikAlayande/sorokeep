@@ -198,8 +198,11 @@ export class StellarRpcClient {
         extendToLedgers: number,
         sourcePublicKey: string,
     ): Promise<SimulateExtensionResult> {
-        const passphrase = this.getNetworkPassphrase();
-        const account = new Account(sourcePublicKey, "0");
+        const passphrase = await this.getNetworkPassphrase();
+
+        // Fetch account to get a valid sequence number for simulation
+        const accountResponse = await this.server.getAccount(sourcePublicKey);
+        const account = new Account(sourcePublicKey, accountResponse.sequenceNumber());
 
         const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
 
@@ -246,7 +249,7 @@ export class StellarRpcClient {
         extendToLedgers: number,
         secretKey: string,
     ): Promise<SubmitTransactionResult> {
-        const passphrase = this.getNetworkPassphrase();
+        const passphrase = await this.getNetworkPassphrase();
         const keypair = Keypair.fromSecret(secretKey);
         const publicKey = keypair.publicKey();
 
@@ -293,11 +296,14 @@ export class StellarRpcClient {
         const sendResult = await this.server.sendTransaction(prepared);
 
         if (sendResult.status === "ERROR") {
+            const diagnostics = (sendResult as any).errorResult
+                ?? (sendResult as any).diagnosticEventsXdr
+                ?? "";
             return {
                 success: false,
                 txHash: sendResult.hash,
                 ledger: 0,
-                error: `Transaction send error: ${sendResult.status}`,
+                error: `Transaction send error: ${diagnostics || sendResult.status}`,
             };
         }
 
@@ -313,7 +319,7 @@ export class StellarRpcClient {
         entryKeyXdrs: string[],
         secretKey: string,
     ): Promise<SubmitTransactionResult> {
-        const passphrase = this.getNetworkPassphrase();
+        const passphrase = await this.getNetworkPassphrase();
         const keypair = Keypair.fromSecret(secretKey);
         const publicKey = keypair.publicKey();
 
@@ -354,11 +360,14 @@ export class StellarRpcClient {
         const sendResult = await this.server.sendTransaction(prepared);
 
         if (sendResult.status === "ERROR") {
+            const diagnostics = (sendResult as any).errorResult
+                ?? (sendResult as any).diagnosticEventsXdr
+                ?? "";
             return {
                 success: false,
                 txHash: sendResult.hash,
                 ledger: 0,
-                error: `Transaction send error: ${sendResult.status}`,
+                error: `Transaction send error: ${diagnostics || sendResult.status}`,
             };
         }
 
@@ -367,13 +376,29 @@ export class StellarRpcClient {
 
     // ─── Private helpers ─────────────────────────────────────────────────────
 
-    private getNetworkPassphrase(): string {
+    private _cachedPassphrase: string | undefined;
+
+    private async getNetworkPassphrase(): Promise<string> {
+        if (this._cachedPassphrase) return this._cachedPassphrase;
+
+        // Try fetching from the RPC server first
+        try {
+            const networkInfo = await this.server.getNetwork();
+            if (networkInfo.passphrase) {
+                this._cachedPassphrase = networkInfo.passphrase;
+                return networkInfo.passphrase;
+            }
+        } catch {
+            // Fall through to hardcoded table
+        }
+
         const passphrase = NETWORK_PASSPHRASES[this.network];
         if (!passphrase) {
             throw new Error(
                 `No network passphrase for "${this.network}". Use "testnet" or "mainnet".`,
             );
         }
+        this._cachedPassphrase = passphrase;
         return passphrase;
     }
 
@@ -392,7 +417,7 @@ export class StellarRpcClient {
                 return {
                     success: true,
                     txHash,
-                    ledger: txResponse.latestLedger,
+                    ledger: (txResponse as any).ledger ?? txResponse.latestLedger,
                 };
             }
 
@@ -400,7 +425,7 @@ export class StellarRpcClient {
                 return {
                     success: false,
                     txHash,
-                    ledger: txResponse.latestLedger,
+                    ledger: (txResponse as any).ledger ?? txResponse.latestLedger,
                     error: "Transaction failed on-chain",
                 };
             }
