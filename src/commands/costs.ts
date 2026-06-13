@@ -24,6 +24,10 @@ export function registerCostsCommand(program: Command): void {
                 }
 
                 const days = options.all ? undefined : parseInt(options.period, 10);
+                if (days !== undefined && (!Number.isInteger(days) || days <= 0)) {
+                    console.error(chalk.red("--period must be a positive integer number of days"));
+                    process.exit(1);
+                }
                 const history = getExtensionHistory(db, contractId, days);
 
                 const displayName = contract.name ?? formatContractID(contractId);
@@ -78,7 +82,7 @@ export function registerCostsCommand(program: Command): void {
 
                 // Recent history
                 console.log(`\n  ${chalk.bold("Recent Extensions")}`);
-                const recent = history.slice(0, 10);
+                const recent = options.all ? history : history.slice(0, 10);
                 for (const record of recent) {
                     const entry = entryMap.get(record.contract_entry_id);
                     const label = entry?.label ?? entry?.entry_type ?? "unknown";
@@ -90,7 +94,7 @@ export function registerCostsCommand(program: Command): void {
                     console.log(`      ${chalk.dim(`tx: ${record.tx_hash.slice(0, 16)}...`)}`);
                 }
 
-                if (history.length > 10) {
+                if (!options.all && history.length > 10) {
                     console.log(chalk.dim(`\n    ... and ${history.length - 10} more. Use --all to see everything.`));
                 }
             } catch (error: unknown) {
