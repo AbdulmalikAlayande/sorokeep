@@ -15,6 +15,7 @@ const VALID_TOKEN = "xoxb-test-slack-bot-token";
 function makeAlertEvent(overrides: Partial<AlertEvent> = {}): AlertEvent {
     return {
         type: "threshold_crossed",
+        severity: "warning",
         contractId: "CDEF1234ABCD5678",
         contractName: "my-defi-pool",
         network: "mainnet",
@@ -66,20 +67,20 @@ describe("sendSlackAlert", () => {
     // 1. TOKEN VALIDATION
     // =========================================================================
     describe("Token validation", () => {
-        it("throws a clear error when SENTINEL_SLACK_TOKEN is not set", async () => {
+        it("throws a clear error when no Slack token is configured", async () => {
             delete process.env["SENTINEL_SLACK_TOKEN"];
 
             await expect(
                 sendSlackAlert("#oncall", makeAlertEvent()),
-            ).rejects.toThrow("SENTINEL_SLACK_TOKEN");
+            ).rejects.toThrow(/[Ss]lack token/);
         });
 
-        it("throws when SENTINEL_SLACK_TOKEN is an empty string", async () => {
+        it("throws when SENTINEL_SLACK_TOKEN is an empty string and no config token", async () => {
             process.env["SENTINEL_SLACK_TOKEN"] = "";
 
             await expect(
                 sendSlackAlert("#oncall", makeAlertEvent()),
-            ).rejects.toThrow("SENTINEL_SLACK_TOKEN");
+            ).rejects.toThrow(/[Ss]lack token/);
         });
 
         it("uses the token in the Authorization header", async () => {

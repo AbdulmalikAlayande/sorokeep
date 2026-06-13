@@ -1,9 +1,29 @@
 import type { AlertEvent } from "./types.js";
+import { loadConfig } from "../utils/config.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "SlackHandler" });
 const SLACK_API_URL = "https://slack.com/api/chat.postMessage";
 const TIMEOUT_MS = 10_000;
+
+// ─── Token resolution ─────────────────────────────────────────────────────────
+
+/**
+ * Resolve the Slack Bot Token from config or environment.
+ * Priority: SENTINEL_SLACK_TOKEN env var > config.slackToken
+ */
+function resolveSlackToken(): string {
+    const envToken = process.env["SENTINEL_SLACK_TOKEN"];
+    if (envToken) return envToken;
+
+    const config = loadConfig();
+    if (config.slackToken) return config.slackToken;
+
+    throw new Error(
+        "Slack token not configured. Set SENTINEL_SLACK_TOKEN environment variable " +
+        "or add slackToken to ~/.soroban-sentinel/config.yaml.",
+    );
+}
 
 // ─── Block Kit builder ────────────────────────────────────────────────────────
 
@@ -12,10 +32,17 @@ interface SlackBlock {
     [key: string]: unknown;
 }
 
+function severityEmoji(event: AlertEvent): string {
+    if (event.type === "alert_resolved") return "✅";
+    if (event.severity === "critical") return "🔴";
+    return "⚠️";
+}
+
 function buildBlocks(event: AlertEvent): SlackBlock[] {
-    const isAlert = event.type === "threshold_crossed";
-    const icon = isAlert ? "⚠️" : "✅";
-    const status = isAlert ? "TTL Warning" : "Alert Resolved";
+    const icon = severityEmoji(event);
+    const status = event.type === "threshold_crossed"
+        ? `TTL ${event.severity === "critical" ? "CRITICAL" : "Warning"}`
+        : "Alert Resolved";
     const contractDisplay = event.contractName ?? event.contractId;
 
     const header: SlackBlock = {
@@ -54,7 +81,7 @@ function buildBlocks(event: AlertEvent): SlackBlock[] {
         elements: [
             {
                 type: "mrkdwn",
-                text: `Run \`sentinel status ${event.contractId}\` for details.`,
+                text: `Severity: *${event.severity}* | Run \`sentinel status ${event.contractId}\` for details.`,
             },
         ],
     };
@@ -63,9 +90,10 @@ function buildBlocks(event: AlertEvent): SlackBlock[] {
 }
 
 function buildFallbackText(event: AlertEvent): string {
-    const isAlert = event.type === "threshold_crossed";
-    const icon = isAlert ? "⚠️" : "✅";
-    const status = isAlert ? "TTL Warning" : "Alert Resolved";
+    const icon = severityEmoji(event);
+    const status = event.type === "threshold_crossed"
+        ? `TTL ${event.severity === "critical" ? "CRITICAL" : "Warning"}`
+        : "Alert Resolved";
     const contractDisplay = event.contractName ?? event.contractId;
 
     return (
@@ -81,18 +109,12 @@ function buildFallbackText(event: AlertEvent): string {
 /**
  * Send an AlertEvent to a Slack channel via the Slack Web API.
  *
- * Reads the Bot Token from `process.env.SENTINEL_SLACK_TOKEN`.
+ * Resolves the Bot Token from env (SENTINEL_SLACK_TOKEN) or config (slackToken).
  * Throws when the token is absent, the network fails, or Slack returns ok: false.
  * The caller (dispatcher) handles retry via the `delivered` flag.
  */
 export async function sendSlackAlert(channel: string, event: AlertEvent): Promise<void> {
-    const token = process.env["SENTINEL_SLACK_TOKEN"];
-    if (!token) {
-        throw new Error(
-            "SENTINEL_SLACK_TOKEN environment variable is not set. " +
-            "Export your Slack Bot Token before starting the daemon.",
-        );
-    }
+    const token = resolveSlackToken();
 
     logger.debug(`Sending Slack alert to ${channel}`, { type: event.type, contractId: event.contractId });
 

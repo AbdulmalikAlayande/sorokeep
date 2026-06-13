@@ -37,9 +37,10 @@ CREATE TABLE IF NOT EXISTS extension_policies (
 CREATE TABLE IF NOT EXISTS alert_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    channel_type TEXT NOT NULL CHECK(channel_type IN ('email', 'slack', 'webhook')),
+    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook')),
     channel_target TEXT NOT NULL,
     threshold_ledgers INTEGER NOT NULL,
+    webhook_secret TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -53,7 +54,8 @@ CREATE TABLE IF NOT EXISTS alerts_fired (
     resolved BOOLEAN NOT NULL DEFAULT 0,
     resolved_at TEXT,
     delivered INTEGER NOT NULL DEFAULT 0,
-    delivered_at TEXT
+    delivered_at TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS extension_history (

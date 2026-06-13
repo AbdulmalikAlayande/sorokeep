@@ -22,7 +22,7 @@ function seedFull(
         entryKeyXdr?: string;
         entryType?: string;
         liveUntil?: number;
-        channelType?: "webhook" | "slack" | "email";
+        channelType?: "webhook" | "slack";
         channelTarget?: string;
         thresholdLedgers?: number;
         ttlAtFire?: number;
@@ -128,6 +128,8 @@ describe("getUndeliveredAlerts", () => {
             expect(typeof alert.alertFiredId).toBe("number");
             expect(typeof alert.entryId).toBe("number");
             expect(typeof alert.alertConfigId).toBe("number");
+            expect(alert.retryCount).toBe(0);
+            expect(alert.webhookSecret).toBeNull();
         });
 
         it("returns multiple undelivered alerts", () => {
