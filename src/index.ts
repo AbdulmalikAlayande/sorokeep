@@ -5,6 +5,9 @@ import { registerWatchCommand } from "./commands/watch.js";
 import { registerStatusCommand } from "./commands/status.js";
 import { registerDaemonCommand } from "./commands/daemon.js";
 import { registerAlertsCommand } from "./commands/alerts.js";
+import { registerGuardCommand } from "./commands/guard.js";
+import { registerCostsCommand } from "./commands/costs.js";
+import { registerRestoreCommand } from "./commands/restore.js";
 
 initLogger({ mode: "cli" });
 
@@ -13,27 +16,14 @@ const program = new Command();
 program
     .name("sentinel")
     .description("Soroban Sentinel — The missing operations layer for deployed Soroban smart contracts")
-    .version("0.1.0");
+    .version("0.1.2");
 
 registerWatchCommand(program);
 registerStatusCommand(program);
 registerDaemonCommand(program);
 registerAlertsCommand(program);
-
-// Placeholder commands — future milestones
-program
-    .command("guard <contractId>")
-    .description("Configure auto-extension policy for a contract")
-    .action(() => console.log("guard command — not yet implemented"));
-
-program
-    .command("costs <contractId>")
-    .description("Show rent costs and forecasts for a contract")
-    .action(() => console.log("costs command — not yet implemented"));
-
-program
-    .command("restore <contractId>")
-    .description("Restore archived entries for a contract")
-    .action(() => console.log("restore command — not yet implemented"));
+registerGuardCommand(program);
+registerCostsCommand(program);
+registerRestoreCommand(program);
 
 program.parse(process.argv);
