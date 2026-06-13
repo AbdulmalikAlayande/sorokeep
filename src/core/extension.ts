@@ -9,7 +9,7 @@ import {
     upsertEntry,
     updateLastCheckedLedger,
 } from "../db/repositories.js";
-import { getLogger } from "../logging";
+import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "Extension" });
 
@@ -150,37 +150,41 @@ export async function extendEntries(
     const entries = getEntriesForContract(db, contractId);
     const entryMap = new Map(entries.map(e => [e.entry_key_xdr, e]));
 
-    for (const freshEntry of freshTTLs.entries) {
-        const dbEntry = entryMap.get(freshEntry.entryKeyXdr);
-        if (!dbEntry) continue;
+    // Wrap all DB updates in a transaction for atomicity
+    const updateDb = db.transaction(() => {
+        for (const freshEntry of freshTTLs.entries) {
+            const dbEntry = entryMap.get(freshEntry.entryKeyXdr);
+            if (!dbEntry) continue;
 
-        const oldTTL = dbEntry.live_until_ledger
-            ? dbEntry.live_until_ledger - (contract.last_checked_ledger ?? freshTTLs.latestLedger)
-            : 0;
+            const oldTTL = dbEntry.live_until_ledger
+                ? dbEntry.live_until_ledger - freshTTLs.latestLedger
+                : 0;
 
-        // Record the extension in history
-        recordExtension(db, {
-            contract_id: contractId,
-            contract_entry_id: dbEntry.id,
-            old_ttl_ledgers: Math.max(0, oldTTL),
-            new_ttl_ledgers: freshEntry.remainingTTL,
-            tx_hash: txResult.txHash,
-            executed_at_ledger: freshTTLs.latestLedger,
-        });
+            // Record the extension in history
+            recordExtension(db, {
+                contract_id: contractId,
+                contract_entry_id: dbEntry.id,
+                old_ttl_ledgers: Math.max(0, oldTTL),
+                new_ttl_ledgers: freshEntry.remainingTTL,
+                tx_hash: txResult.txHash,
+                executed_at_ledger: freshTTLs.latestLedger,
+            });
 
-        // Update the entry with fresh TTL
-        upsertEntry(db, {
-            contract_id: contractId,
-            entry_key_xdr: freshEntry.entryKeyXdr,
-            entry_type: dbEntry.entry_type,
-            label: dbEntry.label ?? undefined,
-            live_until_ledger: freshEntry.liveUntilLedgerSeq,
-            last_modified_ledger: freshEntry.lastModifiedLedgerSeq,
-            discovery_source: dbEntry.discovery_source,
-        });
-    }
+            // Update the entry with fresh TTL
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: freshEntry.entryKeyXdr,
+                entry_type: dbEntry.entry_type,
+                label: dbEntry.label ?? undefined,
+                live_until_ledger: freshEntry.liveUntilLedgerSeq,
+                last_modified_ledger: freshEntry.lastModifiedLedgerSeq,
+                discovery_source: dbEntry.discovery_source,
+            });
+        }
 
-    updateLastCheckedLedger(db, contractId, freshTTLs.latestLedger);
+        updateLastCheckedLedger(db, contractId, freshTTLs.latestLedger);
+    });
+    updateDb();
 
     logger.info(
         `Extension successful for ${contractId}: tx=${txResult.txHash}, entries=${entryKeyXdrs.length}`,
@@ -220,6 +224,16 @@ export async function runAutoExtensions(
 
     const contracts = getAllContracts(db).filter(c => c.network === network);
 
+    // Fetch latest ledger once for the entire run, not per-contract
+    let latestLedger: number | undefined;
+    if (contracts.some(c => {
+        const p = getExtensionPolicy(db, c.id);
+        return p && p.enabled;
+    })) {
+        const client = new StellarRpcClient(network, rpcUrl);
+        latestLedger = await client.getCurrentLedger();
+    }
+
     for (const contract of contracts) {
         const policy = getExtensionPolicy(db, contract.id);
         if (!policy || !policy.enabled) continue;
@@ -228,14 +242,12 @@ export async function runAutoExtensions(
 
         try {
             const entries = getEntriesForContract(db, contract.id);
-            const client = new StellarRpcClient(network, rpcUrl);
-            const latestLedger = await client.getCurrentLedger();
 
-            // Find entries that need extension
+            // Find entries that need extension (exclude already-expired entries)
             const needsExtension = entries.filter(e => {
                 if (!e.live_until_ledger) return false;
-                const remaining = e.live_until_ledger - latestLedger;
-                return remaining < policy.extend_when_below_ledgers;
+                const remaining = e.live_until_ledger - latestLedger!;
+                return remaining > 0 && remaining < policy.extend_when_below_ledgers;
             });
 
             if (needsExtension.length === 0) continue;
@@ -332,23 +344,28 @@ export async function restoreEntries(
     const entryMap = new Map(entries.map(e => [e.entry_key_xdr, e]));
 
     let restored = 0;
-    for (const freshEntry of freshTTLs.entries) {
-        const dbEntry = entryMap.get(freshEntry.entryKeyXdr);
-        if (!dbEntry) continue;
 
-        upsertEntry(db, {
-            contract_id: contractId,
-            entry_key_xdr: freshEntry.entryKeyXdr,
-            entry_type: dbEntry.entry_type,
-            label: dbEntry.label ?? undefined,
-            live_until_ledger: freshEntry.liveUntilLedgerSeq,
-            last_modified_ledger: freshEntry.lastModifiedLedgerSeq,
-            discovery_source: dbEntry.discovery_source,
-        });
-        restored++;
-    }
+    // Wrap all DB updates in a transaction for atomicity
+    const updateDb = db.transaction(() => {
+        for (const freshEntry of freshTTLs.entries) {
+            const dbEntry = entryMap.get(freshEntry.entryKeyXdr);
+            if (!dbEntry) continue;
 
-    updateLastCheckedLedger(db, contractId, freshTTLs.latestLedger);
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: freshEntry.entryKeyXdr,
+                entry_type: dbEntry.entry_type,
+                label: dbEntry.label ?? undefined,
+                live_until_ledger: freshEntry.liveUntilLedgerSeq,
+                last_modified_ledger: freshEntry.lastModifiedLedgerSeq,
+                discovery_source: dbEntry.discovery_source,
+            });
+            restored++;
+        }
+
+        updateLastCheckedLedger(db, contractId, freshTTLs.latestLedger);
+    });
+    updateDb();
 
     logger.info(`Restore successful for ${contractId}: tx=${txResult.txHash}, entries=${restored}`);
 
