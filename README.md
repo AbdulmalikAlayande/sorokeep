@@ -1,27 +1,117 @@
-# Soroban Sentinel
+<p align="center">
+  <h1 align="center">Soroban Sentinel</h1>
+  <p align="center">
+    The missing operations layer for deployed Soroban smart contracts.
+    <br />
+    Monitor TTLs. Get alerted before expiration. Auto-extend storage. Restore archived entries.
+    <br />
+    <br />
+    <a href="#install">Install</a>
+    &middot;
+    <a href="#quick-start">Quick Start</a>
+    &middot;
+    <a href="#commands">Commands</a>
+    &middot;
+    <a href="#alerting">Alerting</a>
+    &middot;
+    <a href="#contributing">Contributing</a>
+  </p>
+</p>
 
-The missing operations layer for deployed Soroban smart contracts.
+<br />
 
-Soroban Sentinel monitors the health of your deployed contracts — tracking state TTLs, alerting before expiration, and auto-extending storage lifetimes so your contracts don't die in their sleep.
+## Why This Exists
 
-## Why this exists
+Soroban's storage model is uncommon among major smart contract platforms: **state expires.** Every ledger entry — contract instances, persistent storage, WASM code — has a Time-To-Live (TTL). When it runs out, the entry is archived. If a contract's instance entry expires, the entire contract stops working. If persistent storage entries expire, user data becomes inaccessible until someone pays to restore it.
 
-Soroban's storage model is uncommon among major smart contract platforms: **state expires.** Every ledger entry, contract instances, persistent storage, WASM code etc., all have a Time-To-Live (TTL). When it runs out, the entry is archived. If a contract's instance entry expires, the entire contract stops working. If persistent storage entries expire, user data becomes inaccessible until someone pays to restore it.
+This is by design — state archival keeps Stellar lean and scalable. But it means **you must actively manage the lifecycle of your contract's state, or it dies.**
 
-This is by design, state archival keeps Stellar lean and scalable. But it means **you must actively manage the lifecycle of your contract's state, or it dies.**
+There is currently no dedicated open-source tool that combines TTL monitoring, alerting, auto-extension, cost tracking, and restoration for Soroban contracts. Developers either use manual CLI commands, build ad-hoc scripts, or embed TTL extension logic directly in their contracts.
 
-There is currently no dedicated open-source tool that combines TTL monitoring, alerting, auto-extension, cost tracking, and restoration for Soroban contracts. Developers either use manual CLI commands, build ad-hoc scripts, or embed TTL extension logic directly in their contracts. Sentinel is the unified operations layer that handles all of this.
+Sentinel is the unified operations layer that handles all of this.
 
-Security auditors have started flagging TTL mismanagement as a risk area in Soroban contracts. [Veridise](https://veridise.com/audits/soroban/) includes TTL handling in their audit scope. The [LayerZero Stellar endpoint audit](https://code4rena.com/audits/2026-04-layerzero-stellar-endpoint) explicitly lists TTL expiration edge cases as a concern. [OpenZeppelin's Stellar contracts library](https://docs.openzeppelin.com/stellar-contracts) deliberately leaves instance storage TTL management to the application developer.
+> Security auditors have started flagging TTL mismanagement as a risk area in Soroban contracts. [Veridise](https://veridise.com/audits/soroban/) includes TTL handling in their audit scope. The [LayerZero Stellar endpoint audit](https://code4rena.com/audits/2026-04-layerzero-stellar-endpoint) explicitly lists TTL expiration edge cases as a concern. [OpenZeppelin's Stellar contracts library](https://docs.openzeppelin.com/stellar-contracts) deliberately leaves instance storage TTL management to the application developer.
 
-## What's working right now
+## Features
 
-Sentinel is under active development. Here's what works today:
+- **Watch** — Register contracts and automatically discover their instance, WASM, and storage entries
+- **Monitor** — Continuous TTL polling with configurable intervals via a long-running daemon
+- **Alert** — Webhook and Slack notifications with severity levels, HMAC signing, and retry logic
+- **Auto-Extend** — Policy-based automatic TTL extension via `ExtendFootprintTTLOp` transactions
+- **Restore** — Recover archived entries via `RestoreFootprintOp` transactions
+- **Cost Tracking** — Per-contract extension history with XLM costs and 30-day projections
+- **Discovery** — Footprint-based storage key discovery from on-chain transaction activity
+- **Local-First** — All state stored in SQLite. No external services beyond a Stellar RPC endpoint.
 
-**`sentinel watch <contractId>`** — Register a contract for monitoring. Connects to Stellar testnet or mainnet, discovers the contract's instance entry and WASM code entry, reads their TTLs, and stores everything locally in SQLite.
+## Install
+
+**Requirements:** Node.js 22+
+
+```bash
+# From source
+git clone https://github.com/AbdulmalikAlayande/soroban-sentinel.git
+cd soroban-sentinel
+npm install
+npm run build
+
+# Run directly
+npx tsx src/index.ts --help
+
+# Or link globally after building
+npm link
+sentinel --help
+```
+
+<!--
+# npm (coming soon)
+npm install -g soroban-sentinel
+-->
+
+## Quick Start
+
+```bash
+# 1. Register a contract for monitoring
+sentinel watch CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --network testnet \
+  --name "XLM Native Token"
+
+# 2. Check its current TTL health
+sentinel status CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+
+# 3. Set up a webhook alert (fires when TTL drops below 20,000 ledgers)
+sentinel alerts add \
+  --contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --type webhook \
+  --url https://your-server.com/webhook \
+  --threshold 20000
+
+# 4. Start the monitoring daemon
+sentinel daemon --network testnet
+```
+
+The daemon will check TTLs every 5 minutes, fire alerts when thresholds are crossed, send resolution notifications when TTLs recover, and auto-extend entries if guard policies are configured.
+
+## Commands
+
+### `sentinel watch <contract-id>`
+
+Register a contract for monitoring. Connects to the Stellar RPC, discovers the contract's instance and WASM code entries, reads their TTLs, and stores everything locally.
+
+```bash
+sentinel watch <contract-id> [options]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-n, --name <name>` | Human-readable contract name | — |
+| `--network <network>` | `testnet` or `mainnet` | `testnet` |
+| `-r, --rpc-url <url>` | Custom Stellar RPC endpoint | Network default |
+| `--storage-keys <keys>` | Comma-separated base64 XDR storage keys to track | — |
+
+**Example output:**
 
 ```
-$ sentinel watch CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --network testnet --name "XLM Native Token"
+$ sentinel watch CDLZFC3S...CYSC --network testnet --name "XLM Native Token"
 
 ✔ Contract XLM Native Token registered successfully.
 
@@ -34,168 +124,464 @@ $ sentinel watch CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC --netw
   Run 'sentinel guard CDLZFC3S...CYSC' to enable auto-extension.
 ```
 
-**`sentinel status <contractId>`** — Display current TTL health, live until ledger, and remaining TTL for a watched contract in a clean, human-readable terminal format.
+Entry discovery happens in layers:
 
-**`sentinel daemon`** — Run the long-running daemon process. Every polling cycle (default 5 minutes), it re-checks contract entries, updates database states, records alert threshold crossings, resolves alerts when TTLs recover, and dispatches pending alerts to external notification channels.
+1. **Deterministic** (automatic) — Contract instance and WASM code entries, derived from the contract ID and WASM hash. Always tracked.
+2. **Footprint-based** (daemon) — Discovered by scanning on-chain transaction events for storage keys your contract uses.
+3. **Manual** (opt-in) — Specific storage keys declared via `--storage-keys`.
 
-**`sentinel alerts`** — Manage notification configurations. Supports subcommands to `add`, `list`, and `remove` alert channels (webhooks, Slack channel targets) per contract with custom ledger thresholds.
+---
 
-**Alert Delivery Dispatcher** — Background delivery engine for fired alerts:
-- **Webhook**: Posts a detailed JSON payload containing the event context, complete with connection timeouts and HTTP status check.
-- **Slack**: Sends rich messages using Slack Block Kit, with built-in token validation.
+### `sentinel status <contract-id>`
 
-**Database layer** — SQLite schema for contracts, entries, extension policies, alert configs, fired alerts, and extension history. All with foreign key cascades, upsert support, and an in-memory mode for testing.
-
-## What's coming next
-
-These are concrete next steps, not a wish list:
-
-- **`sentinel guard`** — Auto-extend TTLs by submitting `ExtendFootprintTTLOp` transactions
-- **`sentinel costs`** — Track rent spending per contract over time
-- **`sentinel restore`** — Restore archived entries via `RestoreFootprintOp`
-
-Longer term: transaction footprint-based storage key discovery, web dashboard, npm library mode for CI/CD integration, and MCP server for AI-assisted development tools.
-
-## Install
-
-Requires Node.js 22+.
+Display current TTL health for a watched contract. Reads from the local database — no RPC call.
 
 ```bash
-# From source (current method)
-git clone https://github.com/AbdulmalikAlayande/soroban-sentinel.git
-cd soroban-sentinel
-npm install
-npx tsx src/index.ts --help
-
-# npm install coming soon
-# npm install -g soroban-sentinel
+sentinel status <contract-id>
 ```
 
-## Usage
+Shows contract name, network, last checked ledger, and a table of all tracked entries with remaining TTL in ledgers and human-readable time, plus a status indicator (OK / Warning / Critical).
+
+---
+
+### `sentinel daemon`
+
+Start the long-running monitoring process.
 
 ```bash
-# See all commands
-sentinel --help
-
-# Watch a contract on testnet
-sentinel watch <contractId> --network testnet --name "My Contract"
-
-# Watch a contract on mainnet
-sentinel watch <contractId> --network mainnet --name "Production Pool"
-
-# Use a custom RPC endpoint
-sentinel watch <contractId> --network testnet --rpc-url https://my-rpc.example.com
+sentinel daemon [options]
 ```
 
-## How it works
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--network <network>` | Network to monitor | `testnet` |
+| `--interval <ms>` | Polling interval in milliseconds (min: 10,000) | `300000` (5 min) |
+| `-r, --rpc-url <url>` | Custom RPC endpoint | Network default |
 
-Sentinel is an off-chain monitoring tool. It reads data from the Stellar RPC, stores it locally in SQLite, and acts on it (alerts, auto-extension). It does not run on-chain and does not require you to modify your contracts.
+Each cycle performs three phases:
 
-The core workflow:
+1. **Monitor** — Fetches fresh TTLs for all contracts, detects threshold crossings, resolves recovered alerts
+2. **Deliver** — Dispatches pending alerts to configured webhook and Slack channels
+3. **Auto-Extend** — Extends TTLs for contracts with active guard policies
 
-1. **Register** a contract with `sentinel watch` — Sentinel discovers instance and WASM entries, reads their TTLs, stores everything in `~/.soroban-sentinel/sentinel.db`
-2. **Monitor** with the daemon — every 5 minutes, Sentinel re-fetches TTLs for all registered contracts and checks them against your configured thresholds
-3. **Alert** when TTLs drop below thresholds — webhook POST, Slack message, or email
-4. **Auto-extend** if configured — Sentinel builds and submits `ExtendFootprintTTLOp` transactions using a funded keypair you provide
-5. **Track costs** — every extension is recorded with the transaction hash and XLM cost
+The daemon handles graceful shutdown on `SIGINT`/`SIGTERM` and includes a re-entrance guard to prevent overlapping cycles.
 
-### Entry discovery
+---
 
-Sentinel discovers contract entries in three layers:
+### `sentinel alerts`
 
-- **Deterministic entries (automatic):** Contract instance and WASM code entries are constructed from the contract ID and WASM hash. These are always tracked.
-- **Footprint-based discovery (planned):** By watching transactions that invoke your contract, Sentinel will learn which persistent storage keys exist and start tracking their TTLs too.
-- **Developer hints (supported):** You can declare specific storage keys to track via CLI flags or config.
+Manage alert configurations. Supports five subcommands.
+
+#### `alerts add` — Create a new alert
+
+```bash
+sentinel alerts add [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--contract <id>` | Contract ID to alert on (required) |
+| `--type <type>` | `webhook` or `slack` (required) |
+| `--url <url>` | Webhook POST URL (required for webhook) |
+| `--channel <channel>` | Slack channel name or ID (required for slack) |
+| `--threshold <ledgers>` | Fire when remaining TTL drops below this (required) |
+| `--secret <secret>` | HMAC signing secret for webhooks (auto-generated if omitted) |
+
+For webhook alerts, an HMAC signing secret is auto-generated (32-byte hex) if you don't provide one. The secret is displayed once at creation time — save it to verify webhook signatures on your server. See [Webhook Signing](#webhook-signing) for details.
+
+#### `alerts list` — View configured alerts
+
+```bash
+sentinel alerts list --contract <id>
+```
+
+#### `alerts remove` — Delete an alert configuration
+
+```bash
+sentinel alerts remove --id <config-id>
+```
+
+#### `alerts test` — Send a test alert
+
+```bash
+sentinel alerts test --id <config-id>
+```
+
+Fires a synthetic `threshold_crossed` event through the real delivery pipeline. Useful for verifying that your webhook endpoint or Slack channel is correctly configured before going live.
+
+#### `alerts history` — View past alert activity
+
+```bash
+sentinel alerts history --contract <id> [--limit 20]
+```
+
+Shows a table of fired alerts: timestamp, entry label, TTL at fire, channel type, delivery status, retry count, and resolution time.
+
+---
+
+### `sentinel guard`
+
+Configure auto-extension policies. When enabled, the daemon automatically extends TTLs by submitting `ExtendFootprintTTLOp` transactions using a funded Stellar keypair.
+
+```bash
+sentinel guard <contract-id> [options]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--target-ttl <ledgers>` | TTL to extend entries to | `100000` |
+| `--threshold <ledgers>` | Extend when TTL drops below this | `20000` |
+| `--keypair <secret>` | Stellar secret key (for one-time extension) | — |
+| `--keypair-env <var>` | Env var name containing the secret key | — |
+| `--auto-extend` | Enable daemon auto-extension (requires `--keypair-env`) | — |
+| `--dry-run` | Simulate extension and show estimated fee | — |
+| `--disable` | Disable auto-extension for this contract | — |
+
+**Usage modes:**
+
+```bash
+# Check current policy
+sentinel guard <contract-id>
+
+# Dry run — see estimated fee without submitting
+sentinel guard <contract-id> --keypair S... --dry-run
+
+# One-time immediate extension
+sentinel guard <contract-id> --keypair S...
+
+# Enable auto-extension for the daemon
+sentinel guard <contract-id> --keypair-env STELLAR_SECRET_KEY --auto-extend
+
+# Disable auto-extension
+sentinel guard <contract-id> --disable
+```
+
+**Security:** Secret keys are never stored in the database. When using `--auto-extend`, only the public key and the environment variable name are persisted. The daemon resolves the actual secret key from the environment at runtime.
+
+---
+
+### `sentinel costs`
+
+View extension history and rent spending for a contract.
+
+```bash
+sentinel costs <contract-id> [options]
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--period <days>` | Show costs for the last N days | `30` |
+| `--all` | Show all history | — |
+
+**Output includes:**
+
+- Total extensions and total cost in XLM
+- Breakdown by entry type (instance, wasm, persistent) with count and cost
+- 30-day cost projection extrapolated from the selected period
+- Recent extensions table: timestamp, entry label, old TTL → new TTL, cost in XLM, transaction hash
+
+---
+
+### `sentinel restore`
+
+Recover archived ledger entries via `RestoreFootprintOp` transactions.
+
+```bash
+sentinel restore <contract-id> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--keypair <secret>` | Stellar secret key |
+| `--keypair-env <var>` | Env var containing secret key |
+| `--entry <keyXdr>` | Specific entry key XDR to restore (repeatable) |
+| `--all` | Restore all tracked entries for the contract |
+
+One of `--keypair` or `--keypair-env` is required. One of `--entry` or `--all` is required (mutually exclusive).
+
+```bash
+# Restore a specific entry
+sentinel restore <contract-id> --keypair-env STELLAR_SECRET_KEY --entry <base64-xdr>
+
+# Restore all tracked entries
+sentinel restore <contract-id> --keypair-env STELLAR_SECRET_KEY --all
+```
+
+## Alerting
+
+Sentinel delivers alerts through two channels: **webhooks** and **Slack**. Each alert includes a severity level and rich context about the affected entry.
+
+### Alert Lifecycle
+
+1. **Threshold Crossed** — During each monitoring cycle, if an entry's remaining TTL drops below a configured threshold, Sentinel fires a `threshold_crossed` alert.
+2. **Delivery** — The dispatcher routes the alert to the configured channel (webhook or Slack). Failed deliveries are retried on subsequent cycles, up to 5 attempts.
+3. **Resolution** — When TTL recovers past the threshold (e.g., after an extension), Sentinel fires an `alert_resolved` notification to all configured channels.
+
+### Severity Levels
+
+Severity is computed automatically based on how much TTL remains relative to the configured threshold:
+
+| Severity | Condition | Description |
+|----------|-----------|-------------|
+| **critical** | Remaining TTL < 25% of threshold, or TTL = 0 | Entry is in immediate danger of archival |
+| **warning** | Remaining TTL is below threshold but above 25% | Entry needs attention soon |
+| **info** | Alert resolved (TTL recovered) | Entry is healthy again |
+
+### Webhook Delivery
+
+Webhook alerts are delivered as HTTP POST requests with a JSON body:
+
+```json
+{
+  "type": "threshold_crossed",
+  "severity": "warning",
+  "contractId": "CDLZFC3S...",
+  "contractName": "XLM Native Token",
+  "network": "testnet",
+  "entry": {
+    "keyXdr": "AAAA1234...",
+    "type": "instance",
+    "label": "Contract Instance"
+  },
+  "threshold": {
+    "configuredLedgers": 20000,
+    "currentRemainingLedgers": 8500,
+    "approximateTimeRemaining": "~13h 0m"
+  },
+  "firedAtLedger": 2500000,
+  "timestamp": "2026-06-13T12:00:00.000Z"
+}
+```
+
+### Webhook Signing
+
+Webhook requests include an HMAC-SHA256 signature in the `X-Sentinel-Signature` header for payload verification:
+
+```
+X-Sentinel-Signature: sha256=a1b2c3d4e5f6...
+```
+
+To verify on your server:
+
+```javascript
+import { createHmac } from "node:crypto";
+
+function verifySignature(payload, signature, secret) {
+  const expected = "sha256=" + createHmac("sha256", secret)
+    .update(payload)
+    .digest("hex");
+  return signature === expected;
+}
+```
+
+The signing secret is auto-generated when you create a webhook alert (or you can provide your own with `--secret`). It is displayed once at creation time — store it securely.
+
+### Slack Delivery
+
+Slack alerts are sent via the [Slack Web API](https://api.slack.com/methods/chat.postMessage) using Block Kit for rich formatting. Messages include severity icons, contract details, remaining TTL, and actionable hints.
+
+**Setup:**
+
+1. Create a Slack app with `chat:write` scope at [api.slack.com/apps](https://api.slack.com/apps)
+2. Install the app to your workspace and copy the Bot User OAuth Token (`xoxb-...`)
+3. Provide the token via environment variable:
+
+```bash
+export SENTINEL_SLACK_TOKEN=xoxb-your-bot-token
+```
+
+Alternatively, store the token in your config file at `~/.soroban-sentinel/config.yaml`:
+
+```yaml
+slackToken: "xoxb-your-bot-token"
+```
+
+The environment variable takes precedence over the config file.
+
+### Retry Policy
+
+Failed alert deliveries are automatically retried on subsequent daemon cycles. After **5 consecutive failures**, the alert is abandoned and no further delivery attempts are made. You can view delivery status and retry counts with `sentinel alerts history`.
+
+## How It Works
+
+Sentinel is an off-chain monitoring tool. It reads data from the Stellar RPC, stores it locally in SQLite, and acts on it (alerts, auto-extension, restoration). It does not run on-chain and does not require you to modify your contracts.
+
+```
+                         ┌─────────────────────┐
+                         │   Stellar Network    │
+                         │  (testnet / mainnet) │
+                         └──────────┬───────────┘
+                                    │ RPC
+                         ┌──────────▼───────────┐
+                         │   Soroban Sentinel    │
+                         │                       │
+                         │  ┌─────────────────┐  │
+                         │  │  Monitor Cycle   │  │
+                         │  │  (fetch TTLs,    │  │
+                         │  │   detect alerts, │  │
+                         │  │   resolve)       │  │
+                         │  └────────┬────────┘  │
+                         │           │            │
+                         │  ┌────────▼────────┐  │
+                         │  │   Dispatcher     │  │
+                         │  │  (webhook/slack) │  │
+                         │  └────────┬────────┘  │
+                         │           │            │
+                         │  ┌────────▼────────┐  │
+                         │  │  Auto-Extend     │  │
+                         │  │  (guard policy)  │  │
+                         │  └─────────────────┘  │
+                         │                       │
+                         │  ┌─────────────────┐  │
+                         │  │   SQLite DB      │  │
+                         │  │  ~/.soroban-     │  │
+                         │  │   sentinel/      │  │
+                         │  │   sentinel.db    │  │
+                         │  └─────────────────┘  │
+                         └───────────────────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    ▼               ▼               ▼
+              ┌──────────┐  ┌────────────┐  ┌────────────┐
+              │ Webhooks │  │   Slack    │  │  Terminal  │
+              └──────────┘  └────────────┘  └────────────┘
+```
+
+### The Daemon Cycle
+
+Every polling interval (default: 5 minutes), the daemon runs three phases:
+
+1. **Monitor** — For each registered contract, fetches fresh TTLs from the RPC, updates the database, checks each entry against every configured alert threshold. Fires `threshold_crossed` when TTL drops below a threshold; fires `alert_resolved` when TTL recovers.
+
+2. **Deliver** — Processes all undelivered alerts. Routes each to its configured channel (webhook or Slack), marks successful deliveries, increments retry counters on failures, abandons after 5 retries.
+
+3. **Auto-Extend** — For contracts with an active guard policy, checks which entries have TTL below the policy threshold and submits `ExtendFootprintTTLOp` transactions to extend them. Records the extension cost in XLM.
 
 ### Storage
 
-All state is local. Sentinel stores data in `~/.soroban-sentinel/sentinel.db` (SQLite). No external services required beyond a Stellar RPC endpoint.
+All state is local. Sentinel stores data in `~/.soroban-sentinel/sentinel.db` (SQLite with WAL mode). No external services required beyond a Stellar RPC endpoint.
 
-Database tables:
+**Database tables:**
 
-- `contracts` — registered contracts with network, name, WASM hash
-- `contract_entries` — tracked ledger entries with TTLs and discovery source
-- `extension_policies` — auto-extension rules per contract
-- `alert_configs` — alert channels and thresholds
-- `alerts_fired` — deduplication and resolution tracking
-- `extension_history` — every TTL extension with tx hash and cost
+| Table | Purpose |
+|-------|---------|
+| `contracts` | Registered contracts with network, name, WASM hash |
+| `contract_entries` | Tracked ledger entries with TTLs and discovery source |
+| `extension_policies` | Auto-extension rules per contract (threshold, target, keypair reference) |
+| `alert_configs` | Alert channels, thresholds, and webhook secrets |
+| `alerts_fired` | Fired alert records with delivery status, retry count, and resolution tracking |
+| `extension_history` | Every TTL extension with transaction hash and XLM cost |
 
-## Project structure
+### Configuration
+
+Sentinel stores user configuration in `~/.soroban-sentinel/config.yaml`:
+
+```yaml
+network: testnet
+pollingIntervalSeconds: 300
+slackToken: "xoxb-..."        # Optional — can also use SENTINEL_SLACK_TOKEN env var
+rpcUrl: "https://..."         # Optional — overrides network default
+```
+
+The config file is created with `0600` permissions (owner read/write only) to protect sensitive values like the Slack token.
+
+## Project Structure
 
 ```
 soroban-sentinel/
 ├── src/
-│   ├── index.ts              # CLI entry point (Commander.js)
-│   ├── commands/             # CLI command handlers (thin presentation layer)
-│   │   └── watch.ts
-│   ├── core/                 # Business logic (no CLI dependencies)
-│   │   ├── watch.ts          # Contract registration and discovery
-│   │   └── monitor.ts        # Polling cycle, threshold detection, resolution
-│   ├── rpc/                  # Stellar RPC client wrapper
-│   │   └── client.ts
-│   ├── db/                   # SQLite database and repositories
-│   │   ├── database.ts
-│   │   ├── repositories.ts
-│   │   └── schema.sql
-│   ├── alerts/               # Alert dispatcher (webhook, Slack)
-│   ├── daemon/               # Daemon loop and lifecycle
-│   ├── logging/              # Structured logging (pino)
-│   └── utils/                # Formatting, config helpers
-├── tests/                    # Mirrors src/ structure
-│   ├── core/
-│   │   ├── watch.test.ts
-│   │   └── monitor.test.ts
-│   ├── db/
-│   │   └── database.test.ts
-│   ├── rpc/
-│   │   └── client.test.ts
-│   └── utils/
-│       └── formatting.test.ts
+│   ├── index.ts                 # CLI entry point (Commander.js)
+│   ├── commands/                # CLI command handlers (thin presentation layer)
+│   │   ├── watch.ts             # Contract registration
+│   │   ├── status.ts            # TTL health display
+│   │   ├── daemon.ts            # Long-running monitor
+│   │   ├── alerts.ts            # Alert CRUD + test + history
+│   │   ├── guard.ts             # Auto-extension policies
+│   │   ├── costs.ts             # Extension cost reporting
+│   │   └── restore.ts           # Archived entry recovery
+│   ├── core/                    # Business logic (no CLI dependencies)
+│   │   ├── watch.ts             # Contract registration and discovery
+│   │   ├── monitor.ts           # Polling cycle, threshold detection, resolution
+│   │   ├── extension.ts         # TTL extend, auto-extend, restore, cost recording
+│   │   └── discovery.ts         # Footprint-based storage key discovery
+│   ├── alerts/                  # Alert delivery pipeline
+│   │   ├── types.ts             # AlertEvent, AlertSeverity, buildAlertEvent
+│   │   ├── dispatcher.ts        # Routing, retry logic, delivery orchestration
+│   │   ├── webhook.ts           # HTTP POST with HMAC-SHA256 signing
+│   │   └── slack.ts             # Slack Web API + Block Kit formatting
+│   ├── daemon/                  # Daemon lifecycle
+│   │   └── loop.ts              # Start/stop, re-entrance guard, cycle orchestration
+│   ├── rpc/                     # Stellar RPC client wrapper
+│   │   └── client.ts            # Instance/WASM fetch, batch TTLs, extend, restore
+│   ├── db/                      # Database layer
+│   │   ├── schema.sql           # Full SQLite schema
+│   │   ├── database.ts          # Init, WAL mode, live migrations
+│   │   └── repositories.ts      # All query functions
+│   ├── logging/                 # Structured logging (pino)
+│   └── utils/                   # Config loader, TTL formatting
+├── tests/                       # Mirrors src/ structure — 238 tests across 14 files
+├── .github/workflows/           # CI (test + type-check) and publish
 ├── package.json
 ├── tsconfig.json
-└── vitest.config.ts
+├── vitest.config.ts
+├── LICENSE
+└── CONTRIBUTING.md
 ```
 
-The architecture separates concerns into three layers:
+**Architecture layers:**
 
-- **Core** (`src/core/`) — pure business logic, testable without network or CLI. The daemon reuses the same core functions.
-- **RPC** (`src/rpc/`) — Stellar SDK wrapper. All network calls go through here.
-- **Commands** (`src/commands/`) — thin CLI layer. Parses args, calls core, formats output.
+- **Commands** (`src/commands/`) — Thin CLI layer. Parses arguments, calls core, formats terminal output. No business logic.
+- **Core** (`src/core/`) — Pure business logic. Testable without network or CLI. The daemon reuses the same functions.
+- **RPC** (`src/rpc/`) — Stellar SDK wrapper. All network calls go through here. Handles transaction building, simulation, signing, and submission.
+- **Alerts** (`src/alerts/`) — Delivery pipeline. Channel-specific formatting and transport, routing, retry management.
+- **DB** (`src/db/`) — SQLite repositories. All queries centralized here. In-memory mode for tests.
 
-## Tech stack
+## Tech Stack
 
-- **TypeScript / Node.js** — the application runtime
-- **@stellar/stellar-sdk** — Stellar and Soroban RPC interactions
-- **better-sqlite3** — local database (synchronous, zero external dependencies)
-- **Commander.js** — CLI framework
-- **pino** — structured logging
-- **chalk / ora** — terminal formatting
-- **Vitest** — test framework
+| Package | Purpose |
+|---------|---------|
+| [TypeScript](https://www.typescriptlang.org/) | Application language (ESM) |
+| [@stellar/stellar-sdk](https://github.com/nicktomlin/js-stellar-sdk) | Stellar and Soroban RPC interactions |
+| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | Local database (synchronous, zero external deps) |
+| [Commander.js](https://github.com/tj/commander.js) | CLI framework |
+| [pino](https://github.com/pinojs/pino) | Structured JSON logging |
+| [chalk](https://github.com/chalk/chalk) / [ora](https://github.com/sindresorhus/ora) | Terminal formatting and spinners |
+| [yaml](https://github.com/eemeli/yaml) | Config file parsing |
+| [Vitest](https://vitest.dev/) | Test framework |
 
-## Tests
+## Testing
 
 ```bash
 # Run all tests
-npx vitest run
+npm test
 
-# Run specific test file
+# Run a specific test file
 npx vitest run tests/core/monitor.test.ts
 
 # Watch mode
 npx vitest
 ```
 
-201 tests covering:
+**238 tests** across **14 test files** covering:
 
-- Formatting utilities (TTL conversion, status classification)
-- Database operations (CRUD, cascades, upserts, deduplication, alert delivery, and query joining)
-- RPC client (contract instance, WASM code, batch TTL queries)
-- Watch command (registration, re-watch, SAC contracts, error handling, network isolation)
-- Monitor cycle (TTL refresh, threshold detection, alert deduplication, resolution, fault isolation, multi-threshold escalation, partial RPC responses)
-- Alert Delivery system (webhook integration, Slack Block Kit messages, dispatcher routing and retry logic)
-- CLI status, daemon, and alerts commands
+- **Formatting** — TTL conversion, status classification, human-readable time
+- **Database** — CRUD, cascades, upserts, deduplication, alert delivery queries
+- **RPC Client** — Contract instance, WASM code, batch TTL queries
+- **Watch** — Registration, re-watch, SAC contracts, error handling, network isolation
+- **Monitor Cycle** — TTL refresh, threshold detection, alert deduplication, resolution, fault isolation, multi-threshold escalation, partial RPC responses
+- **Extension** — TTL extension, auto-extension policy evaluation, restore, cost recording
+- **Alert Dispatcher** — Channel routing, retry logic, max retry cap, abandoned alerts
+- **Webhook** — HMAC signing, timeout handling, HTTP error responses
+- **Slack** — Token resolution, Block Kit structure, `body.ok` validation
+- **CLI Commands** — Alerts add/list/remove/test/history, email type blocking
+- **Config** — Load/save, defaults, parse failure handling, file permissions
+- **Daemon** — Start/stop, re-entrance guard, cycle error isolation
 
-## Why TypeScript, not Rust?
+All tests use in-memory SQLite databases and mocked RPC responses — no network calls, no filesystem side effects.
+
+## FAQ
+
+### Why TypeScript, not Rust?
 
 Sentinel is an off-chain operational tool, not a smart contract. TypeScript was chosen because:
 
@@ -203,15 +589,43 @@ Sentinel is an off-chain operational tool, not a smart contract. TypeScript was 
 2. Soroban developers already have Node.js in their toolchain
 3. npm distribution means zero-friction installation
 4. The performance requirements (periodic RPC polling) are well within Node.js capabilities
-5. It maximizes the contributor pool
+5. It maximizes the contributor pool — most Soroban developers know TypeScript
+
+### Is my secret key stored anywhere?
+
+No. When you configure auto-extension with `--keypair-env`, Sentinel stores only the **public key** and the **environment variable name** in the database. The actual secret key is resolved from your environment at runtime. If you use `--keypair` for a one-time operation, the key is used in-memory and never persisted.
+
+### What happens if the daemon crashes mid-cycle?
+
+Each phase (monitor, deliver, auto-extend) is wrapped in isolated error handling. A failure in one phase doesn't prevent the others from running. Alert deliveries are idempotent — if a delivery was marked successful, it won't be re-sent. If the daemon restarts, undelivered alerts will be picked up on the next cycle.
+
+### What networks are supported?
+
+Testnet (`https://soroban-testnet.stellar.org`) and Mainnet (`https://mainnet.sorobanrpc.com`). You can also point Sentinel at any custom RPC endpoint with `--rpc-url`.
+
+### What about email alerts?
+
+Email is not yet implemented. The CLI will reject `--type email` with a clear error message. Webhook and Slack are the supported channels today.
+
+## Roadmap
+
+- Web dashboard for visual TTL monitoring
+- npm library mode for CI/CD integration
+- MCP server for AI-assisted development tools
+- Email alert channel
+- Multi-contract batch operations
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-MIT
+[MIT](LICENSE)
 
 ## Author
 
 **Abdulmalik Alayande**
 
-- GitHub: [AbdulmalikAlayande](https://github.com/AbdulmalikAlayande)
+- GitHub: [@AbdulmalikAlayande](https://github.com/AbdulmalikAlayande)
 - X: [@The_good_man02](https://twitter.com/The_good_man02)
