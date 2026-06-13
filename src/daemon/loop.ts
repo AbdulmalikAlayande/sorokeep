@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
+import { runAutoExtensions } from "../core/extension.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "DaemonLoop" });
@@ -125,6 +126,21 @@ async function executeCycle(
             // This should never happen (deliverPendingAlerts never throws),
             // but guard defensively.
             logger.error("deliverPendingAlerts threw unexpectedly", deliveryErr);
+        }
+
+        // Step 3: run auto-extensions for contracts with enabled policies.
+        try {
+            const extensions = await runAutoExtensions(db, network, rpcUrl);
+            if (extensions.contractsChecked > 0) {
+                logger.info(
+                    `Auto-extensions — checked: ${extensions.contractsChecked}, ` +
+                    `extended: ${extensions.contractsExtended}, ` +
+                    `entries: ${extensions.entriesExtended}, ` +
+                    `errors: ${extensions.errors.length}`,
+                );
+            }
+        } catch (extensionErr: unknown) {
+            logger.error("runAutoExtensions threw unexpectedly", extensionErr);
         }
 
         safeOnCycle(onCycle, result, undefined);
