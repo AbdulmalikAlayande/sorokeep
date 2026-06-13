@@ -48,6 +48,11 @@ export function registerRestoreCommand(program: Command): void {
                 // Determine which entries to restore
                 let entryKeys: string[];
 
+                if (options.all && options.entry && options.entry.length > 0) {
+                    console.error(chalk.red("Use either --entry <keyXdr> or --all, not both"));
+                    process.exit(1);
+                }
+
                 if (options.entry && options.entry.length > 0) {
                     entryKeys = options.entry;
                 } else if (options.all) {
