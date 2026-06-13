@@ -6,6 +6,7 @@ import {
     upsertEntry,
     insertAlertConfig,
     recordAlertFired,
+    MAX_RETRY_COUNT,
 } from "../../src/db/repositories";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
@@ -33,10 +34,11 @@ function seedContractWithAlert(
         network?: string;
         entryKeyXdr?: string;
         entryType?: string;
-        channelType?: "webhook" | "slack" | "email";
+        channelType?: "webhook" | "slack";
         channelTarget?: string;
         thresholdLedgers?: number;
         ttlAtFire?: number;
+        webhookSecret?: string;
     }
 ): { entryId: number; alertConfigId: number; alertFiredId: number } {
     const network = opts.network ?? "testnet";
@@ -64,6 +66,7 @@ function seedContractWithAlert(
         channel_type: opts.channelType ?? "webhook",
         channel_target: opts.channelTarget ?? "https://example.com/hook",
         threshold_ledgers: opts.thresholdLedgers ?? 20_000,
+        webhook_secret: opts.webhookSecret,
     });
 
     const config = db
@@ -104,6 +107,7 @@ describe("deliverPendingAlerts", () => {
             expect(result).toHaveProperty("attempted");
             expect(result).toHaveProperty("delivered");
             expect(result).toHaveProperty("failed");
+            expect(result).toHaveProperty("abandoned");
             expect(result).toHaveProperty("errors");
             expect(Array.isArray(result.errors)).toBe(true);
         });
@@ -114,6 +118,7 @@ describe("deliverPendingAlerts", () => {
             expect(result.attempted).toBe(0);
             expect(result.delivered).toBe(0);
             expect(result.failed).toBe(0);
+            expect(result.abandoned).toBe(0);
             expect(result.errors).toHaveLength(0);
         });
     });
@@ -150,7 +155,7 @@ describe("deliverPendingAlerts", () => {
             expect(mockSendWebhookAlert).not.toHaveBeenCalled();
         });
 
-        it("calls sendWebhookAlert with the correct URL and event payload", async () => {
+        it("calls sendWebhookAlert with the correct URL, event payload, and secret", async () => {
             mockSendWebhookAlert.mockResolvedValue(undefined);
             seedContractWithAlert(db, {
                 contractId: "CTEST1234",
@@ -159,16 +164,19 @@ describe("deliverPendingAlerts", () => {
                 channelTarget: "https://ops.example.com/hook",
                 thresholdLedgers: 15_000,
                 ttlAtFire: 7_000,
+                webhookSecret: "test-secret-123",
             });
 
             await deliverPendingAlerts(db, "testnet");
 
-            const [url, event] = mockSendWebhookAlert.mock.calls[0]!;
+            const [url, event, secret] = mockSendWebhookAlert.mock.calls[0]!;
             expect(url).toBe("https://ops.example.com/hook");
+            expect(secret).toBe("test-secret-123");
             expect(event.type).toBe("threshold_crossed");
             expect(event.contractId).toBe("CTEST1234");
             expect(event.contractName).toBe("test-contract");
             expect(event.network).toBe("testnet");
+            expect(event.severity).toMatch(/^(warning|critical)$/);
             expect(event.threshold.configuredLedgers).toBe(15_000);
             expect(event.threshold.currentRemainingLedgers).toBe(7_000);
             expect(typeof event.threshold.approximateTimeRemaining).toBe("string");
@@ -188,21 +196,6 @@ describe("deliverPendingAlerts", () => {
             const [channel, event] = mockSendSlackAlert.mock.calls[0]!;
             expect(channel).toBe("#my-alerts");
             expect(event.type).toBe("threshold_crossed");
-        });
-
-        it("does not call any handler for email channel type (not yet implemented)", async () => {
-            seedContractWithAlert(db, {
-                contractId: "CA",
-                channelType: "email",
-                channelTarget: "ops@example.com",
-            });
-
-            const result = await deliverPendingAlerts(db, "testnet");
-
-            expect(mockSendWebhookAlert).not.toHaveBeenCalled();
-            expect(mockSendSlackAlert).not.toHaveBeenCalled();
-            // email should be counted as skipped — not failed, not delivered
-            expect(result.attempted).toBe(1);
         });
     });
 
@@ -259,23 +252,63 @@ describe("deliverPendingAlerts", () => {
             expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
 
             let row = db
-                .prepare("SELECT delivered FROM alerts_fired WHERE id = ?")
-                .get(alertFiredId) as { delivered: number };
+                .prepare("SELECT delivered, retry_count FROM alerts_fired WHERE id = ?")
+                .get(alertFiredId) as { delivered: number; retry_count: number };
             expect(row.delivered).toBe(0);
+            expect(row.retry_count).toBe(1);
 
             // Second cycle — succeeds
             await deliverPendingAlerts(db, "testnet");
             expect(mockSendWebhookAlert).toHaveBeenCalledTimes(2);
 
             row = db
-                .prepare("SELECT delivered FROM alerts_fired WHERE id = ?")
-                .get(alertFiredId) as { delivered: number };
+                .prepare("SELECT delivered, retry_count FROM alerts_fired WHERE id = ?")
+                .get(alertFiredId) as { delivered: number; retry_count: number };
             expect(row.delivered).toBe(1);
         });
     });
 
     // =========================================================================
-    // 4. ERROR RESILIENCE
+    // 4. RETRY LIMITS
+    // =========================================================================
+    describe("Retry limits", () => {
+        it("stops retrying after MAX_RETRY_COUNT failures", async () => {
+            mockSendWebhookAlert.mockRejectedValue(new Error("permanent failure"));
+            const { alertFiredId } = seedContractWithAlert(db, { contractId: "CA" });
+
+            // Run MAX_RETRY_COUNT cycles — each should attempt delivery
+            for (let i = 0; i < MAX_RETRY_COUNT; i++) {
+                await deliverPendingAlerts(db, "testnet");
+            }
+
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(MAX_RETRY_COUNT);
+
+            // Next cycle should NOT attempt delivery — alert excluded by retry cap
+            await deliverPendingAlerts(db, "testnet");
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(MAX_RETRY_COUNT);
+
+            const row = db
+                .prepare("SELECT retry_count, delivered FROM alerts_fired WHERE id = ?")
+                .get(alertFiredId) as { retry_count: number; delivered: number };
+            expect(row.retry_count).toBe(MAX_RETRY_COUNT);
+            expect(row.delivered).toBe(0);
+        });
+
+        it("reports abandoned count in result", async () => {
+            mockSendWebhookAlert.mockRejectedValue(new Error("fail"));
+            const { alertFiredId } = seedContractWithAlert(db, { contractId: "CA" });
+
+            // Set retry_count to MAX_RETRY_COUNT - 1 so next failure abandons it
+            db.prepare("UPDATE alerts_fired SET retry_count = ? WHERE id = ?")
+                .run(MAX_RETRY_COUNT - 1, alertFiredId);
+
+            const result = await deliverPendingAlerts(db, "testnet");
+            expect(result.abandoned).toBe(1);
+        });
+    });
+
+    // =========================================================================
+    // 5. ERROR RESILIENCE
     // =========================================================================
     describe("Error resilience", () => {
         it("never throws even if all deliveries fail", async () => {
@@ -328,7 +361,7 @@ describe("deliverPendingAlerts", () => {
     });
 
     // =========================================================================
-    // 5. COUNTING
+    // 6. COUNTING
     // =========================================================================
     describe("Result counting", () => {
         it("counts attempted as total alerts processed regardless of outcome", async () => {
@@ -371,7 +404,7 @@ describe("deliverPendingAlerts", () => {
     });
 
     // =========================================================================
-    // 6. NETWORK ISOLATION
+    // 7. NETWORK ISOLATION
     // =========================================================================
     describe("Network isolation", () => {
         it("only delivers alerts for the specified network", async () => {
@@ -396,7 +429,7 @@ describe("deliverPendingAlerts", () => {
     });
 
     // =========================================================================
-    // 7. PAYLOAD CORRECTNESS
+    // 8. PAYLOAD CORRECTNESS
     // =========================================================================
     describe("Payload correctness", () => {
         it("event timestamp is a valid ISO 8601 string", async () => {
@@ -444,6 +477,16 @@ describe("deliverPendingAlerts", () => {
             const [, event] = mockSendWebhookAlert.mock.calls[0]!;
             expect(typeof event.threshold.approximateTimeRemaining).toBe("string");
             expect(event.threshold.approximateTimeRemaining.length).toBeGreaterThan(0);
+        });
+
+        it("event includes severity field", async () => {
+            mockSendWebhookAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, { contractId: "CA", ttlAtFire: 1_000 });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            const [, event] = mockSendWebhookAlert.mock.calls[0]!;
+            expect(event.severity).toBe("critical");
         });
     });
 });

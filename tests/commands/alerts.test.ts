@@ -101,33 +101,30 @@ describe("alerts command", () => {
         });
     });
 
-    it("adds an email alert configuration", () => {
+    it("rejects email alert type as not yet implemented", () => {
         const program = new Command();
         registerAlertsCommand(program);
 
-        program.parse([
-            "node",
-            "sentinel",
-            "alerts",
-            "add",
-            "--contract",
-            contractID,
-            "--type",
-            "email",
-            "--email",
-            "test@example.com",
-            "--threshold",
-            "3000",
-        ]);
+        expect(() => {
+            program.parse([
+                "node",
+                "sentinel",
+                "alerts",
+                "add",
+                "--contract",
+                contractID,
+                "--type",
+                "email",
+                "--url",
+                "https://example.com",
+                "--threshold",
+                "3000",
+            ]);
+        }).toThrow("process.exit called");
 
-        const configs = getAlertConfigsForContract(mockDb, contractID);
-        expect(configs).toHaveLength(1);
-        expect(configs[0]).toMatchObject({
-            contract_id: contractID,
-            channel_type: "email",
-            channel_target: "test@example.com",
-            threshold_ledgers: 3000,
-        });
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+            expect.stringContaining("not yet implemented")
+        );
     });
 
     it("fails if contract is not registered", () => {
