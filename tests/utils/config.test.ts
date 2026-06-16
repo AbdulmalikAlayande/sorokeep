@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { loadConfig, saveConfig } from "../../src/utils/config.js";
 
-const TEST_DIR = path.join(os.tmpdir(), "sentinel-config-test-" + Date.now());
+const TEST_DIR = path.join(os.tmpdir(), "sorokeep-config-test-" + Date.now());
 const TEST_CONFIG_PATH = path.join(TEST_DIR, "config.yaml");
 
 afterEach(() => {

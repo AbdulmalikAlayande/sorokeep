@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">Soroban Sentinel</h1>
+  <h1 align="center">Sorokeep</h1>
   <p align="center">
     The missing operations layer for deployed Soroban smart contracts.
     <br />
@@ -28,7 +28,7 @@ This is by design — state archival keeps Stellar lean and scalable. But it mea
 
 There is currently no dedicated open-source tool that combines TTL monitoring, alerting, auto-extension, cost tracking, and restoration for Soroban contracts. Developers either use manual CLI commands, build ad-hoc scripts, or embed TTL extension logic directly in their contracts.
 
-Sentinel is the unified operations layer that handles all of this.
+Sorokeep is the unified operations layer that handles all of this.
 
 > Security auditors have started flagging TTL mismanagement as a risk area in Soroban contracts. [Veridise](https://veridise.com/audits/soroban/) includes TTL handling in their audit scope. The [LayerZero Stellar endpoint audit](https://code4rena.com/audits/2026-04-layerzero-stellar-endpoint) explicitly lists TTL expiration edge cases as a concern. [OpenZeppelin's Stellar contracts library](https://docs.openzeppelin.com/stellar-contracts) deliberately leaves instance storage TTL management to the application developer.
 
@@ -49,8 +49,8 @@ Sentinel is the unified operations layer that handles all of this.
 
 ```bash
 # From source
-git clone https://github.com/AbdulmalikAlayande/soroban-sentinel.git
-cd soroban-sentinel
+git clone https://github.com/AbdulmalikAlayande/sorokeep.git
+cd sorokeep
 npm install
 npm run build
 
@@ -59,46 +59,46 @@ npx tsx src/index.ts --help
 
 # Or link globally after building
 npm link
-sentinel --help
+sorokeep --help
 ```
 
 <!--
 # npm (coming soon)
-npm install -g soroban-sentinel
+npm install -g sorokeep
 -->
 
 ## Quick Start
 
 ```bash
 # 1. Register a contract for monitoring
-sentinel watch CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+sorokeep watch CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
   --network testnet \
   --name "XLM Native Token"
 
 # 2. Check its current TTL health
-sentinel status CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+sorokeep status CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
 
 # 3. Set up a webhook alert (fires when TTL drops below 20,000 ledgers)
-sentinel alerts add \
+sorokeep alerts add \
   --contract CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
   --type webhook \
   --url https://your-server.com/webhook \
   --threshold 20000
 
 # 4. Start the monitoring daemon
-sentinel daemon --network testnet
+sorokeep daemon --network testnet
 ```
 
 The daemon will check TTLs every 5 minutes, fire alerts when thresholds are crossed, send resolution notifications when TTLs recover, and auto-extend entries if guard policies are configured.
 
 ## Commands
 
-### `sentinel watch <contract-id>`
+### `sorokeep watch <contract-id>`
 
 Register a contract for monitoring. Connects to the Stellar RPC, discovers the contract's instance and WASM code entries, reads their TTLs, and stores everything locally.
 
 ```bash
-sentinel watch <contract-id> [options]
+sorokeep watch <contract-id> [options]
 ```
 
 | Option | Description | Default |
@@ -111,7 +111,7 @@ sentinel watch <contract-id> [options]
 **Example output:**
 
 ```
-$ sentinel watch CDLZFC3S...CYSC --network testnet --name "XLM Native Token"
+$ sorokeep watch CDLZFC3S...CYSC --network testnet --name "XLM Native Token"
 
 ✔ Contract XLM Native Token registered successfully.
 
@@ -120,8 +120,8 @@ $ sentinel watch CDLZFC3S...CYSC --network testnet --name "XLM Native Token"
   Entries:  1 discovered
   Instance TTL: 113,918 ledgers (~7d 6h)  OK
 
-  Run 'sentinel status CDLZFC3S...CYSC' to check TTLs anytime.
-  Run 'sentinel guard CDLZFC3S...CYSC' to enable auto-extension.
+  Run 'sorokeep status CDLZFC3S...CYSC' to check TTLs anytime.
+  Run 'sorokeep guard CDLZFC3S...CYSC' to enable auto-extension.
 ```
 
 Entry discovery happens in layers:
@@ -132,24 +132,24 @@ Entry discovery happens in layers:
 
 ---
 
-### `sentinel status <contract-id>`
+### `sorokeep status <contract-id>`
 
 Display current TTL health for a watched contract. Reads from the local database — no RPC call.
 
 ```bash
-sentinel status <contract-id>
+sorokeep status <contract-id>
 ```
 
 Shows contract name, network, last checked ledger, and a table of all tracked entries with remaining TTL in ledgers and human-readable time, plus a status indicator (OK / Warning / Critical).
 
 ---
 
-### `sentinel daemon`
+### `sorokeep daemon`
 
 Start the long-running monitoring process.
 
 ```bash
-sentinel daemon [options]
+sorokeep daemon [options]
 ```
 
 | Option | Description | Default |
@@ -168,14 +168,14 @@ The daemon handles graceful shutdown on `SIGINT`/`SIGTERM` and includes a re-ent
 
 ---
 
-### `sentinel alerts`
+### `sorokeep alerts`
 
 Manage alert configurations. Supports five subcommands.
 
 #### `alerts add` — Create a new alert
 
 ```bash
-sentinel alerts add [options]
+sorokeep alerts add [options]
 ```
 
 | Option | Description |
@@ -192,19 +192,19 @@ For webhook alerts, an HMAC signing secret is auto-generated (32-byte hex) if yo
 #### `alerts list` — View configured alerts
 
 ```bash
-sentinel alerts list --contract <id>
+sorokeep alerts list --contract <id>
 ```
 
 #### `alerts remove` — Delete an alert configuration
 
 ```bash
-sentinel alerts remove --id <config-id>
+sorokeep alerts remove --id <config-id>
 ```
 
 #### `alerts test` — Send a test alert
 
 ```bash
-sentinel alerts test --id <config-id>
+sorokeep alerts test --id <config-id>
 ```
 
 Fires a synthetic `threshold_crossed` event through the real delivery pipeline. Useful for verifying that your webhook endpoint or Slack channel is correctly configured before going live.
@@ -212,19 +212,19 @@ Fires a synthetic `threshold_crossed` event through the real delivery pipeline. 
 #### `alerts history` — View past alert activity
 
 ```bash
-sentinel alerts history --contract <id> [--limit 20]
+sorokeep alerts history --contract <id> [--limit 20]
 ```
 
 Shows a table of fired alerts: timestamp, entry label, TTL at fire, channel type, delivery status, retry count, and resolution time.
 
 ---
 
-### `sentinel guard`
+### `sorokeep guard`
 
 Configure auto-extension policies. When enabled, the daemon automatically extends TTLs by submitting `ExtendFootprintTTLOp` transactions using a funded Stellar keypair.
 
 ```bash
-sentinel guard <contract-id> [options]
+sorokeep guard <contract-id> [options]
 ```
 
 | Option | Description | Default |
@@ -241,31 +241,31 @@ sentinel guard <contract-id> [options]
 
 ```bash
 # Check current policy
-sentinel guard <contract-id>
+sorokeep guard <contract-id>
 
 # Dry run — see estimated fee without submitting
-sentinel guard <contract-id> --keypair S... --dry-run
+sorokeep guard <contract-id> --keypair S... --dry-run
 
 # One-time immediate extension
-sentinel guard <contract-id> --keypair S...
+sorokeep guard <contract-id> --keypair S...
 
 # Enable auto-extension for the daemon
-sentinel guard <contract-id> --keypair-env STELLAR_SECRET_KEY --auto-extend
+sorokeep guard <contract-id> --keypair-env STELLAR_SECRET_KEY --auto-extend
 
 # Disable auto-extension
-sentinel guard <contract-id> --disable
+sorokeep guard <contract-id> --disable
 ```
 
 **Security:** Secret keys are never stored in the database. When using `--auto-extend`, only the public key and the environment variable name are persisted. The daemon resolves the actual secret key from the environment at runtime.
 
 ---
 
-### `sentinel costs`
+### `sorokeep costs`
 
 View extension history and rent spending for a contract.
 
 ```bash
-sentinel costs <contract-id> [options]
+sorokeep costs <contract-id> [options]
 ```
 
 | Option | Description | Default |
@@ -282,12 +282,12 @@ sentinel costs <contract-id> [options]
 
 ---
 
-### `sentinel restore`
+### `sorokeep restore`
 
 Recover archived ledger entries via `RestoreFootprintOp` transactions.
 
 ```bash
-sentinel restore <contract-id> [options]
+sorokeep restore <contract-id> [options]
 ```
 
 | Option | Description |
@@ -301,21 +301,21 @@ One of `--keypair` or `--keypair-env` is required. One of `--entry` or `--all` i
 
 ```bash
 # Restore a specific entry
-sentinel restore <contract-id> --keypair-env STELLAR_SECRET_KEY --entry <base64-xdr>
+sorokeep restore <contract-id> --keypair-env STELLAR_SECRET_KEY --entry <base64-xdr>
 
 # Restore all tracked entries
-sentinel restore <contract-id> --keypair-env STELLAR_SECRET_KEY --all
+sorokeep restore <contract-id> --keypair-env STELLAR_SECRET_KEY --all
 ```
 
 ## Alerting
 
-Sentinel delivers alerts through two channels: **webhooks** and **Slack**. Each alert includes a severity level and rich context about the affected entry.
+Sorokeep delivers alerts through two channels: **webhooks** and **Slack**. Each alert includes a severity level and rich context about the affected entry.
 
 ### Alert Lifecycle
 
-1. **Threshold Crossed** — During each monitoring cycle, if an entry's remaining TTL drops below a configured threshold, Sentinel fires a `threshold_crossed` alert.
+1. **Threshold Crossed** — During each monitoring cycle, if an entry's remaining TTL drops below a configured threshold, Sorokeep fires a `threshold_crossed` alert.
 2. **Delivery** — The dispatcher routes the alert to the configured channel (webhook or Slack). Failed deliveries are retried on subsequent cycles, up to 5 attempts.
-3. **Resolution** — When TTL recovers past the threshold (e.g., after an extension), Sentinel fires an `alert_resolved` notification to all configured channels.
+3. **Resolution** — When TTL recovers past the threshold (e.g., after an extension), Sorokeep fires an `alert_resolved` notification to all configured channels.
 
 ### Severity Levels
 
@@ -355,10 +355,10 @@ Webhook alerts are delivered as HTTP POST requests with a JSON body:
 
 ### Webhook Signing
 
-Webhook requests include an HMAC-SHA256 signature in the `X-Sentinel-Signature` header for payload verification:
+Webhook requests include an HMAC-SHA256 signature in the `X-Sorokeep-Signature` header for payload verification:
 
 ```
-X-Sentinel-Signature: sha256=a1b2c3d4e5f6...
+X-Sorokeep-Signature: sha256=a1b2c3d4e5f6...
 ```
 
 To verify on your server:
@@ -387,10 +387,10 @@ Slack alerts are sent via the [Slack Web API](https://api.slack.com/methods/chat
 3. Provide the token via environment variable:
 
 ```bash
-export SENTINEL_SLACK_TOKEN=xoxb-your-bot-token
+export SOROKEEP_SLACK_TOKEN=xoxb-your-bot-token
 ```
 
-Alternatively, store the token in your config file at `~/.soroban-sentinel/config.yaml`:
+Alternatively, store the token in your config file at `~/.sorokeep/config.yaml`:
 
 ```yaml
 slackToken: "xoxb-your-bot-token"
@@ -400,11 +400,11 @@ The environment variable takes precedence over the config file.
 
 ### Retry Policy
 
-Failed alert deliveries are automatically retried on subsequent daemon cycles. After **5 consecutive failures**, the alert is abandoned and no further delivery attempts are made. You can view delivery status and retry counts with `sentinel alerts history`.
+Failed alert deliveries are automatically retried on subsequent daemon cycles. After **5 consecutive failures**, the alert is abandoned and no further delivery attempts are made. You can view delivery status and retry counts with `sorokeep alerts history`.
 
 ## How It Works
 
-Sentinel is an off-chain monitoring tool. It reads data from the Stellar RPC, stores it locally in SQLite, and acts on it (alerts, auto-extension, restoration). It does not run on-chain and does not require you to modify your contracts.
+Sorokeep is an off-chain monitoring tool. It reads data from the Stellar RPC, stores it locally in SQLite, and acts on it (alerts, auto-extension, restoration). It does not run on-chain and does not require you to modify your contracts.
 
 ```
                          ┌─────────────────────┐
@@ -413,7 +413,7 @@ Sentinel is an off-chain monitoring tool. It reads data from the Stellar RPC, st
                          └──────────┬───────────┘
                                     │ RPC
                          ┌──────────▼───────────┐
-                         │   Soroban Sentinel    │
+                         │   Sorokeep    │
                          │                       │
                          │  ┌─────────────────┐  │
                          │  │  Monitor Cycle   │  │
@@ -435,8 +435,8 @@ Sentinel is an off-chain monitoring tool. It reads data from the Stellar RPC, st
                          │  ┌─────────────────┐  │
                          │  │   SQLite DB      │  │
                          │  │  ~/.soroban-     │  │
-                         │  │   sentinel/      │  │
-                         │  │   sentinel.db    │  │
+                         │  │   sorokeep/     │  │
+                         │  │   sorokeep.db    │  │
                          │  └─────────────────┘  │
                          └───────────────────────┘
                                     │
@@ -459,7 +459,7 @@ Every polling interval (default: 5 minutes), the daemon runs three phases:
 
 ### Storage
 
-All state is local. Sentinel stores data in `~/.soroban-sentinel/sentinel.db` (SQLite with WAL mode). No external services required beyond a Stellar RPC endpoint.
+All state is local. Sorokeep stores data in `~/.sorokeep/sorokeep.db` (SQLite with WAL mode). No external services required beyond a Stellar RPC endpoint.
 
 **Database tables:**
 
@@ -474,12 +474,12 @@ All state is local. Sentinel stores data in `~/.soroban-sentinel/sentinel.db` (S
 
 ### Configuration
 
-Sentinel stores user configuration in `~/.soroban-sentinel/config.yaml`:
+Sorokeep stores user configuration in `~/.sorokeep/config.yaml`:
 
 ```yaml
 network: testnet
 pollingIntervalSeconds: 300
-slackToken: "xoxb-..."        # Optional — can also use SENTINEL_SLACK_TOKEN env var
+slackToken: "xoxb-..."        # Optional — can also use SOROKEEP_SLACK_TOKEN env var
 rpcUrl: "https://..."         # Optional — overrides network default
 ```
 
@@ -488,7 +488,7 @@ The config file is created with `0600` permissions (owner read/write only) to pr
 ## Project Structure
 
 ```
-soroban-sentinel/
+sorokeep/
 ├── src/
 │   ├── index.ts                 # CLI entry point (Commander.js)
 │   ├── commands/                # CLI command handlers (thin presentation layer)
@@ -583,7 +583,7 @@ All tests use in-memory SQLite databases and mocked RPC responses — no network
 
 ### Why TypeScript, not Rust?
 
-Sentinel is an off-chain operational tool, not a smart contract. TypeScript was chosen because:
+Sorokeep is an off-chain operational tool, not a smart contract. TypeScript was chosen because:
 
 1. The Stellar JS SDK is the most complete client library for Soroban RPC interactions
 2. Soroban developers already have Node.js in their toolchain
@@ -593,7 +593,7 @@ Sentinel is an off-chain operational tool, not a smart contract. TypeScript was 
 
 ### Is my secret key stored anywhere?
 
-No. When you configure auto-extension with `--keypair-env`, Sentinel stores only the **public key** and the **environment variable name** in the database. The actual secret key is resolved from your environment at runtime. If you use `--keypair` for a one-time operation, the key is used in-memory and never persisted.
+No. When you configure auto-extension with `--keypair-env`, Sorokeep stores only the **public key** and the **environment variable name** in the database. The actual secret key is resolved from your environment at runtime. If you use `--keypair` for a one-time operation, the key is used in-memory and never persisted.
 
 ### What happens if the daemon crashes mid-cycle?
 
@@ -601,7 +601,7 @@ Each phase (monitor, deliver, auto-extend) is wrapped in isolated error handling
 
 ### What networks are supported?
 
-Testnet (`https://soroban-testnet.stellar.org`) and Mainnet (`https://mainnet.sorobanrpc.com`). You can also point Sentinel at any custom RPC endpoint with `--rpc-url`.
+Testnet (`https://soroban-testnet.stellar.org`) and Mainnet (`https://mainnet.sorobanrpc.com`). You can also point Sorokeep at any custom RPC endpoint with `--rpc-url`.
 
 ### What about email alerts?
 

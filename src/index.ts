@@ -14,8 +14,8 @@ initLogger({ mode: "cli" });
 const program = new Command();
 
 program
-    .name("sentinel")
-    .description("Soroban Sentinel — The missing operations layer for deployed Soroban smart contracts")
+    .name("sorokeep")
+    .description("Sorokeep — The missing operations layer for deployed Soroban smart contracts")
     .version("0.1.2");
 
 registerWatchCommand(program);

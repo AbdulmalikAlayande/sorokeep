@@ -46,7 +46,7 @@ describe("alerts command", () => {
 
         program.parse([
             "node",
-            "sentinel",
+            "sorokeep",
             "alerts",
             "add",
             "--contract",
@@ -78,7 +78,7 @@ describe("alerts command", () => {
 
         program.parse([
             "node",
-            "sentinel",
+            "sorokeep",
             "alerts",
             "add",
             "--contract",
@@ -108,7 +108,7 @@ describe("alerts command", () => {
         expect(() => {
             program.parse([
                 "node",
-                "sentinel",
+                "sorokeep",
                 "alerts",
                 "add",
                 "--contract",
@@ -134,7 +134,7 @@ describe("alerts command", () => {
         expect(() => {
             program.parse([
                 "node",
-                "sentinel",
+                "sorokeep",
                 "alerts",
                 "add",
                 "--contract",
@@ -167,7 +167,7 @@ describe("alerts command", () => {
 
         program.parse([
             "node",
-            "sentinel",
+            "sorokeep",
             "alerts",
             "list",
             "--contract",
@@ -198,7 +198,7 @@ describe("alerts command", () => {
 
         program.parse([
             "node",
-            "sentinel",
+            "sorokeep",
             "alerts",
             "remove",
             "--id",

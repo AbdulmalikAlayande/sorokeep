@@ -19,7 +19,7 @@ export function registerCostsCommand(program: Command): void {
                 const contract = getContract(db, contractId);
 
                 if (!contract) {
-                    console.error(chalk.red(`Contract ${formatContractID(contractId)} not found. Run 'sentinel watch' first.`));
+                    console.error(chalk.red(`Contract ${formatContractID(contractId)} not found. Run 'sorokeep watch' first.`));
                     process.exit(1);
                 }
 

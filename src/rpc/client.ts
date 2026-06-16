@@ -17,10 +17,10 @@ const RPC_URLS: Record<string, string> = {
     mainnet: "https://mainnet.sorobanrpc.com",
 };
 
-// Sentinel's own processed types — intentionally NOT extending the SDK's LedgerEntryResult
+// Sorokeep's own processed types — intentionally NOT extending the SDK's LedgerEntryResult
 // because we don't want to carry raw XDR objects (key, val) through the application layer.
 
-export interface SentinelLedgerEntryResult {
+export interface SorokeepLedgerEntryResult {
     entryKeyXdr: string;
     latestLedger: number;
     liveUntilLedgerSeq: number;
@@ -28,14 +28,14 @@ export interface SentinelLedgerEntryResult {
     remainingTTL: number;
 }
 
-export interface ContractInstanceResult extends SentinelLedgerEntryResult {
+export interface ContractInstanceResult extends SorokeepLedgerEntryResult {
     executableType: string;
     wasmHash: string | null;
 }
 
 export interface EntryTTLsResult {
     latestLedger: number;
-    entries: SentinelLedgerEntryResult[];
+    entries: SorokeepLedgerEntryResult[];
 }
 
 export interface SimulateExtensionResult {
@@ -143,7 +143,7 @@ export class StellarRpcClient {
 
     async getWasmCodeEntry(
         wasmHashHex: string
-    ): Promise<SentinelLedgerEntryResult | null> {
+    ): Promise<SorokeepLedgerEntryResult | null> {
         const wasmHash = Buffer.from(wasmHashHex, "hex");
         const wasmKey = xdr.LedgerKey.contractCode(
             new xdr.LedgerKeyContractCode({ hash: wasmHash })

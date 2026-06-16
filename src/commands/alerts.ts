@@ -42,7 +42,7 @@ export function registerAlertsCommand(program: Command): void {
             const contract = getContract(db, contractId);
             if (!contract) {
                 console.error(chalk.red(`Error: Contract ${formatContractID(contractId)} is not registered.`));
-                console.error(chalk.dim("Run 'sentinel watch <contractId>' first."));
+                console.error(chalk.dim("Run 'sorokeep watch <contractId>' first."));
                 process.exit(1);
             }
 
@@ -86,7 +86,7 @@ export function registerAlertsCommand(program: Command): void {
 
             if (webhookSecret) {
                 console.log(`  ${chalk.bold("Webhook secret:")} ${webhookSecret}`);
-                console.log(chalk.dim("  Save this secret — it signs payloads via X-Sentinel-Signature header."));
+                console.log(chalk.dim("  Save this secret — it signs payloads via X-Sorokeep-Signature header."));
             }
         });
 

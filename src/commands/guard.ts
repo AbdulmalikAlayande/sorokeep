@@ -26,7 +26,7 @@ export function registerGuardCommand(program: Command): void {
                 const contract = getContract(db, contractId);
 
                 if (!contract) {
-                    console.error(chalk.red(`Contract ${formatContractID(contractId)} not found. Run 'sentinel watch' first.`));
+                    console.error(chalk.red(`Contract ${formatContractID(contractId)} not found. Run 'sorokeep watch' first.`));
                     process.exit(1);
                 }
 
@@ -101,7 +101,7 @@ export function registerGuardCommand(program: Command): void {
                     console.log(`  Threshold:   ${threshold.toLocaleString()} ledgers (${formatTimeToCloseLedger(threshold)})`);
                     console.log(`  Funded by:   ${kp.publicKey().slice(0, 8)}...${kp.publicKey().slice(-4)}`);
                     console.log(chalk.dim("\n  The daemon will auto-extend when TTL drops below the threshold."));
-                    console.log(chalk.dim("  Run 'sentinel daemon --network " + contract.network + "' to start monitoring."));
+                    console.log(chalk.dim("  Run 'sorokeep daemon --network " + contract.network + "' to start monitoring."));
                     return;
                 }
 

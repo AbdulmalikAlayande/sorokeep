@@ -314,7 +314,7 @@ describe("Extension Policy Operations", () => {
             target_ttl_ledgers: 120000,
             extend_when_below_ledgers: 20000,
             keypair_public: "GABC...",
-            keypair_source: "env:SENTINEL_KEY",
+            keypair_source: "env:SOROKEEP_KEY",
         })
         const policy = getExtensionPolicy(db, contractID);
         expect(policy).toBeDefined();

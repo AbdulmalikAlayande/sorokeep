@@ -126,24 +126,24 @@ describe("sendWebhookAlert", () => {
     // 2. HMAC SIGNING
     // =========================================================================
     describe("HMAC signing", () => {
-        it("does not include X-Sentinel-Signature header when no secret provided", async () => {
+        it("does not include X-Sorokeep-Signature header when no secret provided", async () => {
             mockFetch.mockResolvedValue(makeOkResponse());
 
             await sendWebhookAlert("https://example.com/hook", makeAlertEvent());
 
             const [, options] = mockFetch.mock.calls[0]!;
-            expect(options.headers["X-Sentinel-Signature"]).toBeUndefined();
+            expect(options.headers["X-Sorokeep-Signature"]).toBeUndefined();
         });
 
-        it("includes X-Sentinel-Signature header when secret is provided", async () => {
+        it("includes X-Sorokeep-Signature header when secret is provided", async () => {
             mockFetch.mockResolvedValue(makeOkResponse());
             const secret = "my-webhook-secret";
 
             await sendWebhookAlert("https://example.com/hook", makeAlertEvent(), secret);
 
             const [, options] = mockFetch.mock.calls[0]!;
-            expect(options.headers["X-Sentinel-Signature"]).toBeDefined();
-            expect(options.headers["X-Sentinel-Signature"]).toMatch(/^sha256=[a-f0-9]{64}$/);
+            expect(options.headers["X-Sorokeep-Signature"]).toBeDefined();
+            expect(options.headers["X-Sorokeep-Signature"]).toMatch(/^sha256=[a-f0-9]{64}$/);
         });
 
         it("signature is a valid HMAC-SHA256 of the body", async () => {
@@ -156,7 +156,7 @@ describe("sendWebhookAlert", () => {
             const [, options] = mockFetch.mock.calls[0]!;
             const body = options.body as string;
             const expectedSig = createHmac("sha256", secret).update(body).digest("hex");
-            expect(options.headers["X-Sentinel-Signature"]).toBe(`sha256=${expectedSig}`);
+            expect(options.headers["X-Sorokeep-Signature"]).toBe(`sha256=${expectedSig}`);
         });
 
         it("does not include signature when secret is null", async () => {
@@ -165,7 +165,7 @@ describe("sendWebhookAlert", () => {
             await sendWebhookAlert("https://example.com/hook", makeAlertEvent(), null);
 
             const [, options] = mockFetch.mock.calls[0]!;
-            expect(options.headers["X-Sentinel-Signature"]).toBeUndefined();
+            expect(options.headers["X-Sorokeep-Signature"]).toBeUndefined();
         });
     });
 

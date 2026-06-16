@@ -51,8 +51,8 @@ export const registerWatchCommand = (program: Command): void => {
                 }
 
 
-                console.log(chalk.dim("\n  Run 'sentinel status " + formatContractID(contractId) + "' to check TTLs anytime."));
-                console.log(chalk.dim("  Run 'sentinel guard " + formatContractID(contractId) + "' to enable auto-extension."));
+                console.log(chalk.dim("\n  Run 'sorokeep status " + formatContractID(contractId) + "' to check TTLs anytime."));
+                console.log(chalk.dim("  Run 'sorokeep guard " + formatContractID(contractId) + "' to enable auto-extension."));
             }
             catch(error: any){
                 const errorMessage = error instanceof Error ? error.message : String(error);

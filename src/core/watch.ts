@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import { StellarRpcClient, ContractInstanceResult, SentinelLedgerEntryResult } from "../rpc/client.js";
+import { StellarRpcClient, ContractInstanceResult, SorokeepLedgerEntryResult } from "../rpc/client.js";
 import { insertContract, upsertEntry, updateLastCheckedLedger, getContract } from "../db/repositories.js";
 import {getLogger} from "../logging/index.js";
 
@@ -18,7 +18,7 @@ export type WatchResult =
     success: true;
     contractId: string;
     instance: ContractInstanceResult;
-    wasm: SentinelLedgerEntryResult | null;
+    wasm: SorokeepLedgerEntryResult | null;
     wasmWarning?: string;
 } | {
     success: false;
@@ -69,7 +69,7 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         }
 
         // 2. Fetch WASM code entry if applicable
-        let wasmEntry: SentinelLedgerEntryResult | null = null;
+        let wasmEntry: SorokeepLedgerEntryResult | null = null;
         let wasmWarning: string | undefined;
 
         if (instanceEntry.wasmHash) {
@@ -80,7 +80,7 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         }
 
         // 3. Fetch Manual Storage Keys if provided
-        const extraEntries: SentinelLedgerEntryResult[] = [];
+        const extraEntries: SorokeepLedgerEntryResult[] = [];
         if (storageKeys && storageKeys.length > 0) {
             const ttls = await client.getEntryTTLs(storageKeys);
             extraEntries.push(...ttls.entries);

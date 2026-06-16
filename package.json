@@ -1,11 +1,11 @@
 {
-  "name": "soroban-sentinel",
+  "name": "sorokeep",
   "version": "0.1.2",
   "description": "The missing operations layer for deployed Soroban smart contracts",
   "main": "dist/index.js",
   "files": ["dist", "README.md", "LICENSE", "CONTRIBUTING.md"],
   "bin": {
-    "sentinel": "dist/index.js"
+    "sorokeep": "dist/index.js"
   },
   "scripts": {
     "build": "tsc && node -e \"require('fs').copyFileSync('src/db/schema.sql', 'dist/db/schema.sql')\"",
@@ -27,7 +27,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AbdulmalikAlayande/soroban-sentinel.git"
+    "url": "https://github.com/AbdulmalikAlayande/sorokeep.git"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.1.0",

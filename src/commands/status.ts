@@ -19,7 +19,7 @@ export function registerStatusCommand(program: Command): void {
 
             if (!contract) {
                 console.log(chalk.red(`Contract ${formatContractID(contractId)} is not registered.`));
-                console.log(chalk.dim("Run 'sentinel watch <contractId>' first."));
+                console.log(chalk.dim("Run 'sorokeep watch <contractId>' first."));
                 process.exit(1);
             }
 
