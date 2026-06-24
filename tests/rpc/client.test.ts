@@ -1,20 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { StellarRpcClient } from "../../src/rpc/client";
+import { StellarRpcClient, extractResourceCosts } from "../../src/rpc/client";
 import { Contract } from "@stellar/stellar-sdk";
 
 vi.mock("@stellar/stellar-sdk", async () =>  {
-    const actualModule = await vi.importActual("@stellar/stellar-sdk");
+    const actualModule = await vi.importActual<any>("@stellar/stellar-sdk");
     const moduleRPC = actualModule.rpc as Record<string, unknown>;
 
     class MockRPCServer {
-
         async getHealth() {
             return { status: "healthy", latestLedger: 2443398, oldestLedger: 2322439, ledgerRetentionWindow: 120960 };
         }
 
-        /*
-        Returns mock entries that match actual real life Stellar RPC response, matching the expected response
-         */
         async getLedgerEntries(...keys: any[]) {
             return {
                 latestLedger: 2443398,
@@ -44,9 +40,27 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
     return {
         ...actualModule,
         rpc: {
-            moduleRPC,
+            ...moduleRPC,
             Server: MockRPCServer,
         },
+        xdr: {
+            ...actualModule.xdr,
+            TransactionMeta: {
+                fromXDR: vi.fn((xdrString: string) => {
+                    if (xdrString === "mock-result-meta-xdr") {
+                        return {
+                            v3: () => ({
+                                sorobanMeta: () => ({
+                                    cpuInstructions: () => 15000,
+                                    memoryBytes: () => 1024
+                                })
+                            })
+                        };
+                    }
+                    throw new Error("Invalid XDR");
+                })
+            }
+        }
     };
 });
 
@@ -154,6 +168,24 @@ describe("StellarRpcClient", () => {
         it("returns the current ledger number", async () => {
             const ledger = await client.getCurrentLedger();
             expect(ledger).toBe(2443398);
+        });
+    });
+
+    describe("Transaction Resource Costs Extraction", () => {
+        it("Extracts and logs CPU instructions and memory consumption metrics successfully", () => {
+            const mockXdr = "mock-result-meta-xdr";
+            const extracted = extractResourceCosts(mockXdr);
+            
+            expect(extracted).toBeDefined();
+            expect(extracted!.cpuInstructions).toBe(15000);
+            expect(extracted!.memoryBytes).toBe(1024);
+        });
+
+        it("Returns null if XDR decoding fails or metadata is missing", () => {
+            const invalidXdr = "invalid-xdr";
+            const extracted = extractResourceCosts(invalidXdr);
+            
+            expect(extracted).toBeNull();
         });
     });
 });
