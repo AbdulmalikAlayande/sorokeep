@@ -59,6 +59,22 @@ export function closeDatabase() {
     }
 }
 
+export function vacuumDatabase(db: Database.Database): boolean {
+    if (db.inTransaction) {
+        return false;
+    }
+
+    try {
+        db.exec("VACUUM");
+        return true;
+    } catch (err: unknown) {
+        if (err instanceof Error && /(busy|locked)/i.test(err.message)) {
+            return false;
+        }
+        throw err;
+    }
+}
+
 export function getDatabaseForTesting(): Database.Database {
     const db = new Database(':memory:');
     db.pragma('foreign_keys = ON');

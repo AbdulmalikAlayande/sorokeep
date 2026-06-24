@@ -1,4 +1,7 @@
-import type Database from "better-sqlite3";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import DatabaseClass, type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it } from "vitest";
 import { 
     insertContract, 
@@ -19,7 +22,7 @@ import {
     recordExtension,
     getExtensionHistory
 } from "../../src/db/repositories";
-import { getDatabaseForTesting } from "../../src/db/database";
+import { getDatabaseForTesting, vacuumDatabase } from "../../src/db/database";
 
 let db: Database.Database;
 
@@ -290,6 +293,55 @@ describe("Contract Entry Operations", () => {
         expect(getEntriesForContract(db, contractID)).toHaveLength(0);
         expect(getExtensionPolicy(db, contractID)).toBeUndefined();
         expect(getAlertConfigsForContract(db, contractID)).toHaveLength(0);
+    });
+});
+
+describe("Database maintenance", () => {
+    it("shrinks the on-disk database file after cascade deletes and vacuum", () => {
+        const tempPath = path.join(os.tmpdir(), `sorokeep-vacuum-test-${Date.now()}-${Math.random().toString(16).slice(2)}.db`);
+        if (fs.existsSync(tempPath)) {
+            fs.unlinkSync(tempPath);
+        }
+
+        const schemaPath = new URL("../../src/db/schema.sql", import.meta.url);
+        const schema = fs.readFileSync(schemaPath, "utf-8");
+
+        const fileDb = new DatabaseClass(tempPath);
+        fileDb.pragma('foreign_keys = ON');
+        fileDb.exec(schema);
+
+        fileDb.exec(`INSERT INTO contracts (id, network) VALUES ('contract-vacuum-test', 'testnet')`);
+        const stmt = fileDb.prepare(`INSERT INTO contract_entries (contract_id, entry_key_xdr, entry_type) VALUES ('contract-vacuum-test', ?, 'instance')`);
+        for (let i = 0; i < 250; i += 1) {
+            stmt.run(`entry-${i}`);
+        }
+
+        const sizeAfterInsert = fs.statSync(tempPath).size;
+        expect(sizeAfterInsert).toBeGreaterThan(0);
+
+        fileDb.exec(`DELETE FROM contracts WHERE id = 'contract-vacuum-test'`);
+        const sizeAfterDelete = fs.statSync(tempPath).size;
+        expect(sizeAfterDelete).toBeGreaterThan(0);
+
+        const vacuumed = vacuumDatabase(fileDb);
+        expect(vacuumed).toBe(true);
+
+        const sizeAfterVacuum = fs.statSync(tempPath).size;
+        fileDb.close();
+
+        expect(sizeAfterVacuum).toBeLessThan(sizeAfterDelete);
+        fs.unlinkSync(tempPath);
+    });
+
+    it("does not run vacuum during an active transaction", () => {
+        const tdb = getDatabaseForTesting();
+        tdb.exec("BEGIN IMMEDIATE");
+
+        expect(tdb.inTransaction).toBe(true);
+        expect(vacuumDatabase(tdb)).toBe(false);
+
+        tdb.exec("ROLLBACK");
+        expect(tdb.inTransaction).toBe(false);
     });
 });
 

@@ -7,6 +7,7 @@ import type { MonitorCycleResult } from "../../src/core/monitor";
 
 const mockRunMonitorCycle = vi.fn();
 const mockDeliverPendingAlerts = vi.fn();
+const mockVacuumDatabase = vi.fn();
 
 vi.mock("../../src/core/monitor.js", () => ({
     runMonitorCycle: (...args: unknown[]) => mockRunMonitorCycle(...args),
@@ -14,6 +15,10 @@ vi.mock("../../src/core/monitor.js", () => ({
 
 vi.mock("../../src/alerts/dispatcher.js", () => ({
     deliverPendingAlerts: (...args: unknown[]) => mockDeliverPendingAlerts(...args),
+}));
+
+vi.mock("../../src/db/database.js", () => ({
+    vacuumDatabase: (...args: unknown[]) => mockVacuumDatabase(...args),
 }));
 
 import { startDaemon, stopDaemon } from "../../src/daemon/loop.js";
@@ -54,6 +59,45 @@ describe("daemon loop", () => {
     afterEach(() => {
         stopDaemon();
         vi.useRealTimers();
+    });
+
+    // =========================================================================
+    // 0. MAINTENANCE
+    // =========================================================================
+    describe("Maintenance", () => {
+        it("runs scheduled vacuum only when the configured interval has elapsed", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+            mockVacuumDatabase.mockReturnValue(true);
+
+            await startDaemon(db, "testnet", { intervalMs: 5000, vacuumIntervalMs: 5000 });
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(0);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(2);
+        });
+
+        it("skips scheduled vacuum when the database is already in a transaction", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+            mockVacuumDatabase.mockReturnValue(true);
+
+            await startDaemon(db, "testnet", { intervalMs: 5000, vacuumIntervalMs: 5000 });
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(0);
+
+            db.exec("BEGIN IMMEDIATE");
+            expect(db.inTransaction).toBe(true);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(0);
+
+            db.exec("ROLLBACK");
+            expect(db.inTransaction).toBe(false);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(1);
+        });
     });
 
     // =========================================================================

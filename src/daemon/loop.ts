@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
 import { runAutoExtensions } from "../core/extension.js";
+import { vacuumDatabase } from "../db/database.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "DaemonLoop" });
@@ -13,6 +14,8 @@ export interface DaemonOptions {
     intervalMs?: number;
     /** Optional RPC endpoint URL override. */
     rpcUrl?: string;
+    /** How frequently to run vacuum maintenance. Defaults to 24 hours. */
+    vacuumIntervalMs?: number;
     /** Called after every cycle with the result (or null + error on failure). */
     onCycle?: (result: MonitorCycleResult | null, error?: Error) => void;
 }
@@ -20,9 +23,12 @@ export interface DaemonOptions {
 // ─── Module-level state ───────────────────────────────────────────────────────
 
 const DEFAULT_INTERVAL_MS = 300_000; // 5 minutes
+const DEFAULT_VACUUM_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let cycleInFlight = false;
+let vacuumIntervalMs = DEFAULT_VACUUM_INTERVAL_MS;
+let lastVacuumAt = 0;
 
 // ─── Core API ─────────────────────────────────────────────────────────────────
 
@@ -48,9 +54,11 @@ export async function startDaemon(
     stopDaemon();
 
     const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
+    vacuumIntervalMs = options?.vacuumIntervalMs ?? DEFAULT_VACUUM_INTERVAL_MS;
     const rpcUrl = options?.rpcUrl;
     const onCycle = options?.onCycle;
 
+    lastVacuumAt = Date.now();
     logger.info(`Daemon starting — network: ${network}, interval: ${intervalMs}ms`);
 
     // Run the initial cycle immediately.
@@ -58,12 +66,7 @@ export async function startDaemon(
 
     // Schedule repeating cycles.
     intervalHandle = setInterval(() => {
-        // Re-entrance guard: skip if previous cycle is still running.
-        if (cycleInFlight) {
-            logger.debug("Skipping tick — previous cycle still in flight");
-            return;
-        }
-        void executeCycle(db, network, rpcUrl, onCycle);
+        void scheduledTick(db, network, rpcUrl, onCycle);
     }, intervalMs);
 }
 
@@ -150,6 +153,41 @@ async function executeCycle(
         safeOnCycle(onCycle, null, error);
     } finally {
         cycleInFlight = false;
+    }
+}
+
+async function scheduledTick(
+    db: Database.Database,
+    network: string,
+    rpcUrl: string | undefined,
+    onCycle: DaemonOptions["onCycle"],
+): Promise<void> {
+    if (cycleInFlight) {
+        logger.debug("Skipping tick — previous cycle still in flight");
+        return;
+    }
+
+    await runScheduledVacuum(db);
+    await executeCycle(db, network, rpcUrl, onCycle);
+}
+
+async function runScheduledVacuum(db: Database.Database): Promise<void> {
+    if (Date.now() - lastVacuumAt < vacuumIntervalMs) {
+        return;
+    }
+
+    if (db.inTransaction) {
+        logger.info("Skipping scheduled vacuum — database has an active transaction");
+        return;
+    }
+
+    logger.info("Scheduled maintenance: starting database vacuum");
+    const vacuumed = vacuumDatabase(db);
+    if (vacuumed) {
+        lastVacuumAt = Date.now();
+        logger.info("Scheduled maintenance: database vacuum completed");
+    } else {
+        logger.info("Scheduled maintenance: database vacuum skipped due to busy database");
     }
 }
 
