@@ -11,6 +11,7 @@ export interface WatchOptions {
     name?: string;
     rpcUrl?: string;
     storageKeys?: string[];
+    noIntrospection?: boolean;
 }
 
 export type WatchResult =
@@ -72,7 +73,7 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         let wasmEntry: SorokeepLedgerEntryResult | null = null;
         let wasmWarning: string | undefined;
 
-        if (instanceEntry.wasmHash) {
+        if (instanceEntry.wasmHash && !options.noIntrospection) {
             wasmEntry = await client.getWasmCodeEntry(instanceEntry.wasmHash);
             if (!wasmEntry) {
                 wasmWarning = `WASM entry for hash ${instanceEntry.wasmHash} not found. It might be archived.`;

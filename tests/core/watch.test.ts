@@ -250,4 +250,24 @@ describe("watchContract - Deep Coverage Suite", () => {
         const contract = getContract(db, VALID_CID);
         expect(contract!.network).toBe("testnet");
     });
+
+    it("skips WASM discovery when noIntrospection is true", async () => {
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key-xdr",
+            latestLedger: MOCK_LEDGER,
+            liveUntilLedgerSeq: MOCK_LEDGER + 10000,
+            lastModifiedLedgerSeq: MOCK_LEDGER - 500,
+            remainingTTL: 10000,
+            executableType: "contractExecutableWasm",
+            wasmHash: "ab".repeat(32),
+        });
+
+        await watchContract(db, {
+            contractId: VALID_CID,
+            network: "testnet",
+            noIntrospection: true,
+        });
+
+        expect(mockGetWasmCodeEntry).not.toHaveBeenCalled();
+    });
 });
