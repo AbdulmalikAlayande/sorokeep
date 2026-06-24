@@ -24,9 +24,10 @@ export function registerAlertsCommand(program: Command): void {
         .command("add")
         .description("Add a new alert configuration")
         .requiredOption("--contract <id>", "The contract ID to alert on")
-        .requiredOption("--type <type>", "The notification channel type ('webhook' or 'slack')")
+        .requiredOption("--type <type>", "The notification channel type ('webhook', 'slack', or 'pagerduty')")
         .option("--url <url>", "Webhook URL (required if --type is webhook)")
         .option("--channel <channel>", "Slack channel (required if --type is slack)")
+        .option("--routing-key <key>", "PagerDuty integration key (required if --type is pagerduty)")
         .option("--secret <secret>", "HMAC secret for webhook signing (auto-generated if omitted for webhooks)")
         .requiredOption("--threshold <ledgers>", "Threshold in number of ledgers", (val) => parseInt(val, 10))
         .action((options) => {
@@ -62,11 +63,17 @@ export function registerAlertsCommand(program: Command): void {
                     process.exit(1);
                 }
                 target = options.channel;
+            } else if (options.type === "pagerduty") {
+                if (!options.routingKey) {
+                    console.error(chalk.red("Error: --routing-key is required when --type is pagerduty."));
+                    process.exit(1);
+                }
+                target = options.routingKey;
             } else if (options.type === "email") {
-                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook', 'slack' or 'pagerduty'."));
                 process.exit(1);
             } else {
-                console.error(chalk.red("Error: --type must be 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: --type must be 'webhook', 'slack', or 'pagerduty'."));
                 process.exit(1);
             }
 

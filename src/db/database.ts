@@ -49,7 +49,48 @@ export function getDatabase(customPath?: string): Database.Database {
         try { db.exec(sql); } catch { /* column already exists — no-op */ }
     }
 
+    migrateAlertConfigsChannelTypeCheck(db);
+
     return db;
+}
+
+function migrateAlertConfigsChannelTypeCheck(db: Database.Database): void {
+    const row = db.prepare(`
+        SELECT sql FROM sqlite_master
+        WHERE type = 'table' AND name = 'alert_configs'
+    `).get() as { sql?: string } | undefined;
+
+    if (!row?.sql) {
+        return;
+    }
+
+    const hasLegacyCheck = /CHECK\s*\(\s*channel_type\s+IN\s*\(\s*'slack'\s*,\s*'webhook'\s*\)\s*\)/i.test(row.sql);
+    if (!hasLegacyCheck) {
+        return;
+    }
+
+    db.exec("PRAGMA foreign_keys = OFF;");
+    db.exec("BEGIN TRANSACTION;");
+    db.exec(`
+        CREATE TABLE alert_configs_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+            channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty')),
+            channel_target TEXT NOT NULL,
+            threshold_ledgers INTEGER NOT NULL,
+            webhook_secret TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    db.exec(`
+        INSERT INTO alert_configs_new (id, contract_id, channel_type, channel_target, threshold_ledgers, webhook_secret, created_at)
+        SELECT id, contract_id, channel_type, channel_target, threshold_ledgers, webhook_secret, created_at
+        FROM alert_configs
+    `);
+    db.exec(`DROP TABLE alert_configs;`);
+    db.exec(`ALTER TABLE alert_configs_new RENAME TO alert_configs;`);
+    db.exec("COMMIT;");
+    db.exec("PRAGMA foreign_keys = ON;");
 }
 
 export function closeDatabase() {

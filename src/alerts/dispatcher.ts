@@ -3,6 +3,7 @@ import { getUndeliveredAlerts, markAlertDelivered, incrementRetryCount, MAX_RETR
 import { buildAlertEvent, type AlertEvent } from "./types.js";
 import { sendWebhookAlert } from "./webhook.js";
 import { sendSlackAlert } from "./slack.js";
+import { sendPagerDutyAlert } from "./pagerduty.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "AlertDispatcher" });
@@ -141,6 +142,9 @@ async function route(
             break;
         case "slack":
             await sendSlackAlert(channelTarget, event);
+            break;
+        case "pagerduty":
+            await sendPagerDutyAlert(channelTarget, event);
             break;
         default:
             throw new Error(`Unknown channel type: ${channelType}`);

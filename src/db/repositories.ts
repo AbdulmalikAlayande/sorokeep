@@ -37,7 +37,7 @@ export interface ExtensionPolicy {
 export interface AlertConfig {
     id: number;
     contract_id: string;
-    channel_type: "slack" | "webhook";
+    channel_type: "slack" | "webhook" | "pagerduty";
     channel_target: string;
     threshold_ledgers: number;
     webhook_secret: string | null;
@@ -282,7 +282,7 @@ export interface UndeliveredAlert {
     entryKeyXdr: string;
     entryType: string;
     entryLabel: string | null;
-    channelType: "webhook" | "slack";
+    channelType: "webhook" | "slack" | "pagerduty";
     channelTarget: string;
     thresholdLedgers: number;
     webhookSecret: string | null;
