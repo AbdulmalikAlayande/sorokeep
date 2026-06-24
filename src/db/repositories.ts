@@ -460,7 +460,7 @@ export function insertStateChange(db: Database.Database, change: {
     contract_entry_id: number;
     old_snapshot_id?: number;
     new_snapshot_id?: number;
-    diff_type: string;
+    diff_type: StateChange["diff_type"];
     diff_json: string;
     detected_at_ledger: number;
 }): number {
@@ -477,7 +477,10 @@ export function insertStateChange(db: Database.Database, change: {
 
 export function getStateChanges(db: Database.Database, contractEntryId: number, limit?: number): StateChange[] {
     let sql = "SELECT * FROM state_changes WHERE contract_entry_id = ? ORDER BY detected_at_ledger DESC";
-    if (limit) {
+    if (limit !== undefined) {
+        if (limit < 0) {
+            throw new Error("limit must be non-negative");
+        }
         sql += " LIMIT ?";
         return db.prepare(sql).all(contractEntryId, limit) as StateChange[];
     }

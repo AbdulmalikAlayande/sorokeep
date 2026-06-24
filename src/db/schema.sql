@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS state_snapshots (
     value_xdr TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_state_snapshots_entry_ledger
+    ON state_snapshots(contract_entry_id, snapshot_ledger DESC);
 
 CREATE TABLE IF NOT EXISTS state_changes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,3 +91,5 @@ CREATE TABLE IF NOT EXISTS state_changes (
     detected_at_ledger INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE INDEX IF NOT EXISTS idx_state_changes_entry_detected_ledger
+    ON state_changes(contract_entry_id, detected_at_ledger DESC);
