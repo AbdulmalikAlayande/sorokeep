@@ -17,7 +17,10 @@ import {
     recordAlertFired,
     resolveAlerts,
     recordExtension,
-    getExtensionHistory
+    getExtensionHistory,
+    aggregateDailyCostSnapshots,
+    getCostDailySnapshots,
+    getContractCostSummary,
 } from "../../src/db/repositories";
 import { getDatabaseForTesting } from "../../src/db/database";
 
@@ -537,5 +540,47 @@ describe("Extension History Operations", () => {
         const recent = getExtensionHistory(db, contractID, 5);
         expect(recent).toHaveLength(1);
         expect(recent[0]!.tx_hash).toBe("new_hash");
+    });
+
+    it("aggregates daily snapshots and uses them for contract cost summary", () => {
+        recordExtension(db, {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 100,
+            new_ttl_ledgers: 200,
+            tx_hash: "snapshot_hash_1",
+            cost_xlm: 0.25,
+            executed_at_ledger: 10,
+        });
+
+        recordExtension(db, {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 200,
+            new_ttl_ledgers: 300,
+            tx_hash: "snapshot_hash_2",
+            cost_xlm: 0.50,
+            executed_at_ledger: 20,
+        });
+
+        // Force one snapshot row to be older than today.
+        db.prepare("UPDATE extension_history SET executed_at = datetime('now', '-1 day') WHERE tx_hash = 'snapshot_hash_1'").run();
+        db.prepare("UPDATE extension_history SET executed_at = datetime('now', '-2 days') WHERE tx_hash = 'snapshot_hash_2'").run();
+
+        aggregateDailyCostSnapshots(db);
+
+        const snapshots = getCostDailySnapshots(db, contractID, 5);
+        expect(snapshots.length).toBe(2);
+        expect(snapshots[0]!.total_cost_xlm).toBeCloseTo(0.25, 7);
+        expect(snapshots[1]!.total_cost_xlm).toBeCloseTo(0.50, 7);
+
+        const summary = getContractCostSummary(db, contractID, 5);
+        expect(summary.total_extensions).toBe(2);
+        expect(summary.total_cost_xlm).toBeCloseTo(0.75, 7);
+        expect(summary.byType.instance.cost_xlm).toBeCloseTo(0.75, 7);
+        expect(summary.byType.instance.count).toBe(2);
+        expect(summary.byType.wasm.count).toBe(0);
+        expect(summary.byType.persistent.count).toBe(0);
+        expect(summary.byType.temporary.count).toBe(0);
     });
 });

@@ -69,3 +69,21 @@ CREATE TABLE IF NOT EXISTS extension_history (
     executed_at_ledger INTEGER NOT NULL,
     executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS cost_daily_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    snapshot_date DATE NOT NULL,
+    total_extensions INTEGER NOT NULL DEFAULT 0,
+    total_cost_xlm REAL NOT NULL DEFAULT 0,
+    instance_extensions INTEGER NOT NULL DEFAULT 0,
+    instance_cost_xlm REAL NOT NULL DEFAULT 0,
+    wasm_extensions INTEGER NOT NULL DEFAULT 0,
+    wasm_cost_xlm REAL NOT NULL DEFAULT 0,
+    persistent_extensions INTEGER NOT NULL DEFAULT 0,
+    persistent_cost_xlm REAL NOT NULL DEFAULT 0,
+    temporary_extensions INTEGER NOT NULL DEFAULT 0,
+    temporary_cost_xlm REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id, snapshot_date)
+);

@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
 import { runAutoExtensions } from "../core/extension.js";
+import { aggregateDailyCostSnapshots } from "../db/repositories.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "DaemonLoop" });
@@ -141,6 +142,13 @@ async function executeCycle(
             }
         } catch (extensionErr: unknown) {
             logger.error("runAutoExtensions threw unexpectedly", extensionErr);
+        }
+
+        // Step 4: aggregate daily cost snapshots for past extension history.
+        try {
+            aggregateDailyCostSnapshots(db);
+        } catch (snapshotErr: unknown) {
+            logger.error("aggregateDailyCostSnapshots threw unexpectedly", snapshotErr);
         }
 
         safeOnCycle(onCycle, result, undefined);

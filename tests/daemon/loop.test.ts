@@ -7,6 +7,7 @@ import type { MonitorCycleResult } from "../../src/core/monitor";
 
 const mockRunMonitorCycle = vi.fn();
 const mockDeliverPendingAlerts = vi.fn();
+const mockAggregateDailyCostSnapshots = vi.fn();
 
 vi.mock("../../src/core/monitor.js", () => ({
     runMonitorCycle: (...args: unknown[]) => mockRunMonitorCycle(...args),
@@ -14,6 +15,10 @@ vi.mock("../../src/core/monitor.js", () => ({
 
 vi.mock("../../src/alerts/dispatcher.js", () => ({
     deliverPendingAlerts: (...args: unknown[]) => mockDeliverPendingAlerts(...args),
+}));
+
+vi.mock("../../src/db/repositories.js", () => ({
+    aggregateDailyCostSnapshots: (...args: unknown[]) => mockAggregateDailyCostSnapshots(...args),
 }));
 
 import { startDaemon, stopDaemon } from "../../src/daemon/loop.js";
@@ -91,6 +96,16 @@ describe("daemon loop", () => {
             await expect(
                 startDaemon(db, "testnet", { intervalMs: 5000 }),
             ).resolves.not.toThrow();
+        });
+
+        it("calls daily snapshot aggregation after each cycle", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            await startDaemon(db, "testnet", { intervalMs: 5000 });
+            expect(mockAggregateDailyCostSnapshots).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockAggregateDailyCostSnapshots).toHaveBeenCalledTimes(2);
         });
 
         it("still schedules subsequent cycles after an initial cycle failure", async () => {

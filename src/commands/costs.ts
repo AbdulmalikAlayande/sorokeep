@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { getDatabase } from "../db/database.js";
-import { getContract, getExtensionHistory, getEntriesForContract } from "../db/repositories.js";
+import { getContract, getContractCostSummary, getExtensionHistory, getEntriesForContract } from "../db/repositories.js";
 import { formatContractID, formatTimeToCloseLedger } from "../utils/formatting.js";
 import { getLogger } from "../logging/index.js";
 
@@ -29,6 +29,7 @@ export function registerCostsCommand(program: Command): void {
                     process.exit(1);
                 }
                 const history = getExtensionHistory(db, contractId, days);
+                const summary = getContractCostSummary(db, contractId, days);
 
                 const displayName = contract.name ?? formatContractID(contractId);
                 const periodLabel = days ? `last ${days} days` : "all time";
@@ -36,45 +37,27 @@ export function registerCostsCommand(program: Command): void {
                 console.log(`\n${chalk.bold("Extension History")} — ${chalk.cyan(displayName)} (${periodLabel})`);
                 console.log(`  Network: ${chalk.cyan(contract.network)}`);
 
-                if (history.length === 0) {
+                if (history.length === 0 && summary.total_extensions === 0) {
                     console.log(chalk.dim("\n  No extensions recorded for this period."));
                     return;
                 }
 
-                // Compute aggregates
-                const entries = getEntriesForContract(db, contractId);
-                const entryMap = new Map(entries.map(e => [e.id, e]));
-
-                let totalCostXlm = 0;
-                const byType: Record<string, { count: number; cost: number }> = {};
-
-                for (const record of history) {
-                    const cost = record.cost_xlm ?? 0;
-                    totalCostXlm += cost;
-
-                    const entry = entryMap.get(record.contract_entry_id);
-                    const entryType = entry?.entry_type ?? "unknown";
-
-                    if (!byType[entryType]) {
-                        byType[entryType] = { count: 0, cost: 0 };
-                    }
-                    byType[entryType]!.count++;
-                    byType[entryType]!.cost += cost;
-                }
+                const totalCostXlm = summary.total_cost_xlm;
+                const byType = summary.byType;
 
                 // Summary
                 console.log(`\n  ${chalk.bold("Summary")}`);
-                console.log(`  Total extensions: ${chalk.cyan(history.length.toString())}`);
+                console.log(`  Total extensions: ${chalk.cyan(summary.total_extensions.toString())}`);
                 console.log(`  Total cost:       ${chalk.cyan(totalCostXlm.toFixed(7))} XLM`);
 
                 // Breakdown by entry type
                 console.log(`\n  ${chalk.bold("By Entry Type")}`);
                 for (const [type, data] of Object.entries(byType)) {
-                    console.log(`    ${type}: ${data.count} extensions (${data.cost.toFixed(7)} XLM)`);
+                    console.log(`    ${type}: ${data.count} extensions (${data.cost_xlm.toFixed(7)} XLM)`);
                 }
 
                 // Cost projection
-                if (days && history.length > 0) {
+                if (days && summary.total_extensions > 0) {
                     const projectedCost = (totalCostXlm / (days)) * 30;
                     console.log(`\n  ${chalk.bold("Projection")}`);
                     console.log(`  Estimated 30-day cost: ~${chalk.cyan(projectedCost.toFixed(7))} XLM`);
