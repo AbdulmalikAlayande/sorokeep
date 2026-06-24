@@ -1,4 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { loadConfig } from "../../src/utils/config";
+
+// ─── Mock loadConfig to prevent fallback to real ~/.sorokeep/config.yaml ──────
+
+vi.mock("../../src/utils/config", () => ({
+    loadConfig: vi.fn(() => ({})),
+}));
 
 // ─── Mock fetch before importing the module under test ────────────────────────
 
@@ -55,6 +62,7 @@ function makeTelegramErrorResponse(description: string): Response {
 describe("sendTelegramAlert", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.mocked(loadConfig).mockReturnValue({} as ReturnType<typeof loadConfig>);
         process.env["SOROKEEP_TELEGRAM_BOT_TOKEN"] = VALID_BOT_TOKEN;
     });
 
