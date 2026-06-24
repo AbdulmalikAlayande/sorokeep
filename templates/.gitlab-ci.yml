@@ -43,9 +43,7 @@ sorokeep:check:
     # 2. Restore the database from a previous pipeline's artifact
     #    (Adjust the path to match your artifact layout.)
     - mkdir -p "$(dirname $SOROKEEP_DB_PATH)"
-    - if [ -f previous-artifacts/sorokeep.db ]; then
-        cp previous-artifacts/sorokeep.db "$SOROKEEP_DB_PATH";
-      fi
+    - cp previous-artifacts/sorokeep.db "$SOROKEEP_DB_PATH"
 
     # 3. Run the TTL health check
     #    Exits 0 if all TTLs are within bounds.

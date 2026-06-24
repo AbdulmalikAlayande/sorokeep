@@ -15,6 +15,17 @@ vi.mock("../../src/db/database.js", async (importOriginal) => {
     };
 });
 
+const LEDGER = 0;
+
+function seedContract(
+    db: Database.Database,
+    id: string,
+    network: string,
+) {
+    insertContract(db, { id, network });
+    db.prepare("UPDATE contracts SET last_checked_ledger = ? WHERE id = ?").run(LEDGER, id);
+}
+
 describe("check command", () => {
     const contractId = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
     let consoleLogSpy: any;
@@ -46,7 +57,7 @@ describe("check command", () => {
     });
 
     it("exits with 0 when no contracts have entries", () => {
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+        seedContract(mockDb, contractId, "testnet");
 
         const program = new Command();
         registerCheckCommand(program);
@@ -59,7 +70,7 @@ describe("check command", () => {
     });
 
     it("exits with 0 when all entries have TTL above all alert thresholds", () => {
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+        seedContract(mockDb, contractId, "testnet");
         upsertEntry(mockDb, {
             contract_id: contractId,
             entry_key_xdr: "key-1",
@@ -84,7 +95,7 @@ describe("check command", () => {
     });
 
     it("exits with 1 when an entry's TTL is below an alert threshold", () => {
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+        seedContract(mockDb, contractId, "testnet");
         upsertEntry(mockDb, {
             contract_id: contractId,
             entry_key_xdr: "key-1",
@@ -108,8 +119,8 @@ describe("check command", () => {
         expect(exitSpy).toHaveBeenCalledWith(1);
     });
 
-    it("exits with 1 when an entry's TTL equals the threshold exactly (boundary)", () => {
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+    it("exits with 0 when remaining TTL equals the threshold exactly (boundary: strictly less than)", () => {
+        seedContract(mockDb, contractId, "testnet");
         upsertEntry(mockDb, {
             contract_id: contractId,
             entry_key_xdr: "key-1",
@@ -130,11 +141,11 @@ describe("check command", () => {
             program.parse(["node", "sorokeep", "check"]);
         }).toThrow("process.exit called");
 
-        expect(exitSpy).toHaveBeenCalledWith(1);
+        expect(exitSpy).toHaveBeenCalledWith(0);
     });
 
     it("exits with 1 when multiple entries' TTLs are below thresholds", () => {
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+        seedContract(mockDb, contractId, "testnet");
         upsertEntry(mockDb, {
             contract_id: contractId,
             entry_key_xdr: "key-instance",
@@ -165,7 +176,7 @@ describe("check command", () => {
     });
 
     it("exits with 0 when no threshold is crossed even with stale entries (no alert configs)", () => {
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+        seedContract(mockDb, contractId, "testnet");
         upsertEntry(mockDb, {
             contract_id: contractId,
             entry_key_xdr: "key-1",
@@ -184,7 +195,7 @@ describe("check command", () => {
     });
 
     it("exits with 0 when a contract has no entries but has alert configs", () => {
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+        seedContract(mockDb, contractId, "testnet");
         insertAlertConfig(mockDb, {
             contract_id: contractId,
             channel_type: "webhook",
@@ -203,7 +214,7 @@ describe("check command", () => {
     });
 
     it("reports summary with counts of healthy and crossed TTLs", () => {
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+        seedContract(mockDb, contractId, "testnet");
         upsertEntry(mockDb, {
             contract_id: contractId,
             entry_key_xdr: "key-healthy",
@@ -231,13 +242,16 @@ describe("check command", () => {
         }).toThrow("process.exit called");
 
         expect(consoleLogSpy).toHaveBeenCalledWith(
-            expect.stringContaining("1"),
+            expect.stringContaining("1 entries below TTL threshold(s)"),
+        );
+        expect(consoleLogSpy).toHaveBeenCalledWith(
+            expect.stringContaining("1 entries healthy"),
         );
     });
 
     it("handles multiple contracts independently", () => {
         const contractId2 = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
-        insertContract(mockDb, { id: contractId, network: "testnet" });
+        seedContract(mockDb, contractId, "testnet");
         upsertEntry(mockDb, {
             contract_id: contractId,
             entry_key_xdr: "key-1",
@@ -251,7 +265,7 @@ describe("check command", () => {
             threshold_ledgers: 10000,
         });
 
-        insertContract(mockDb, { id: contractId2, network: "testnet" });
+        seedContract(mockDb, contractId2, "testnet");
         upsertEntry(mockDb, {
             contract_id: contractId2,
             entry_key_xdr: "key-2",
@@ -273,5 +287,24 @@ describe("check command", () => {
         }).toThrow("process.exit called");
 
         expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
+    it("skips contract with null last_checked_ledger", () => {
+        insertContract(mockDb, { id: contractId, network: "testnet" });
+        upsertEntry(mockDb, {
+            contract_id: contractId,
+            entry_key_xdr: "key-1",
+            entry_type: "instance",
+            live_until_ledger: 100,
+        });
+
+        const program = new Command();
+        registerCheckCommand(program);
+
+        expect(() => {
+            program.parse(["node", "sorokeep", "check"]);
+        }).toThrow("process.exit called");
+
+        expect(exitSpy).toHaveBeenCalledWith(0);
     });
 });

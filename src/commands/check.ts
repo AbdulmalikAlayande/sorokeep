@@ -7,7 +7,6 @@ import {
     getAlertConfigsForContract,
 } from "../db/repositories.js";
 
-
 interface CheckResult {
     totalContracts: number;
     totalEntries: number;
@@ -16,7 +15,8 @@ interface CheckResult {
 }
 
 function runCheck(): CheckResult {
-    const db = getDatabase();
+    const dbPath = process.env.SOROKEEP_DB_PATH;
+    const db = getDatabase(dbPath);
     const contracts = getAllContracts(db);
 
     if (contracts.length === 0) {
@@ -27,18 +27,21 @@ function runCheck(): CheckResult {
     let entriesBelowThreshold = 0;
 
     for (const contract of contracts) {
+        if (contract.last_checked_ledger == null) continue;
+
         const entries = getEntriesForContract(db, contract.id);
         if (entries.length === 0) continue;
 
         const alertConfigs = getAlertConfigsForContract(db, contract.id);
         if (alertConfigs.length === 0) continue;
 
-        const minThreshold = Math.min(...alertConfigs.map(c => c.threshold_ledgers));
+        const maxThreshold = Math.max(...alertConfigs.map(c => c.threshold_ledgers));
 
         for (const entry of entries) {
             totalEntries++;
             if (entry.live_until_ledger == null) continue;
-            if (entry.live_until_ledger <= minThreshold) {
+            const remainingTTL = entry.live_until_ledger - contract.last_checked_ledger;
+            if (remainingTTL < maxThreshold) {
                 entriesBelowThreshold++;
             }
         }
