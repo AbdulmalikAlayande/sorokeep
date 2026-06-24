@@ -67,6 +67,26 @@ export interface ExtensionRecord {
     executed_at: string;
 }
 
+export interface StateSnapshot {
+    id: number;
+    contract_entry_id: number;
+    snapshot_ledger: number;
+    value_hash: string;
+    value_xdr: string;
+    created_at: string;
+}
+
+export interface StateChange {
+    id: number;
+    contract_entry_id: number;
+    old_snapshot_id: number | null;
+    new_snapshot_id: number | null;
+    diff_type: "created" | "updated" | "deleted";
+    diff_json: string;
+    detected_at_ledger: number;
+    created_at: string;
+}
+
 // ---------------------------- Database Access Functions For Schema: Contract ----------------------------
 export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string;}): void {
     db.prepare(`
@@ -410,4 +430,56 @@ export function getAlertHistory(db: Database.Database, contractId: string, limit
         ? db.prepare(sql).all(contractId, limit)
         : db.prepare(sql).all(contractId)
     ) as AlertHistoryRecord[];
+}
+
+// ---------------------------- Database Access Functions For Schema: StateSnapshot ----------------------------
+export function insertStateSnapshot(db: Database.Database, snapshot: {
+    contract_entry_id: number;
+    snapshot_ledger: number;
+    value_hash: string;
+    value_xdr: string;
+}): number {
+    const result = db.prepare(`
+        INSERT INTO state_snapshots (contract_entry_id, snapshot_ledger, value_hash, value_xdr)
+        VALUES (@contract_entry_id, @snapshot_ledger, @value_hash, @value_xdr)
+    `).run(snapshot);
+    return result.lastInsertRowid as number;
+}
+
+export function getLatestSnapshot(db: Database.Database, contractEntryId: number): StateSnapshot | undefined {
+    return db.prepare(`
+        SELECT * FROM state_snapshots
+        WHERE contract_entry_id = ?
+        ORDER BY snapshot_ledger DESC
+        LIMIT 1
+    `).get(contractEntryId) as StateSnapshot | undefined;
+}
+
+// ---------------------------- Database Access Functions For Schema: StateChange ----------------------------
+export function insertStateChange(db: Database.Database, change: {
+    contract_entry_id: number;
+    old_snapshot_id?: number;
+    new_snapshot_id?: number;
+    diff_type: string;
+    diff_json: string;
+    detected_at_ledger: number;
+}): number {
+    const result = db.prepare(`
+        INSERT INTO state_changes (contract_entry_id, old_snapshot_id, new_snapshot_id, diff_type, diff_json, detected_at_ledger)
+        VALUES (@contract_entry_id, @old_snapshot_id, @new_snapshot_id, @diff_type, @diff_json, @detected_at_ledger)
+    `).run({
+        ...change,
+        old_snapshot_id: change.old_snapshot_id ?? null,
+        new_snapshot_id: change.new_snapshot_id ?? null,
+    });
+    return result.lastInsertRowid as number;
+}
+
+export function getStateChanges(db: Database.Database, contractEntryId: number, limit?: number): StateChange[] {
+    let sql = "SELECT * FROM state_changes WHERE contract_entry_id = ? ORDER BY detected_at_ledger DESC";
+    if (limit) {
+        sql += " LIMIT ?";
+        return db.prepare(sql).all(contractEntryId, limit) as StateChange[];
+    }
+    return db.prepare(sql).all(contractEntryId) as StateChange[];
 }

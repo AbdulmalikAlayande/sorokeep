@@ -69,3 +69,23 @@ CREATE TABLE IF NOT EXISTS extension_history (
     executed_at_ledger INTEGER NOT NULL,
     executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS state_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
+    snapshot_ledger INTEGER NOT NULL,
+    value_hash TEXT NOT NULL,
+    value_xdr TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS state_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
+    old_snapshot_id INTEGER REFERENCES state_snapshots(id) ON DELETE SET NULL,
+    new_snapshot_id INTEGER REFERENCES state_snapshots(id) ON DELETE SET NULL,
+    diff_type TEXT NOT NULL CHECK(diff_type IN ('created', 'updated', 'deleted')),
+    diff_json TEXT NOT NULL,
+    detected_at_ledger INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

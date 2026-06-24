@@ -17,7 +17,11 @@ import {
     recordAlertFired,
     resolveAlerts,
     recordExtension,
-    getExtensionHistory
+    getExtensionHistory,
+    insertStateSnapshot,
+    getLatestSnapshot,
+    insertStateChange,
+    getStateChanges
 } from "../../src/db/repositories";
 import { getDatabaseForTesting } from "../../src/db/database";
 
@@ -537,5 +541,101 @@ describe("Extension History Operations", () => {
         const recent = getExtensionHistory(db, contractID, 5);
         expect(recent).toHaveLength(1);
         expect(recent[0]!.tx_hash).toBe("new_hash");
+    });
+});
+
+// --------------------- Database Operations Tests For State Snapshots & Changes ---------------------
+describe("State Snapshots & Changes Operations", () => {
+    const contractID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+    let entryID: number;
+
+    beforeEach(() => {
+        insertContract(db, {
+            id: contractID,
+            name: "sample-contract",
+            network: "testnet",
+        });
+        upsertEntry(db, {
+            contract_id: contractID,
+            entry_key_xdr: "XDR_KEY_1",
+            entry_type: "instance",
+            live_until_ledger: 1000,
+        });
+        const entries = getEntriesForContract(db, contractID);
+        entryID = entries[0]!.id;
+    });
+
+    it("inserts a state snapshot and retrieves the latest", () => {
+        const snapshot1 = {
+            contract_entry_id: entryID,
+            snapshot_ledger: 100,
+            value_hash: "hash1",
+            value_xdr: "xdr1"
+        };
+        const id1 = insertStateSnapshot(db, snapshot1);
+        expect(id1).toBeGreaterThan(0);
+
+        const snapshot2 = {
+            contract_entry_id: entryID,
+            snapshot_ledger: 200,
+            value_hash: "hash2",
+            value_xdr: "xdr2"
+        };
+        insertStateSnapshot(db, snapshot2);
+
+        const latest = getLatestSnapshot(db, entryID);
+        expect(latest).toBeDefined();
+        expect(latest!.snapshot_ledger).toBe(200);
+        expect(latest!.value_hash).toBe("hash2");
+        expect(latest!.value_xdr).toBe("xdr2");
+    });
+
+    it("inserts a state change and retrieves changes", () => {
+        const snapshotId1 = insertStateSnapshot(db, {
+            contract_entry_id: entryID,
+            snapshot_ledger: 100,
+            value_hash: "hash1",
+            value_xdr: "xdr1"
+        });
+        
+        const snapshotId2 = insertStateSnapshot(db, {
+            contract_entry_id: entryID,
+            snapshot_ledger: 200,
+            value_hash: "hash2",
+            value_xdr: "xdr2"
+        });
+
+        const change1 = {
+            contract_entry_id: entryID,
+            old_snapshot_id: snapshotId1,
+            new_snapshot_id: snapshotId2,
+            diff_type: "updated",
+            diff_json: "{}",
+            detected_at_ledger: 200
+        };
+        insertStateChange(db, change1);
+
+        const changes = getStateChanges(db, entryID);
+        expect(changes).toHaveLength(1);
+        expect(changes[0]!.diff_type).toBe("updated");
+        expect(changes[0]!.detected_at_ledger).toBe(200);
+    });
+
+    it("cascades delete when an entry is removed", () => {
+        insertStateSnapshot(db, {
+            contract_entry_id: entryID,
+            snapshot_ledger: 100,
+            value_hash: "hash1",
+            value_xdr: "xdr1"
+        });
+
+        // The snapshot exists
+        expect(getLatestSnapshot(db, entryID)).toBeDefined();
+
+        // Delete contract cascades to entries which cascades to snapshots
+        deleteContract(db, contractID);
+
+        // Fetching latest snapshot should now return undefined
+        expect(getLatestSnapshot(db, entryID)).toBeUndefined();
     });
 });
