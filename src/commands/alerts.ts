@@ -24,8 +24,8 @@ export function registerAlertsCommand(program: Command): void {
         .command("add")
         .description("Add a new alert configuration")
         .requiredOption("--contract <id>", "The contract ID to alert on")
-        .requiredOption("--type <type>", "The notification channel type ('webhook' or 'slack')")
-        .option("--url <url>", "Webhook URL (required if --type is webhook)")
+        .requiredOption("--type <type>", "The notification channel type ('webhook', 'slack', or 'discord')")
+        .option("--url <url>", "Webhook URL (required if --type is webhook or discord)")
         .option("--channel <channel>", "Slack channel (required if --type is slack)")
         .option("--secret <secret>", "HMAC secret for webhook signing (auto-generated if omitted for webhooks)")
         .requiredOption("--threshold <ledgers>", "Threshold in number of ledgers", (val) => parseInt(val, 10))
@@ -62,11 +62,17 @@ export function registerAlertsCommand(program: Command): void {
                     process.exit(1);
                 }
                 target = options.channel;
+            } else if (options.type === "discord") {
+                if (!options.url) {
+                    console.error(chalk.red("Error: --url is required when --type is discord. Paste the full Discord webhook URL."));
+                    process.exit(1);
+                }
+                target = options.url;
             } else if (options.type === "email") {
-                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook', 'slack', or 'discord'."));
                 process.exit(1);
             } else {
-                console.error(chalk.red("Error: --type must be 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: --type must be 'webhook', 'slack', or 'discord'."));
                 process.exit(1);
             }
 
