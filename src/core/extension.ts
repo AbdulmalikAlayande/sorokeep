@@ -5,10 +5,12 @@ import {
     getContract,
     getEntriesForContract,
     getExtensionPolicy,
+    getChannelAccounts,
     recordExtension,
     upsertEntry,
     updateLastCheckedLedger,
 } from "../db/repositories.js";
+import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "Extension" });
@@ -224,41 +226,61 @@ export async function runAutoExtensions(
 
     const contracts = getAllContracts(db).filter(c => c.network === network);
 
-    // Fetch latest ledger once for the entire run, not per-contract
-    let latestLedger: number | undefined;
-    if (contracts.some(c => {
+    const eligibleContracts = contracts.filter(c => {
         const p = getExtensionPolicy(db, c.id);
         return p && p.enabled;
-    })) {
-        const client = new StellarRpcClient(network, rpcUrl);
-        latestLedger = await client.getCurrentLedger();
-    }
+    });
 
-    for (const contract of contracts) {
-        const policy = getExtensionPolicy(db, contract.id);
-        if (!policy || !policy.enabled) continue;
+    if (eligibleContracts.length === 0) return result;
 
-        result.contractsChecked++;
+    const client = new StellarRpcClient(network, rpcUrl);
+    const latestLedger = await client.getCurrentLedger();
+
+    // Build pool from registered channel accounts; fall back to per-policy keypairs
+    const channelAccounts = getChannelAccounts(db, network);
+    const pool = channelAccounts.length > 0
+        ? new ChannelAccountPool(db, network)
+        : null;
+
+    result.contractsChecked = eligibleContracts.length;
+
+    // Process all eligible contracts concurrently, one channel account slot per task.
+    await Promise.all(eligibleContracts.map(async contract => {
+        const policy = getExtensionPolicy(db, contract.id)!;
 
         try {
             const entries = getEntriesForContract(db, contract.id);
 
-            // Find entries that need extension (exclude already-expired entries)
             const needsExtension = entries.filter(e => {
                 if (!e.live_until_ledger) return false;
-                const remaining = e.live_until_ledger - latestLedger!;
+                const remaining = e.live_until_ledger - latestLedger;
                 return remaining > 0 && remaining < policy.extend_when_below_ledgers;
             });
 
-            if (needsExtension.length === 0) continue;
+            if (needsExtension.length === 0) return;
 
-            // Resolve the secret key from the policy's keypair_source
-            const secretKey = resolveSecretKey(policy.keypair_source);
+            // Resolve secret key: prefer channel pool, fall back to policy keypair
+            let secretKey: string | null = null;
+            let slot: import("./channels.js").ChannelSlot | null = null;
+
+            if (pool) {
+                slot = await pool.acquire();
+                secretKey = resolveSecretKey(slot.keypairSource);
+                if (!secretKey) {
+                    pool.release(slot.publicKey);
+                    slot = null;
+                }
+            }
+
+            if (!secretKey) {
+                secretKey = resolveSecretKey(policy.keypair_source);
+            }
+
             if (!secretKey) {
                 result.errors.push(
-                    `Contract ${contract.id}: Cannot resolve keypair from source "${policy.keypair_source}"`,
+                    `Contract ${contract.id}: Cannot resolve keypair from source "${pool ? "channel pool" : policy.keypair_source}"`,
                 );
-                continue;
+                return;
             }
 
             const entryKeys = needsExtension.map(e => e.entry_key_xdr);
@@ -268,35 +290,39 @@ export async function runAutoExtensions(
                 `(below ${policy.extend_when_below_ledgers}, target ${policy.target_ttl_ledgers})`,
             );
 
-            const extResult = await extendEntries(
-                db,
-                contract.id,
-                entryKeys,
-                policy.target_ttl_ledgers,
-                secretKey,
-                rpcUrl,
-            );
-
-            if (extResult.success) {
-                result.contractsExtended++;
-                result.entriesExtended += extResult.entriesExtended;
-                result.extensions.push({
-                    contractId: contract.id,
-                    txHash: extResult.txHash!,
-                    entriesExtended: extResult.entriesExtended,
-                    ledger: extResult.ledger!,
-                });
-            } else {
-                result.errors.push(
-                    `Contract ${contract.id}: Extension failed — ${extResult.error}`,
+            try {
+                const extResult = await extendEntries(
+                    db,
+                    contract.id,
+                    entryKeys,
+                    policy.target_ttl_ledgers,
+                    secretKey,
+                    rpcUrl,
                 );
+
+                if (extResult.success) {
+                    result.contractsExtended++;
+                    result.entriesExtended += extResult.entriesExtended;
+                    result.extensions.push({
+                        contractId: contract.id,
+                        txHash: extResult.txHash!,
+                        entriesExtended: extResult.entriesExtended,
+                        ledger: extResult.ledger!,
+                    });
+                } else {
+                    result.errors.push(
+                        `Contract ${contract.id}: Extension failed — ${extResult.error}`,
+                    );
+                }
+            } finally {
+                if (slot && pool) pool.release(slot.publicKey);
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             result.errors.push(`Contract ${contract.id}: ${message}`);
             logger.error(`Auto-extension error for ${contract.id}: ${message}`, err);
         }
-    }
+    }));
 
     return result;
 }

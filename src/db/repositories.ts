@@ -411,3 +411,47 @@ export function getAlertHistory(db: Database.Database, contractId: string, limit
         : db.prepare(sql).all(contractId)
     ) as AlertHistoryRecord[];
 }
+
+// ---------------------------- Channel Accounts ----------------------------
+
+export interface ChannelAccount {
+    id: number;
+    public_key: string;
+    keypair_source: string;
+    network: string;
+    balance_xlm: number | null;
+    balance_checked_at: string | null;
+    created_at: string;
+}
+
+export function upsertChannelAccount(db: Database.Database, account: {
+    public_key: string;
+    keypair_source: string;
+    network: string;
+}): void {
+    db.prepare(`
+        INSERT INTO channel_accounts (public_key, keypair_source, network)
+        VALUES (@public_key, @keypair_source, @network)
+        ON CONFLICT(public_key) DO UPDATE SET
+            keypair_source = @keypair_source,
+            network = @network
+    `).run(account);
+}
+
+export function getChannelAccounts(db: Database.Database, network: string): ChannelAccount[] {
+    return db.prepare(
+        "SELECT * FROM channel_accounts WHERE network = ? ORDER BY id ASC"
+    ).all(network) as ChannelAccount[];
+}
+
+export function updateChannelBalance(db: Database.Database, publicKey: string, balanceXlm: number): void {
+    db.prepare(`
+        UPDATE channel_accounts
+        SET balance_xlm = ?, balance_checked_at = datetime('now')
+        WHERE public_key = ?
+    `).run(balanceXlm, publicKey);
+}
+
+export function deleteChannelAccount(db: Database.Database, publicKey: string): void {
+    db.prepare("DELETE FROM channel_accounts WHERE public_key = ?").run(publicKey);
+}

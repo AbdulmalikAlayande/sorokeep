@@ -58,6 +58,16 @@ CREATE TABLE IF NOT EXISTS alerts_fired (
     retry_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS channel_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_key TEXT NOT NULL UNIQUE,
+    keypair_source TEXT NOT NULL,
+    network TEXT NOT NULL DEFAULT 'testnet',
+    balance_xlm REAL,
+    balance_checked_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS extension_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
