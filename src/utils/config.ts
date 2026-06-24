@@ -8,6 +8,14 @@ const logger = getLogger().child({ component: "Config" });
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export interface SmtpConfig {
+    host: string;
+    port: number;
+    user: string;
+    password: string;
+    from: string;
+}
+
 export interface SorokeepConfig {
     /** Default network to use. */
     network: string;
@@ -17,6 +25,8 @@ export interface SorokeepConfig {
     pollingIntervalSeconds: number;
     /** Slack bot token for Slack alert delivery. */
     slackToken?: string;
+    /** SMTP configuration for email alert delivery. */
+    smtp?: SmtpConfig;
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
@@ -54,6 +64,7 @@ export function loadConfig(customPath?: string): SorokeepConfig {
                 ? parsed.pollingIntervalSeconds
                 : DEFAULT_CONFIG.pollingIntervalSeconds,
             slackToken: parsed.slackToken,
+            smtp: parsed.smtp,
         };
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

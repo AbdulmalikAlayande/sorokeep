@@ -3,6 +3,8 @@ import { getUndeliveredAlerts, markAlertDelivered, incrementRetryCount, MAX_RETR
 import { buildAlertEvent, type AlertEvent } from "./types.js";
 import { sendWebhookAlert } from "./webhook.js";
 import { sendSlackAlert } from "./slack.js";
+import { sendEmailAlert } from "./email.js";
+import { loadConfig } from "../utils/config.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "AlertDispatcher" });
@@ -142,6 +144,16 @@ async function route(
         case "slack":
             await sendSlackAlert(channelTarget, event);
             break;
+        case "email": {
+            const config = loadConfig();
+            if (!config.smtp) {
+                throw new Error(
+                    "Email alerting requires SMTP configuration in ~/.sorokeep/config.yaml",
+                );
+            }
+            await sendEmailAlert(channelTarget, event, config.smtp);
+            break;
+        }
         default:
             throw new Error(`Unknown channel type: ${channelType}`);
     }

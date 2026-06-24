@@ -24,9 +24,10 @@ export function registerAlertsCommand(program: Command): void {
         .command("add")
         .description("Add a new alert configuration")
         .requiredOption("--contract <id>", "The contract ID to alert on")
-        .requiredOption("--type <type>", "The notification channel type ('webhook' or 'slack')")
+        .requiredOption("--type <type>", "The notification channel type ('webhook', 'slack', or 'email')")
         .option("--url <url>", "Webhook URL (required if --type is webhook)")
         .option("--channel <channel>", "Slack channel (required if --type is slack)")
+        .option("--to <email>", "Recipient email address (required if --type is email)")
         .option("--secret <secret>", "HMAC secret for webhook signing (auto-generated if omitted for webhooks)")
         .requiredOption("--threshold <ledgers>", "Threshold in number of ledgers", (val) => parseInt(val, 10))
         .action((options) => {
@@ -63,10 +64,13 @@ export function registerAlertsCommand(program: Command): void {
                 }
                 target = options.channel;
             } else if (options.type === "email") {
-                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook' or 'slack'."));
-                process.exit(1);
+                if (!options.to) {
+                    console.error(chalk.red("Error: --to is required when --type is email."));
+                    process.exit(1);
+                }
+                target = options.to;
             } else {
-                console.error(chalk.red("Error: --type must be 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: --type must be 'webhook', 'slack', or 'email'."));
                 process.exit(1);
             }
 

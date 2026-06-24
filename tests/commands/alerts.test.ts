@@ -101,7 +101,36 @@ describe("alerts command", () => {
         });
     });
 
-    it("rejects email alert type as not yet implemented", () => {
+    it("adds an email alert configuration", () => {
+        const program = new Command();
+        registerAlertsCommand(program);
+
+        program.parse([
+            "node",
+            "sorokeep",
+            "alerts",
+            "add",
+            "--contract",
+            contractID,
+            "--type",
+            "email",
+            "--to",
+            "ops@example.com",
+            "--threshold",
+            "3000",
+        ]);
+
+        const configs = getAlertConfigsForContract(mockDb, contractID);
+        expect(configs).toHaveLength(1);
+        expect(configs[0]).toMatchObject({
+            contract_id: contractID,
+            channel_type: "email",
+            channel_target: "ops@example.com",
+            threshold_ledgers: 3000,
+        });
+    });
+
+    it("fails if --to is missing when --type is email", () => {
         const program = new Command();
         registerAlertsCommand(program);
 
@@ -115,15 +144,13 @@ describe("alerts command", () => {
                 contractID,
                 "--type",
                 "email",
-                "--url",
-                "https://example.com",
                 "--threshold",
                 "3000",
             ]);
         }).toThrow("process.exit called");
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
-            expect.stringContaining("not yet implemented")
+            expect.stringContaining("--to is required")
         );
     });
 
