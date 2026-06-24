@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS contract_entries (
     label TEXT,
     live_until_ledger INTEGER,
     last_modified_ledger INTEGER,
-    discovery_source TEXT NOT NULL DEFAULT 'deterministic' CHECK(discovery_source IN ('deterministic', 'manual', 'instance_scan', 'footprint')),
+    discovery_source TEXT NOT NULL DEFAULT 'deterministic' CHECK(discovery_source IN ('deterministic', 'manual', 'instance_scan', 'footprint', 'introspection')),
     first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_checked_at DATETIME,
     UNIQUE(contract_id, entry_key_xdr)

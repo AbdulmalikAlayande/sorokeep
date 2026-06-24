@@ -191,6 +191,46 @@ export class StellarRpcClient {
     }
 
     /**
+     * Call the 'get_monitored_keys' view method on a contract.
+     * Returns an array of XDR strings for the keys.
+     */
+    async getMonitoredKeys(contractId: string): Promise<string[]> {
+        const passphrase = await this.getNetworkPassphrase();
+        const contract = new Contract(contractId);
+        const op = contract.call("get_monitored_keys");
+
+        // Use a dummy account for simulation
+        const account = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0");
+
+        const tx = new TransactionBuilder(account, {
+            fee: "100",
+            networkPassphrase: passphrase,
+        })
+            .addOperation(op)
+            .setTimeout(30)
+            .build();
+
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            throw new Error(`Simulation failed: ${sim.error ?? "unknown error"}`);
+        }
+
+        const successSim = sim as rpc.Api.SimulateTransactionSuccessResponse;
+        
+        // Parse the result
+        const scv = successSim.result!.retval;
+        
+        // Assuming the return type is a Vec<ScVal> (or similar) of keys
+        if (scv.switch().name === "scvVec") {
+            const vec = scv.vec()!;
+            return vec.map(val => val.toXDR("base64"));
+        }
+        
+        return [];
+    }
+
+    /**
      * Simulate an ExtendFootprintTTLOp to estimate fees before submitting.
      */
     async simulateExtension(
