@@ -69,3 +69,12 @@ CREATE TABLE IF NOT EXISTS extension_history (
     executed_at_ledger INTEGER NOT NULL,
     executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS channel_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_key TEXT NOT NULL UNIQUE,
+    label TEXT,
+    network TEXT NOT NULL DEFAULT 'testnet',
+    funded BOOLEAN NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -7,6 +7,7 @@ import {
     Account,
     Operation,
     Keypair,
+    Asset,
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
 
@@ -363,6 +364,58 @@ export class StellarRpcClient {
             const diagnostics = (sendResult as any).errorResult
                 ?? (sendResult as any).diagnosticEventsXdr
                 ?? "";
+            return {
+                success: false,
+                txHash: sendResult.hash,
+                ledger: 0,
+                error: `Transaction send error: ${diagnostics || sendResult.status}`,
+            };
+        }
+
+        return this.pollTransaction(sendResult.hash);
+    }
+
+    /**
+     * Send XLM payments from a source keypair to multiple destination accounts.
+     * Builds a single transaction with one PaymentOp per destination.
+     */
+    async sendPayments(
+        destinations: { publicKey: string; amountXlm: string }[],
+        secretKey: string,
+    ): Promise<SubmitTransactionResult> {
+        if (destinations.length === 0) {
+            return { success: true, txHash: "", ledger: 0 };
+        }
+
+        const passphrase = await this.getNetworkPassphrase();
+        const keypair = Keypair.fromSecret(secretKey);
+        const publicKey = keypair.publicKey();
+
+        const accountResponse = await this.server.getAccount(publicKey);
+        const account = new Account(publicKey, accountResponse.sequenceNumber());
+
+        const builder = new TransactionBuilder(account, {
+            fee: String(100 * destinations.length),
+            networkPassphrase: passphrase,
+        });
+
+        for (const dest of destinations) {
+            builder.addOperation(
+                Operation.payment({
+                    destination: dest.publicKey,
+                    asset: Asset.native(),
+                    amount: dest.amountXlm,
+                }),
+            );
+        }
+
+        const tx = builder.setTimeout(30).build();
+        tx.sign(keypair);
+
+        const sendResult = await this.server.sendTransaction(tx);
+
+        if (sendResult.status === "ERROR") {
+            const diagnostics = (sendResult as any).errorResult ?? "";
             return {
                 success: false,
                 txHash: sendResult.hash,

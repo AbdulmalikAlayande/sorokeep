@@ -411,3 +411,38 @@ export function getAlertHistory(db: Database.Database, contractId: string, limit
         : db.prepare(sql).all(contractId)
     ) as AlertHistoryRecord[];
 }
+
+// ---------------------------- Database Access Functions For Schema: ChannelAccount ----------------------------
+
+export interface ChannelAccount {
+    id: number;
+    public_key: string;
+    label: string | null;
+    network: string;
+    funded: boolean;
+    created_at: string;
+}
+
+export function insertChannelAccount(db: Database.Database, account: {
+    public_key: string;
+    label?: string;
+    network: string;
+}): void {
+    db.prepare(`
+        INSERT INTO channel_accounts (public_key, label, network)
+        VALUES (@public_key, @label, @network)
+    `).run({
+        public_key: account.public_key,
+        label: account.label ?? null,
+        network: account.network,
+    });
+}
+
+export function getChannelAccounts(db: Database.Database, network: string): ChannelAccount[] {
+    return db.prepare("SELECT * FROM channel_accounts WHERE network = ? ORDER BY created_at ASC")
+        .all(network) as ChannelAccount[];
+}
+
+export function markChannelFunded(db: Database.Database, publicKey: string): void {
+    db.prepare("UPDATE channel_accounts SET funded = 1 WHERE public_key = ?").run(publicKey);
+}

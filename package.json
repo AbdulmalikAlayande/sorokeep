@@ -3,7 +3,12 @@
   "version": "0.1.2",
   "description": "The missing operations layer for deployed Soroban smart contracts",
   "main": "dist/index.js",
-  "files": ["dist", "README.md", "LICENSE", "CONTRIBUTING.md"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md"
+  ],
   "bin": {
     "sorokeep": "dist/index.js"
   },
@@ -41,6 +46,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@rolldown/binding-linux-x64-gnu": "^1.1.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.2",
     "@types/pino": "^7.0.4",

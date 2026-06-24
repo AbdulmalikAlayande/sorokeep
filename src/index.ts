@@ -8,6 +8,7 @@ import { registerAlertsCommand } from "./commands/alerts.js";
 import { registerGuardCommand } from "./commands/guard.js";
 import { registerCostsCommand } from "./commands/costs.js";
 import { registerRestoreCommand } from "./commands/restore.js";
+import { registerChannelsCommand } from "./commands/channels.js";
 
 initLogger({ mode: "cli" });
 
@@ -25,5 +26,6 @@ registerAlertsCommand(program);
 registerGuardCommand(program);
 registerCostsCommand(program);
 registerRestoreCommand(program);
+registerChannelsCommand(program);
 
 program.parse(process.argv);
