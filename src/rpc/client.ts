@@ -56,6 +56,32 @@ export interface SubmitTransactionResult {
     ledger: number;
     /** Error message if the transaction failed. */
     error?: string;
+    cpuInstructions?: number;
+    memoryBytes?: number;
+}
+
+export function extractResourceCosts(resultMetaXdrBase64: string): { cpuInstructions: number, memoryBytes: number } | null {
+    if (!resultMetaXdrBase64) return null;
+    try {
+        const meta = xdr.TransactionMeta.fromXDR(resultMetaXdrBase64, "base64");
+        const v3 = typeof meta.v3 === 'function' ? meta.v3() : undefined;
+        
+        if (v3) {
+            const sorobanMeta = typeof v3.sorobanMeta === 'function' ? v3.sorobanMeta() : undefined;
+            if (sorobanMeta) {
+                const anyMeta = sorobanMeta as any;
+                const cpuInstructions = typeof anyMeta.cpuInstructions === 'function' ? Number(anyMeta.cpuInstructions()) : undefined;
+                const memoryBytes = typeof anyMeta.memoryBytes === 'function' ? Number(anyMeta.memoryBytes()) : undefined;
+
+                if (cpuInstructions !== undefined && memoryBytes !== undefined) {
+                    return { cpuInstructions, memoryBytes };
+                }
+            }
+        }
+    } catch (error) {
+        logger.debug("Failed to decode resultMetaXdr for resource costs", { error: String(error) });
+    }
+    return null;
 }
 
 const NETWORK_PASSPHRASES: Record<string, string> = {
@@ -414,10 +440,29 @@ export class StellarRpcClient {
             const txResponse = await this.server.getTransaction(txHash);
 
             if (txResponse.status === "SUCCESS") {
+                const resultMetaXdr = (txResponse as any).resultMetaXdr;
+                let cpuInstructions: number | undefined = undefined;
+                let memoryBytes: number | undefined = undefined;
+
+                if (resultMetaXdr) {
+                    const costs = extractResourceCosts(resultMetaXdr);
+                    if (costs) {
+                        cpuInstructions = costs.cpuInstructions;
+                        memoryBytes = costs.memoryBytes;
+                        
+                        logger.info(
+                            "Extracted transaction resource costs successfully",
+                            { txHash, cpuInstructions, memoryBytes }
+                        );
+                    }
+                }
+
                 return {
                     success: true,
                     txHash,
                     ledger: (txResponse as any).ledger ?? txResponse.latestLedger,
+                    cpuInstructions,
+                    memoryBytes
                 };
             }
 
