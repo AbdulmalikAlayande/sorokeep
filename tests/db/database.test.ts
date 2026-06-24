@@ -16,7 +16,8 @@ import {
     hasUnresolvedAlert, 
     recordAlertFired,
     resolveAlerts,
-    recordExtension,
+    recordExtension, 
+    getAverageResourceUsage,
     getExtensionHistory
 } from "../../src/db/repositories";
 import { getDatabaseForTesting } from "../../src/db/database";
@@ -537,5 +538,59 @@ describe("Extension History Operations", () => {
         const recent = getExtensionHistory(db, contractID, 5);
         expect(recent).toHaveLength(1);
         expect(recent[0]!.tx_hash).toBe("new_hash");
+    });
+
+    it("should calculate average resource usage", () => {
+        const record = {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash123",
+            cost_xlm: 0.5,
+            executed_at_ledger: 12345,
+        };
+
+        // Record a few extensions with resource usage
+        recordExtension(db, { ...record, tx_hash: "h1", cpu_insns: 1000, mem_bytes: 100 });
+        recordExtension(db, { ...record, tx_hash: "h2", cpu_insns: 1200, mem_bytes: 110 });
+        recordExtension(db, { ...record, tx_hash: "h3", cpu_insns: 800, mem_bytes: 90 });
+        
+        // Record one without usage to ensure it's ignored
+        recordExtension(db, { ...record, tx_hash: "h4", cpu_insns: null, mem_bytes: null });
+
+        const avg = getAverageResourceUsage(db, contractID);
+        expect(avg).toBeDefined();
+        expect(avg!.avg_cpu_insns).toBeCloseTo((1000 + 1200 + 800) / 3); // 1000
+        expect(avg!.avg_mem_bytes).toBeCloseTo((100 + 110 + 90) / 3); // 100
+        expect(avg!.count).toBe(3);
+    });
+
+    it("should return null for average usage if no history exists", () => {
+        const avg = getAverageResourceUsage(db, contractID);
+        expect(avg).toBeNull();
+    });
+
+    it("should respect the limit for average calculation", () => {
+        const record = {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash123",
+            cost_xlm: 0.5,
+            executed_at_ledger: 12345,
+        };
+
+        // Oldest
+        recordExtension(db, { ...record, tx_hash: "h1", cpu_insns: 100, mem_bytes: 10 });
+        // Newer
+        recordExtension(db, { ...record, tx_hash: "h2", cpu_insns: 1000, mem_bytes: 100 });
+        recordExtension(db, { ...record, tx_hash: "h3", cpu_insns: 1200, mem_bytes: 110 });
+
+        const avg = getAverageResourceUsage(db, contractID, 2); // Only last 2
+        expect(avg).toBeDefined();
+        expect(avg!.avg_cpu_insns).toBeCloseTo((1000 + 1200) / 2); // 1100
+        expect(avg!.avg_mem_bytes).toBeCloseTo((100 + 110) / 2); // 105
     });
 });

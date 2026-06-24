@@ -139,6 +139,10 @@ async function executeCycle(
                     `errors: ${extensions.errors.length}`,
                 );
             }
+            for (const ext of extensions.extensions) {
+                if (ext.isAnomaly) {
+                    logger.warn(`Cost anomaly detected for contract ${ext.contractId}: ${ext.anomalyDetails}`);
+            }
         } catch (extensionErr: unknown) {
             logger.error("runAutoExtensions threw unexpectedly", extensionErr);
         }

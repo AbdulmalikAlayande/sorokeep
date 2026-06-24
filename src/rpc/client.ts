@@ -54,6 +54,10 @@ export interface SubmitTransactionResult {
     txHash: string;
     /** Ledger the transaction was included in. */
     ledger: number;
+    /** CPU instructions consumed by the transaction. */
+    cpuInsns?: number;
+    /** Memory bytes consumed by the transaction. */
+    memBytes?: number;
     /** Error message if the transaction failed. */
     error?: string;
 }
@@ -285,6 +289,8 @@ export class StellarRpcClient {
                 txHash: "",
                 ledger: 0,
                 error: sim.error ?? "Simulation failed",
+                cpuInsns: 0,
+                memBytes: 0,
             };
         }
 
@@ -303,6 +309,8 @@ export class StellarRpcClient {
                 success: false,
                 txHash: sendResult.hash,
                 ledger: 0,
+                cpuInsns: Number((sim as rpc.Api.SimulateTransactionSuccessResponse).cost.cpuInsns),
+                memBytes: Number((sim as rpc.Api.SimulateTransactionSuccessResponse).cost.memBytes),
                 error: `Transaction send error: ${diagnostics || sendResult.status}`,
             };
         }
@@ -310,7 +318,12 @@ export class StellarRpcClient {
         // Poll for completion
         const txResult = await this.pollTransaction(sendResult.hash);
         return txResult;
-    }
+    } 
+
+    // Helper to add resource usage to a successful transaction result
+    private addResourcesToSuccess(result: SubmitTransactionResult, sim: rpc.Api.SimulateTransactionSuccessResponse): SubmitTransactionResult {
+        return { ...result, cpuInsns: Number(sim.cost.cpuInsns), memBytes: Number(sim.cost.memBytes) };
+    } 
 
     /**
      * Build, sign, and submit a RestoreFootprintOp transaction to restore archived entries.
@@ -350,6 +363,8 @@ export class StellarRpcClient {
                 success: false,
                 txHash: "",
                 ledger: 0,
+                cpuInsns: 0,
+                memBytes: 0,
                 error: sim.error ?? "Simulation failed",
             };
         }
@@ -367,12 +382,15 @@ export class StellarRpcClient {
                 success: false,
                 txHash: sendResult.hash,
                 ledger: 0,
+                cpuInsns: Number((sim as rpc.Api.SimulateTransactionSuccessResponse).cost.cpuInsns),
+                memBytes: Number((sim as rpc.Api.SimulateTransactionSuccessResponse).cost.memBytes),
                 error: `Transaction send error: ${diagnostics || sendResult.status}`,
             };
         }
 
-        return this.pollTransaction(sendResult.hash);
-    }
+        const txResult = await this.pollTransaction(sendResult.hash);
+        return txResult.success ? this.addResourcesToSuccess(txResult, sim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
+    } 
 
     // ─── Private helpers ─────────────────────────────────────────────────────
 
