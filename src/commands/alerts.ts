@@ -62,11 +62,17 @@ export function registerAlertsCommand(program: Command): void {
                     process.exit(1);
                 }
                 target = options.channel;
+            } else if (options.type === "telegram") {
+                if (!options.channel) {
+                    console.error(chalk.red("Error: --channel is required when --type is telegram (use chat ID or @channelname)."));
+                    process.exit(1);
+                }
+                target = options.channel;
             } else if (options.type === "email") {
-                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook', 'slack', or 'telegram'."));
                 process.exit(1);
             } else {
-                console.error(chalk.red("Error: --type must be 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: --type must be 'webhook', 'slack', or 'telegram'."));
                 process.exit(1);
             }
 
