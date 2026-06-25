@@ -6,13 +6,20 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
     
     strategy:
       matrix:
-        node-version: [20.x, 22.x]
+        node-version: [22.x]
 
     steps:
     - name: Checkout Repository
@@ -25,7 +32,7 @@ jobs:
         cache: 'npm'
 
     - name: Clean Install Dependencies
-      run: npm ci
+      run: npm install
 
     - name: Lint Code
       run: npm run lint
