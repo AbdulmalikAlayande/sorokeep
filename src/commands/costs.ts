@@ -2,6 +2,8 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { getDatabase } from "../db/database.js";
 import { getContract, getExtensionHistory, getEntriesForContract } from "../db/repositories.js";
+import { calculateFeeAdjustedProjection } from "../core/costs.js";
+import { StellarRpcClient } from "../rpc/client.js";
 import { formatContractID, formatTimeToCloseLedger } from "../utils/formatting.js";
 import { getLogger } from "../logging/index.js";
 
@@ -75,9 +77,21 @@ export function registerCostsCommand(program: Command): void {
 
                 // Cost projection
                 if (days && history.length > 0) {
-                    const projectedCost = (totalCostXlm / (days)) * 30;
+                    let feeStats;
+                    try {
+                        feeStats = await new StellarRpcClient(contract.network).getFeeStats();
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        logger.warn("Unable to fetch live fee stats; using historical projection", { error: message });
+                    }
+
+                    const projection = calculateFeeAdjustedProjection(totalCostXlm, days, feeStats);
                     console.log(`\n  ${chalk.bold("Projection")}`);
-                    console.log(`  Estimated 30-day cost: ~${chalk.cyan(projectedCost.toFixed(7))} XLM`);
+                    console.log(`  Estimated 30-day cost: ~${chalk.cyan(projection.adjustedProjectedCostXlm.toFixed(7))} XLM`);
+                    if (feeStats) {
+                        console.log(`  Live base fee:     ${chalk.cyan(feeStats.baseFeeStroops.toString())} stroops`);
+                        console.log(`  Surge multiplier:  ${chalk.cyan(`${projection.surgePricingMultiplier.toFixed(2)}x`)}`);
+                    }
                 }
 
                 // Recent history
