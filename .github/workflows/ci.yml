@@ -32,7 +32,9 @@ jobs:
         cache: 'npm'
 
     - name: Clean Install Dependencies
-      run: npm install
+      run: |
+        rm -rf node_modules package-lock.json
+        npm install
 
     - name: Lint Code
       run: npm run lint
