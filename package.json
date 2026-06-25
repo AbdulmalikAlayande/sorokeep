@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc && node -e \"const fs = require('fs'); fs.copyFileSync('src/db/schema.sql', 'dist/db/schema.sql'); const srcDir = 'src/db/migrations'; const destDir = 'dist/db/migrations'; if (fs.existsSync(srcDir)) { fs.mkdirSync(destDir, { recursive: true }); fs.readdirSync(srcDir).forEach(f => fs.copyFileSync(srcDir + '/' + f, destDir + '/' + f)); }\"",
     "dev": "tsx src/index.ts",
-    "lint": "eslint src/",
+    "lint": "eslint src/ tests/",
     "test": "vitest run",
     "test:watch": "vitest"
   },
