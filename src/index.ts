@@ -7,6 +7,7 @@ import { registerDaemonCommand } from "./commands/daemon.js";
 import { registerAlertsCommand } from "./commands/alerts.js";
 import { registerGuardCommand } from "./commands/guard.js";
 import { registerCostsCommand } from "./commands/costs.js";
+import { registerResourcesCommand } from "./commands/resources.js";
 import { registerRestoreCommand } from "./commands/restore.js";
 
 initLogger({ mode: "cli" });
@@ -24,6 +25,7 @@ registerDaemonCommand(program);
 registerAlertsCommand(program);
 registerGuardCommand(program);
 registerCostsCommand(program);
+registerResourcesCommand(program);
 registerRestoreCommand(program);
 
 program.parse(process.argv);
