@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc && node -e \"require('fs').copyFileSync('src/db/schema.sql', 'dist/db/schema.sql')\"",
     "dev": "tsx src/index.ts",
-    "lint": "eslint src/",
+    "lint": "eslint src/ tests/",
     "test": "vitest run",
     "test:watch": "vitest",
     "docker:build": "docker build -t sorokeep .",
