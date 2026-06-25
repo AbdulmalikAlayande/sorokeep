@@ -283,3 +283,5 @@
 {"level":30,"time":1782369704703,"pid":17998,"hostname":"codespaces-d2f649","component":"AlertDispatcher","component":"AlertDispatcher","msg":"Alert delivered — id: 1, channel: webhook, contract: CA"}
 {"level":30,"time":1782369704705,"pid":17998,"hostname":"codespaces-d2f649","component":"AlertDispatcher","component":"AlertDispatcher","msg":"Alert delivered — id: 1, channel: webhook, contract: CA"}
 {"level":30,"time":1782369704707,"pid":17998,"hostname":"codespaces-d2f649","component":"AlertDispatcher","component":"AlertDispatcher","msg":"Alert delivered — id: 1, channel: webhook, contract: CA"}
+{"level":50,"time":1782399320572,"pid":9267,"hostname":"codespaces-d2f649","component":"ResourcesCommand","component":"ResourcesCommand","meta":[{"error":"process.exit called"}],"msg":"Resources command failed { error: 'process.exit called' }"}
+{"level":50,"time":1782399320574,"pid":9267,"hostname":"codespaces-d2f649","component":"ResourcesCommand","component":"ResourcesCommand","meta":[{"error":"process.exit called"}],"msg":"Resources command failed { error: 'process.exit called' }"}

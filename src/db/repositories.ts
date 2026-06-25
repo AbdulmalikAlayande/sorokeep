@@ -480,6 +480,40 @@ export function recordResourceAlertFired(db: Database.Database, alert: {
     return result.lastInsertRowid as number;
 }
 
+export interface ResourceUsageRecord {
+    resourceType: "cpu" | "memory";
+    usage: number;
+    usagePercent: number;
+    firedAt: string;
+}
+
+export function getResourceUsageHistory(db: Database.Database, contractId: string, days?: number): ResourceUsageRecord[] {
+    if (days) {
+        return db.prepare(`
+            SELECT raf.resource_type AS resourceType,
+                   raf.usage,
+                   raf.usage_percent AS usagePercent,
+                   raf.fired_at AS firedAt
+            FROM resource_alerts_fired raf
+            JOIN resource_alert_configs rac ON rac.id = raf.resource_alert_config_id
+            WHERE rac.contract_id = ?
+              AND raf.fired_at >= datetime('now', ?)
+            ORDER BY raf.fired_at DESC
+        `).all(contractId, `-${days} days`) as ResourceUsageRecord[];
+    }
+
+    return db.prepare(`
+        SELECT raf.resource_type AS resourceType,
+               raf.usage,
+               raf.usage_percent AS usagePercent,
+               raf.fired_at AS firedAt
+        FROM resource_alerts_fired raf
+        JOIN resource_alert_configs rac ON rac.id = raf.resource_alert_config_id
+        WHERE rac.contract_id = ?
+        ORDER BY raf.fired_at DESC
+    `).all(contractId) as ResourceUsageRecord[];
+}
+
 export function getUndeliveredResourceAlerts(db: Database.Database, network: string): Array<{
     alertFiredId: number;
     resourceAlertConfigId: number;
@@ -517,7 +551,7 @@ export function getUndeliveredResourceAlerts(db: Database.Database, network: str
         JOIN contracts c ON c.id = rac.contract_id
         WHERE c.network = ? AND raf.delivered = 0 AND raf.retry_count < ?
         ORDER BY raf.fired_at DESC
-    `, [network, MAX_RETRY_COUNT]).all() as Array<{
+    `).all(network, MAX_RETRY_COUNT) as Array<{
         alertFiredId: number;
         resourceAlertConfigId: number;
         contractId: string;
