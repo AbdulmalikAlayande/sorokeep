@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import Database from "better-sqlite3";
+import { Migrator } from "./migrator.js";
 const SOROKEEP_DIR = path.join(os.homedir(), '.sorokeep');
 
 const DB_PATH = path.join(SOROKEEP_DIR, 'sorokeep.db');
@@ -35,6 +36,11 @@ export function getDatabase(customPath?: string): Database.Database {
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA);
 
+    // Run schema migrations
+    const migrationsDir = path.join(__dirname, 'migrations');
+    const migrator = new Migrator(db, migrationsDir);
+    migrator.run();
+
     // ── Live migrations ───────────────────────────────────────────────────────
     // ALTER TABLE is idempotent-safe here: we catch the "duplicate column" error
     // that SQLite throws when the column already exists. This handles existing
@@ -63,5 +69,11 @@ export function getDatabaseForTesting(): Database.Database {
     const db = new Database(':memory:');
     db.pragma('foreign_keys = ON');
     db.exec(SCHEMA);
+
+    // Run schema migrations
+    const migrationsDir = path.join(__dirname, 'migrations');
+    const migrator = new Migrator(db, migrationsDir);
+    migrator.run();
+
     return db;
 }

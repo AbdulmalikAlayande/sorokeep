@@ -69,3 +69,31 @@ CREATE TABLE IF NOT EXISTS extension_history (
     executed_at_ledger INTEGER NOT NULL,
     executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS resource_alert_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook')),
+    channel_target TEXT NOT NULL,
+    cpu_limit INTEGER NOT NULL,
+    mem_limit INTEGER NOT NULL,
+    webhook_secret TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id, channel_type, channel_target)
+);
+
+CREATE TABLE IF NOT EXISTS resource_alerts_fired (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_alert_config_id INTEGER NOT NULL REFERENCES resource_alert_configs(id) ON DELETE CASCADE,
+    resource_type TEXT NOT NULL CHECK(resource_type IN ('cpu', 'memory')),
+    usage INTEGER NOT NULL,
+    "limit" INTEGER NOT NULL,
+    usage_percent INTEGER NOT NULL,
+    fired_at_ledger INTEGER,
+    fired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    delivered_at TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    resolved BOOLEAN NOT NULL DEFAULT 0,
+    resolved_at TEXT
+);
