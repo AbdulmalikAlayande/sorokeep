@@ -101,6 +101,35 @@ describe("alerts command", () => {
         });
     });
 
+    it("adds a pagerduty alert configuration", () => {
+        const program = new Command();
+        registerAlertsCommand(program);
+
+        program.parse([
+            "node",
+            "sorokeep",
+            "alerts",
+            "add",
+            "--contract",
+            contractID,
+            "--type",
+            "pagerduty",
+            "--routing-key",
+            "pagerduty-key-123",
+            "--threshold",
+            "3000",
+        ]);
+
+        const configs = getAlertConfigsForContract(mockDb, contractID);
+        expect(configs).toHaveLength(1);
+        expect(configs[0]).toMatchObject({
+            contract_id: contractID,
+            channel_type: "pagerduty",
+            channel_target: "pagerduty-key-123",
+            threshold_ledgers: 3000,
+        });
+    });
+
     it("rejects email alert type as not yet implemented", () => {
         const program = new Command();
         registerAlertsCommand(program);

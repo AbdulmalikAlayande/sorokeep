@@ -1,8 +1,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { getDatabase } from "../db/database.js";
-import { getContract, getContractCostSummary, getExtensionHistory, getEntriesForContract } from "../db/repositories.js";
-import { formatContractID, formatTimeToCloseLedger } from "../utils/formatting.js";
+import { getExtensionCosts, calculateFeeAdjustedProjection } from "../core/costs.js";
+import { StellarRpcClient } from "../rpc/client.js";
+import { formatContractID } from "../utils/formatting.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "CostsCommand" });
@@ -16,69 +17,92 @@ export function registerCostsCommand(program: Command): void {
         .action(async (contractId: string, options) => {
             try {
                 const db = getDatabase();
-                const contract = getContract(db, contractId);
-
-                if (!contract) {
-                    console.error(chalk.red(`Contract ${formatContractID(contractId)} not found. Run 'sorokeep watch' first.`));
-                    process.exit(1);
-                }
-
                 const days = options.all ? undefined : parseInt(options.period, 10);
+
                 if (days !== undefined && (!Number.isInteger(days) || days <= 0)) {
                     console.error(chalk.red("--period must be a positive integer number of days"));
                     process.exit(1);
                 }
-                const history = getExtensionHistory(db, contractId, days);
-                const summary = getContractCostSummary(db, contractId, days);
 
-                const displayName = contract.name ?? formatContractID(contractId);
-                const periodLabel = days ? `last ${days} days` : "all time";
+                const result = getExtensionCosts(
+                    db,
+                    contractId,
+                    options.all ? { all: true } : { period: days },
+                );
 
-                console.log(`\n${chalk.bold("Extension History")} — ${chalk.cyan(displayName)} (${periodLabel})`);
-                console.log(`  Network: ${chalk.cyan(contract.network)}`);
+                if (!result.success) {
+                    if (result.error === "contract_not_found") {
+                        console.error(
+                            chalk.red(
+                                `Contract ${formatContractID(contractId)} not found. Run 'sorokeep watch' first.`,
+                            ),
+                        );
+                    } else {
+                        console.error(chalk.red("--period must be a positive integer number of days"));
+                    }
+                    process.exit(1);
+                }
 
-                if (history.length === 0 && summary.total_extensions === 0) {
-                    console.log(chalk.dim("\n  No extensions recorded for this period."));
+                const { data } = result;
+                const displayName = data.contract.name ?? formatContractID(contractId);
+
+                console.log(
+                    `\n${chalk.bold("Extension History")} — ${chalk.cyan(displayName)} (${data.period.label})`,
+                );
+                console.log(`  Network: ${chalk.cyan(data.contract.network)}`);
+
+                if (data.message) {
+                    console.log(chalk.dim(`\n  ${data.message}`));
                     return;
                 }
 
-                const totalCostXlm = summary.total_cost_xlm;
-                const byType = summary.byType;
-
-                // Summary
                 console.log(`\n  ${chalk.bold("Summary")}`);
-                console.log(`  Total extensions: ${chalk.cyan(summary.total_extensions.toString())}`);
-                console.log(`  Total cost:       ${chalk.cyan(totalCostXlm.toFixed(7))} XLM`);
+                console.log(`  Total extensions: ${chalk.cyan(data.summary.totalExtensions.toString())}`);
+                console.log(`  Total cost:       ${chalk.cyan(data.summary.totalCostXlm.toFixed(7))} XLM`);
 
-                // Breakdown by entry type
                 console.log(`\n  ${chalk.bold("By Entry Type")}`);
-                for (const [type, data] of Object.entries(byType)) {
-                    console.log(`    ${type}: ${data.count} extensions (${data.cost_xlm.toFixed(7)} XLM)`);
+                for (const [type, entryData] of Object.entries(data.byEntryType)) {
+                    console.log(
+                        `    ${type}: ${entryData.count} extensions (${entryData.costXlm.toFixed(7)} XLM)`,
+                    );
                 }
 
-                // Cost projection
-                if (days && summary.total_extensions > 0) {
-                    const projectedCost = (totalCostXlm / (days)) * 30;
+                if (days && data.summary.totalExtensions > 0) {
+                    let feeStats;
+                    try {
+                        feeStats = await new StellarRpcClient(data.contract.network).getFeeStats();
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        logger.warn("Unable to fetch live fee stats; using historical projection", { error: message });
+                    }
+
+                    const projection = calculateFeeAdjustedProjection(data.summary.totalCostXlm, days, feeStats);
                     console.log(`\n  ${chalk.bold("Projection")}`);
-                    console.log(`  Estimated 30-day cost: ~${chalk.cyan(projectedCost.toFixed(7))} XLM`);
+                    console.log(`  Estimated 30-day cost: ~${chalk.cyan(projection.adjustedProjectedCostXlm.toFixed(7))} XLM`);
+                    if (feeStats) {
+                        console.log(`  Live base fee:     ${chalk.cyan(feeStats.baseFeeStroops.toString())} stroops`);
+                        console.log(`  Surge multiplier:  ${chalk.cyan(`${projection.surgePricingMultiplier.toFixed(2)}x`)}`);
+                    }
                 }
 
-                // Recent history
                 console.log(`\n  ${chalk.bold("Recent Extensions")}`);
-                const recent = options.all ? history : history.slice(0, 10);
+                const recent = options.all ? data.recentExtensions : data.recentExtensions.slice(0, 10);
                 for (const record of recent) {
-                    const entry = entryMap.get(record.contract_entry_id);
-                    const label = entry?.label ?? entry?.entry_type ?? "unknown";
-                    const cost = record.cost_xlm !== null ? `${record.cost_xlm.toFixed(7)} XLM` : "N/A";
-                    const oldTTL = formatTimeToCloseLedger(record.old_ttl_ledgers);
-                    const newTTL = formatTimeToCloseLedger(record.new_ttl_ledgers);
+                    const cost =
+                        record.costXlm !== null ? `${record.costXlm.toFixed(7)} XLM` : "N/A";
 
-                    console.log(`    ${chalk.dim(record.executed_at)} ${label}: ${oldTTL} → ${newTTL} (${cost})`);
-                    console.log(`      ${chalk.dim(`tx: ${record.tx_hash.slice(0, 16)}...`)}`);
+                    console.log(
+                        `    ${chalk.dim(record.executedAt)} ${record.entryLabel}: ${record.oldTtlFormatted} → ${record.newTtlFormatted} (${cost})`,
+                    );
+                    console.log(`      ${chalk.dim(`tx: ${record.txHash.slice(0, 16)}...`)}`);
                 }
 
-                if (!options.all && history.length > 10) {
-                    console.log(chalk.dim(`\n    ... and ${history.length - 10} more. Use --all to see everything.`));
+                if (!options.all && data.recentExtensions.length > 10) {
+                    console.log(
+                        chalk.dim(
+                            `\n    ... and ${data.recentExtensions.length - 10} more. Use --all to see everything.`,
+                        ),
+                    );
                 }
             } catch (error: unknown) {
                 const msg = error instanceof Error ? error.message : String(error);

@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
+import { runIntrospectionRescan } from "../core/introspection.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
 import { runAutoExtensions } from "../core/extension.js";
 import { aggregateDailyCostSnapshots } from "../db/repositories.js";
@@ -129,7 +130,21 @@ async function executeCycle(
             logger.error("deliverPendingAlerts threw unexpectedly", deliveryErr);
         }
 
-        // Step 3: run auto-extensions for contracts with enabled policies.
+        // Step 3: Run introspection re-scan
+        try {
+            const introspection = await runIntrospectionRescan(db, network, rpcUrl);
+            if (introspection.contractsChecked > 0) {
+                logger.info(
+                    `Introspection — checked: ${introspection.contractsChecked}, ` +
+                    `new keys: ${introspection.newEntriesFound}, ` +
+                    `errors: ${introspection.errors.length}`,
+                );
+            }
+        } catch (introErr: unknown) {
+            logger.error("runIntrospectionRescan threw unexpectedly", introErr);
+        }
+
+        // Step 4: run auto-extensions for contracts with enabled policies.
         try {
             const extensions = await runAutoExtensions(db, network, rpcUrl);
             if (extensions.contractsChecked > 0) {
@@ -139,6 +154,11 @@ async function executeCycle(
                     `entries: ${extensions.entriesExtended}, ` +
                     `errors: ${extensions.errors.length}`,
                 );
+            }
+            for (const ext of extensions.extensions) {
+                if (ext.isAnomaly) {
+                    logger.warn(`Cost anomaly detected for contract ${ext.contractId}: ${ext.anomalyDetails}`);
+                }
             }
         } catch (extensionErr: unknown) {
             logger.error("runAutoExtensions threw unexpectedly", extensionErr);

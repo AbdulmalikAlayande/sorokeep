@@ -18,9 +18,14 @@ import {
     resolveAlerts,
     recordExtension,
     getExtensionHistory,
+    getAverageResourceUsage,
     aggregateDailyCostSnapshots,
     getCostDailySnapshots,
     getContractCostSummary,
+    insertStateSnapshot,
+    getLatestSnapshot,
+    insertStateChange,
+    getStateChanges
 } from "../../src/db/repositories";
 import { getDatabaseForTesting } from "../../src/db/database";
 
@@ -582,5 +587,154 @@ describe("Extension History Operations", () => {
         expect(summary.byType.wasm.count).toBe(0);
         expect(summary.byType.persistent.count).toBe(0);
         expect(summary.byType.temporary.count).toBe(0);
+    });
+    it("should calculate average resource usage", () => {
+        const record = {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash123",
+            cost_xlm: 0.5,
+            executed_at_ledger: 12345,
+        };
+
+        // Record a few extensions with resource usage
+        recordExtension(db, { ...record, tx_hash: "h1", cpu_insns: 1000, mem_bytes: 100 });
+        recordExtension(db, { ...record, tx_hash: "h2", cpu_insns: 1200, mem_bytes: 110 });
+        recordExtension(db, { ...record, tx_hash: "h3", cpu_insns: 800, mem_bytes: 90 });
+        
+        // Record one without usage to ensure it's ignored
+        recordExtension(db, { ...record, tx_hash: "h4", cpu_insns: null, mem_bytes: null });
+
+        const avg = getAverageResourceUsage(db, contractID);
+        expect(avg).toBeDefined();
+        expect(avg!.avg_cpu_insns).toBeCloseTo((1000 + 1200 + 800) / 3); // 1000
+        expect(avg!.avg_mem_bytes).toBeCloseTo((100 + 110 + 90) / 3); // 100
+        expect(avg!.count).toBe(3);
+    });
+
+    it("should return null for average usage if no history exists", () => {
+        const avg = getAverageResourceUsage(db, contractID);
+        expect(avg).toBeNull();
+    });
+
+    it("should respect the limit for average calculation", () => {
+        const record = {
+            contract_id: contractID,
+            contract_entry_id: entryID,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash123",
+            cost_xlm: 0.5,
+            executed_at_ledger: 12345,
+        };
+
+        // Oldest
+        recordExtension(db, { ...record, tx_hash: "h1", cpu_insns: 100, mem_bytes: 10 });
+        // Newer
+        recordExtension(db, { ...record, tx_hash: "h2", cpu_insns: 1000, mem_bytes: 100 });
+        recordExtension(db, { ...record, tx_hash: "h3", cpu_insns: 1200, mem_bytes: 110 });
+
+        const avg = getAverageResourceUsage(db, contractID, 2); // Only last 2
+        expect(avg).toBeDefined();
+        expect(avg!.avg_cpu_insns).toBeCloseTo((1000 + 1200) / 2); // 1100
+        expect(avg!.avg_mem_bytes).toBeCloseTo((100 + 110) / 2); // 105
+    });
+});
+
+// --------------------- Database Operations Tests For State Snapshots & Changes ---------------------
+describe("State Snapshots & Changes Operations", () => {
+    const contractID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+    let entryID: number;
+
+    beforeEach(() => {
+        insertContract(db, {
+            id: contractID,
+            name: "sample-contract",
+            network: "testnet",
+        });
+        upsertEntry(db, {
+            contract_id: contractID,
+            entry_key_xdr: "XDR_KEY_1",
+            entry_type: "instance",
+            live_until_ledger: 1000,
+        });
+        const entries = getEntriesForContract(db, contractID);
+        entryID = entries[0]!.id;
+    });
+
+    it("inserts a state snapshot and retrieves the latest", () => {
+        const snapshot1 = {
+            contract_entry_id: entryID,
+            snapshot_ledger: 100,
+            value_hash: "hash1",
+            value_xdr: "xdr1"
+        };
+        const id1 = insertStateSnapshot(db, snapshot1);
+        expect(id1).toBeGreaterThan(0);
+
+        const snapshot2 = {
+            contract_entry_id: entryID,
+            snapshot_ledger: 200,
+            value_hash: "hash2",
+            value_xdr: "xdr2"
+        };
+        insertStateSnapshot(db, snapshot2);
+
+        const latest = getLatestSnapshot(db, entryID);
+        expect(latest).toBeDefined();
+        expect(latest!.snapshot_ledger).toBe(200);
+        expect(latest!.value_hash).toBe("hash2");
+        expect(latest!.value_xdr).toBe("xdr2");
+    });
+
+    it("inserts a state change and retrieves changes", () => {
+        const snapshotId1 = insertStateSnapshot(db, {
+            contract_entry_id: entryID,
+            snapshot_ledger: 100,
+            value_hash: "hash1",
+            value_xdr: "xdr1"
+        });
+        
+        const snapshotId2 = insertStateSnapshot(db, {
+            contract_entry_id: entryID,
+            snapshot_ledger: 200,
+            value_hash: "hash2",
+            value_xdr: "xdr2"
+        });
+
+        const change1 = {
+            contract_entry_id: entryID,
+            old_snapshot_id: snapshotId1,
+            new_snapshot_id: snapshotId2,
+            diff_type: "updated",
+            diff_json: "{}",
+            detected_at_ledger: 200
+        };
+        insertStateChange(db, change1);
+
+        const changes = getStateChanges(db, entryID);
+        expect(changes).toHaveLength(1);
+        expect(changes[0]!.diff_type).toBe("updated");
+        expect(changes[0]!.detected_at_ledger).toBe(200);
+    });
+
+    it("cascades delete when an entry is removed", () => {
+        insertStateSnapshot(db, {
+            contract_entry_id: entryID,
+            snapshot_ledger: 100,
+            value_hash: "hash1",
+            value_xdr: "xdr1"
+        });
+
+        // The snapshot exists
+        expect(getLatestSnapshot(db, entryID)).toBeDefined();
+
+        // Delete contract cascades to entries which cascades to snapshots
+        deleteContract(db, contractID);
+
+        // Fetching latest snapshot should now return undefined
+        expect(getLatestSnapshot(db, entryID)).toBeUndefined();
     });
 });
