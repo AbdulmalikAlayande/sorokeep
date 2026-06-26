@@ -3,6 +3,9 @@ import { getUndeliveredAlerts, markAlertDelivered, incrementRetryCount, MAX_RETR
 import { buildAlertEvent, type AlertEvent } from "./types.js";
 import { sendWebhookAlert } from "./webhook.js";
 import { sendSlackAlert } from "./slack.js";
+import { sendPagerDutyAlert } from "./pagerduty.js";
+import { sendDiscordAlert } from "./discord.js";
+import { sendTelegramAlert } from "./telegram.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "AlertDispatcher" });
@@ -24,14 +27,6 @@ export interface DeliveryResult {
 
 // ─── Core implementation ──────────────────────────────────────────────────────
 
-/**
- * Read all undelivered alerts for the given network from the database and
- * dispatch them to the appropriate channel handler.
- *
- * Per-alert errors are caught and collected — this function never throws.
- * Failed deliveries have their retry_count incremented. Alerts exceeding
- * MAX_RETRY_COUNT are excluded from future queries automatically.
- */
 export async function deliverPendingAlerts(
     db: Database.Database,
     network: string,
@@ -53,7 +48,6 @@ export async function deliverPendingAlerts(
     for (const alert of pending) {
         result.attempted++;
 
-        // Build the AlertEvent payload from the joined row.
         const event = buildAlertEvent({
             type: "threshold_crossed",
             contractId: alert.contractId,
@@ -107,10 +101,6 @@ export async function deliverPendingAlerts(
     return result;
 }
 
-/**
- * Deliver a single AlertEvent directly (used for resolution notifications).
- * Returns true on success, false on failure.
- */
 export async function deliverSingleAlert(
     channelType: string,
     channelTarget: string,
@@ -141,6 +131,15 @@ async function route(
             break;
         case "slack":
             await sendSlackAlert(channelTarget, event);
+            break;
+        case "pagerduty":
+            await sendPagerDutyAlert(channelTarget, event);
+            break;
+        case "discord":
+            await sendDiscordAlert(channelTarget, event);
+            break;
+        case "telegram":
+            await sendTelegramAlert(channelTarget, event);
             break;
         default:
             throw new Error(`Unknown channel type: ${channelType}`);

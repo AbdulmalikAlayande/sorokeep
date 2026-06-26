@@ -3,16 +3,23 @@
   "version": "0.1.2",
   "description": "The missing operations layer for deployed Soroban smart contracts",
   "main": "dist/index.js",
-  "files": ["dist", "README.md", "LICENSE", "CONTRIBUTING.md"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md"
+  ],
   "bin": {
     "sorokeep": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc && node -e \"require('fs').copyFileSync('src/db/schema.sql', 'dist/db/schema.sql')\"",
+    "build": "tsc && node -e \"const fs = require('fs'); fs.copyFileSync('src/db/schema.sql', 'dist/db/schema.sql'); const srcDir = 'src/db/migrations'; const destDir = 'dist/db/migrations'; if (fs.existsSync(srcDir)) { fs.mkdirSync(destDir, { recursive: true }); fs.readdirSync(srcDir).forEach(f => fs.copyFileSync(srcDir + '/' + f, destDir + '/' + f)); }\"",
     "dev": "tsx src/index.ts",
-    "lint": "eslint src/",
+    "lint": "eslint src/ tests/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "docker:build": "docker build -t sorokeep .",
+    "docker:run": "docker run --rm -v sorokeep-data:/home/sorokeep/.sorokeep sorokeep"
   },
   "keywords": [
     "stellar",
@@ -30,6 +37,7 @@
     "url": "https://github.com/AbdulmalikAlayande/sorokeep.git"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@stellar/stellar-sdk": "^15.1.0",
     "better-sqlite3": "^12.9.0",
     "chalk": "^5.6.2",
