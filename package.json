@@ -10,14 +10,18 @@
     "CONTRIBUTING.md"
   ],
   "bin": {
-    "sorokeep": "dist/index.js"
+    "sorokeep": "dist/index.js",
+    "sorokeep-mcp": "dist/mcp/index.js"
   },
   "scripts": {
-    "build": "tsc && node -e \"require('fs').copyFileSync('src/db/schema.sql', 'dist/db/schema.sql')\"",
+    "build": "tsc && node -e \"const fs = require('fs'); fs.copyFileSync('src/db/schema.sql', 'dist/db/schema.sql'); const srcDir = 'src/db/migrations'; const destDir = 'dist/db/migrations'; if (fs.existsSync(srcDir)) { fs.mkdirSync(destDir, { recursive: true }); fs.readdirSync(srcDir).forEach(f => fs.copyFileSync(srcDir + '/' + f, destDir + '/' + f)); }\"",
     "dev": "tsx src/index.ts",
+    "mcp": "tsx src/mcp/index.ts",
     "lint": "eslint src/ tests/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "docker:build": "docker build -t sorokeep .",
+    "docker:run": "docker run --rm -v sorokeep-data:/home/sorokeep/.sorokeep sorokeep"
   },
   "keywords": [
     "stellar",
@@ -36,7 +40,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@rolldown/binding-linux-x64-gnu": "^1.1.3",
+
     "@stellar/stellar-sdk": "^15.1.0",
     "better-sqlite3": "^12.9.0",
     "chalk": "^5.6.2",
@@ -44,7 +48,8 @@
     "ora": "^9.4.0",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",
-    "yaml": "^2.8.4"
+    "yaml": "^2.8.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

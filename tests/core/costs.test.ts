@@ -1,13 +1,13 @@
 import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it } from "vitest";
-import { getDatabaseForTesting } from "../../src/db/database";
+import { getDatabaseForTesting } from "../../src/db/database.js";
 import {
     insertContract,
     upsertEntry,
     getEntriesForContract,
     recordExtension,
-} from "../../src/db/repositories";
-import { getExtensionCosts } from "../../src/core/costs";
+} from "../../src/db/repositories.js";
+import { getExtensionCosts, calculateFeeAdjustedProjection } from "../../src/core/costs.js";
 
 const CONTRACT_ID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
 
@@ -175,5 +175,37 @@ describe("getExtensionCosts", () => {
         if (!result.success) return;
 
         expect(result.data.period).toEqual({ days: 30, label: "last 30 days" });
+    });
+});
+
+describe("cost projection helpers", () => {
+    it("scales 30-day projections when live base fees rise above the default base fee", () => {
+        const projection = calculateFeeAdjustedProjection(1, 10, {
+            baseFeeStroops: 200,
+            surgePricingMultiplier: 1,
+        });
+
+        expect(projection.baseProjectedCostXlm).toBe(3);
+        expect(projection.adjustedProjectedCostXlm).toBe(6);
+        expect(projection.baseFeeMultiplier).toBe(2);
+    });
+
+    it("incorporates surge pricing when fee stats show network pressure", () => {
+        const projection = calculateFeeAdjustedProjection(1, 30, {
+            baseFeeStroops: 100,
+            surgePricingMultiplier: 1.5,
+        });
+
+        expect(projection.adjustedProjectedCostXlm).toBe(1.5);
+        expect(projection.surgePricingMultiplier).toBe(1.5);
+    });
+
+    it("falls back to the historical projection when live fee stats are unavailable", () => {
+        const projection = calculateFeeAdjustedProjection(2, 20);
+
+        expect(projection.baseProjectedCostXlm).toBe(3);
+        expect(projection.adjustedProjectedCostXlm).toBe(3);
+        expect(projection.baseFeeMultiplier).toBe(1);
+        expect(projection.surgePricingMultiplier).toBe(1);
     });
 });
