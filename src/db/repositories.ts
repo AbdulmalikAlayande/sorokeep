@@ -450,7 +450,7 @@ export function getLatestSnapshot(db: Database.Database, contractEntryId: number
     return db.prepare(`
         SELECT * FROM state_snapshots
         WHERE contract_entry_id = ?
-        ORDER BY snapshot_ledger DESC
+        ORDER BY snapshot_ledger DESC, id DESC
         LIMIT 1
     `).get(contractEntryId) as StateSnapshot | undefined;
 }
