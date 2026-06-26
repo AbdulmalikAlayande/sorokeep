@@ -5,10 +5,13 @@ import {
     getContract,
     getEntriesForContract,
     getExtensionPolicy,
+    getChannelAccounts,
     recordExtension,
     upsertEntry,
     updateLastCheckedLedger,
+    getAverageResourceUsage,
 } from "../db/repositories.js";
+import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "Extension" });
@@ -30,6 +33,14 @@ export interface ExtensionResult {
     error?: string;
     /** Estimated fee in stroops (from simulation). */
     estimatedFee?: number;
+    /** CPU instructions consumed by the transaction. */
+    cpuInsns?: number;
+    /** Memory bytes consumed by the transaction. */
+    memBytes?: number;
+    /** Whether resource usage spiked. */
+    isAnomaly?: boolean;
+    /** Details about the anomaly if present. */
+    anomalyDetails?: string;
 }
 
 export interface AutoExtensionResult {
@@ -47,6 +58,8 @@ export interface AutoExtensionResult {
         txHash: string;
         entriesExtended: number;
         ledger: number;
+        isAnomaly?: boolean;
+        anomalyDetails?: string;
     }>;
 }
 
@@ -145,6 +158,24 @@ export async function extendEntries(
         };
     }
 
+    let isAnomaly = false;
+    let anomalyDetails: string | undefined = undefined;
+
+    if (txResult.cpuInsns && txResult.memBytes) {
+        const baseline = getAverageResourceUsage(db, contractId, 10);
+        if (baseline && baseline.avg_cpu_insns > 0 && baseline.avg_mem_bytes > 0) {
+            const cpuRatio = txResult.cpuInsns / baseline.avg_cpu_insns;
+            const memRatio = txResult.memBytes / baseline.avg_mem_bytes;
+            if (cpuRatio >= 2.0 || memRatio >= 2.0) {
+                isAnomaly = true;
+                const details = [];
+                if (cpuRatio >= 2.0) details.push(`CPU usage is ${cpuRatio.toFixed(2)}x baseline`);
+                if (memRatio >= 2.0) details.push(`Memory usage is ${memRatio.toFixed(2)}x baseline`);
+                anomalyDetails = `Resource anomaly detected: ` + details.join(", ");
+            }
+        }
+    }
+
     // Fetch fresh TTLs after extension to update DB and record history
     const freshTTLs = await client.getEntryTTLs(entryKeyXdrs);
     const entries = getEntriesForContract(db, contractId);
@@ -167,6 +198,9 @@ export async function extendEntries(
                 old_ttl_ledgers: Math.max(0, oldTTL),
                 new_ttl_ledgers: freshEntry.remainingTTL,
                 tx_hash: txResult.txHash,
+                cpu_insns: txResult.cpuInsns,
+                mem_bytes: txResult.memBytes,
+                is_anomaly: isAnomaly,
                 executed_at_ledger: freshTTLs.latestLedger,
             });
 
@@ -196,6 +230,10 @@ export async function extendEntries(
         entriesExtended: entryKeyXdrs.length,
         txHash: txResult.txHash,
         ledger: txResult.ledger,
+        cpuInsns: txResult.cpuInsns,
+        memBytes: txResult.memBytes,
+        isAnomaly,
+        anomalyDetails,
     };
 }
 
@@ -224,41 +262,61 @@ export async function runAutoExtensions(
 
     const contracts = getAllContracts(db).filter(c => c.network === network);
 
-    // Fetch latest ledger once for the entire run, not per-contract
-    let latestLedger: number | undefined;
-    if (contracts.some(c => {
+    const eligibleContracts = contracts.filter(c => {
         const p = getExtensionPolicy(db, c.id);
         return p && p.enabled;
-    })) {
-        const client = new StellarRpcClient(network, rpcUrl);
-        latestLedger = await client.getCurrentLedger();
-    }
+    });
 
-    for (const contract of contracts) {
-        const policy = getExtensionPolicy(db, contract.id);
-        if (!policy || !policy.enabled) continue;
+    if (eligibleContracts.length === 0) return result;
 
-        result.contractsChecked++;
+    const client = new StellarRpcClient(network, rpcUrl);
+    const latestLedger = await client.getCurrentLedger();
+
+    // Build pool from registered channel accounts; fall back to per-policy keypairs
+    const channelAccounts = getChannelAccounts(db, network);
+    const pool = channelAccounts.length > 0
+        ? new ChannelAccountPool(db, network)
+        : null;
+
+    result.contractsChecked = eligibleContracts.length;
+
+    // Process all eligible contracts concurrently, one channel account slot per task.
+    await Promise.all(eligibleContracts.map(async contract => {
+        const policy = getExtensionPolicy(db, contract.id)!;
 
         try {
             const entries = getEntriesForContract(db, contract.id);
 
-            // Find entries that need extension (exclude already-expired entries)
             const needsExtension = entries.filter(e => {
                 if (!e.live_until_ledger) return false;
-                const remaining = e.live_until_ledger - latestLedger!;
+                const remaining = e.live_until_ledger - latestLedger;
                 return remaining > 0 && remaining < policy.extend_when_below_ledgers;
             });
 
-            if (needsExtension.length === 0) continue;
+            if (needsExtension.length === 0) return;
 
-            // Resolve the secret key from the policy's keypair_source
-            const secretKey = resolveSecretKey(policy.keypair_source);
+            // Resolve secret key: prefer channel pool, fall back to policy keypair
+            let secretKey: string | null = null;
+            let slot: import("./channels.js").ChannelSlot | null = null;
+
+            if (pool) {
+                slot = await pool.acquire();
+                secretKey = resolveSecretKey(slot.keypairSource);
+                if (!secretKey) {
+                    pool.release(slot.publicKey);
+                    slot = null;
+                }
+            }
+
+            if (!secretKey) {
+                secretKey = resolveSecretKey(policy.keypair_source);
+            }
+
             if (!secretKey) {
                 result.errors.push(
-                    `Contract ${contract.id}: Cannot resolve keypair from source "${policy.keypair_source}"`,
+                    `Contract ${contract.id}: Cannot resolve keypair from source "${pool ? "channel pool" : policy.keypair_source}"`,
                 );
-                continue;
+                return;
             }
 
             const entryKeys = needsExtension.map(e => e.entry_key_xdr);
@@ -268,35 +326,41 @@ export async function runAutoExtensions(
                 `(below ${policy.extend_when_below_ledgers}, target ${policy.target_ttl_ledgers})`,
             );
 
-            const extResult = await extendEntries(
-                db,
-                contract.id,
-                entryKeys,
-                policy.target_ttl_ledgers,
-                secretKey,
-                rpcUrl,
-            );
-
-            if (extResult.success) {
-                result.contractsExtended++;
-                result.entriesExtended += extResult.entriesExtended;
-                result.extensions.push({
-                    contractId: contract.id,
-                    txHash: extResult.txHash!,
-                    entriesExtended: extResult.entriesExtended,
-                    ledger: extResult.ledger!,
-                });
-            } else {
-                result.errors.push(
-                    `Contract ${contract.id}: Extension failed — ${extResult.error}`,
+            try {
+                const extResult = await extendEntries(
+                    db,
+                    contract.id,
+                    entryKeys,
+                    policy.target_ttl_ledgers,
+                    secretKey,
+                    rpcUrl,
                 );
+
+                if (extResult.success) {
+                    result.contractsExtended++;
+                    result.entriesExtended += extResult.entriesExtended;
+                    result.extensions.push({
+                        contractId: contract.id,
+                        txHash: extResult.txHash!,
+                        entriesExtended: extResult.entriesExtended,
+                        ledger: extResult.ledger!,
+                        isAnomaly: extResult.isAnomaly,
+                        anomalyDetails: extResult.anomalyDetails,
+                    });
+                } else {
+                    result.errors.push(
+                        `Contract ${contract.id}: Extension failed — ${extResult.error}`,
+                    );
+                }
+            } finally {
+                if (slot && pool) pool.release(slot.publicKey);
             }
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             result.errors.push(`Contract ${contract.id}: ${message}`);
             logger.error(`Auto-extension error for ${contract.id}: ${message}`, err);
         }
-    }
+    }));
 
     return result;
 }

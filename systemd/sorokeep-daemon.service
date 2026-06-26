@@ -1,0 +1,23 @@
+[Unit]
+Description=Sorokeep — Soroban contract TTL monitoring daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sorokeep daemon --network mainnet
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sorokeep
+KillMode=mixed
+
+# Run as a dedicated non-root user when possible
+# User=sorokeep
+# Group=sorokeep
+
+# Source environment variables (e.g. STELLAR_SECRET_KEY)
+# EnvironmentFile=/etc/sorokeep/env
+
+[Install]
+WantedBy=multi-user.target
