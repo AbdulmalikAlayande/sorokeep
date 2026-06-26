@@ -8,6 +8,8 @@ export interface Contract {
     tags: string | null;
     registered_at: Date;
     last_checked_ledger?: number | null;
+    /** ISO-8601 timestamp of the last successful introspection (instance/WASM key discovery). NULL if never introspected. */
+    last_introspected_at?: string | null;
 }
 
 export interface ContractEntry {
@@ -18,7 +20,7 @@ export interface ContractEntry {
     label: string | null;
     live_until_ledger: number;
     last_modified_ledger: number;
-    discovery_source: "deterministic" | "manual" | "instance_scan" | "footprint";
+    discovery_source: "deterministic" | "manual" | "instance_scan" | "footprint" | "introspection";
     first_seen_at: Date;
     last_checked_at: Date | null;
 }
@@ -63,8 +65,31 @@ export interface ExtensionRecord {
     new_ttl_ledgers: number;
     tx_hash: string;
     cost_xlm: number | null;
+    cpu_insns: number | null;
+    mem_bytes: number | null;
+    is_anomaly: number;
     executed_at_ledger: number;
     executed_at: string;
+}
+
+export interface StateSnapshot {
+    id: number;
+    contract_entry_id: number;
+    snapshot_ledger: number;
+    value_hash: string;
+    value_xdr: string;
+    created_at: string;
+}
+
+export interface StateChange {
+    id: number;
+    contract_entry_id: number;
+    old_snapshot_id: number | null;
+    new_snapshot_id: number | null;
+    diff_type: "created" | "updated" | "deleted";
+    diff_json: string;
+    detected_at_ledger: number;
+    created_at: string;
 }
 
 // ---------------------------- Database Access Functions For Schema: Contract ----------------------------
@@ -100,6 +125,48 @@ export function updateLastCheckedLedger(db: Database.Database, contractId: strin
 
 export function deleteContract(db: Database.Database, id: string): void {
   db.prepare("DELETE FROM contracts WHERE id = ?").run(id);
+}
+
+/**
+ * Record that a successful contract introspection (instance/WASM key discovery)
+ * was performed at the given timestamp. Accepts an ISO-8601 string so callers
+ * can control the clock in tests.
+ */
+export function updateLastIntrospectedAt(
+  db: Database.Database,
+  contractId: string,
+  isoTimestamp: string,
+): void {
+  db.prepare(
+    "UPDATE contracts SET last_introspected_at = ? WHERE id = ?",
+  ).run(isoTimestamp, contractId);
+}
+
+/**
+ * Return true when the introspection cache for the given contract is still
+ * valid — i.e. `last_introspected_at` is not NULL and the timestamp is
+ * strictly less than `maxAgeMs` milliseconds ago.
+ *
+ * The default max-age is 24 hours (86 400 000 ms).
+ * The boundary is *exclusive on the valid side*: exactly 24 h ago is expired.
+ */
+export function isIntrospectionCacheValid(
+  db: Database.Database,
+  contractId: string,
+  maxAgeMs = 24 * 60 * 60 * 1_000,
+): boolean {
+  const row = db
+    .prepare(
+      "SELECT last_introspected_at FROM contracts WHERE id = ?",
+    )
+    .get(contractId) as { last_introspected_at: string | null } | undefined;
+
+  if (!row || row.last_introspected_at === null) return false;
+
+  const introspectedAt = new Date(row.last_introspected_at).getTime();
+  const ageMs = Date.now() - introspectedAt;
+  // strictly less than → at exactly 24 h the cache is expired
+  return ageMs < maxAgeMs;
 }
 
 // ---------------------------- Database Access Functions For Schema: ContractEntry ----------------------------
@@ -240,15 +307,21 @@ export function recordExtension(db: Database.Database, record: {
   old_ttl_ledgers: number;
   new_ttl_ledgers: number;
   tx_hash: string;
-  cost_xlm?: number;
+  cost_xlm?: number | null;
+  cpu_insns?: number | null;
+  mem_bytes?: number | null;
+  is_anomaly?: boolean;
   executed_at_ledger: number;
 }): void {
   db.prepare(`
-    INSERT INTO extension_history (contract_id, contract_entry_id, old_ttl_ledgers, new_ttl_ledgers, tx_hash, cost_xlm, executed_at_ledger)
-    VALUES (@contract_id, @contract_entry_id, @old_ttl_ledgers, @new_ttl_ledgers, @tx_hash, @cost_xlm, @executed_at_ledger)
+    INSERT INTO extension_history (contract_id, contract_entry_id, old_ttl_ledgers, new_ttl_ledgers, tx_hash, cost_xlm, cpu_insns, mem_bytes, is_anomaly, executed_at_ledger)
+    VALUES (@contract_id, @contract_entry_id, @old_ttl_ledgers, @new_ttl_ledgers, @tx_hash, @cost_xlm, @cpu_insns, @mem_bytes, @is_anomaly, @executed_at_ledger)
   `).run({
     ...record,
     cost_xlm: record.cost_xlm ?? null,
+    cpu_insns: record.cpu_insns ?? null,
+    mem_bytes: record.mem_bytes ?? null,
+    is_anomaly: record.is_anomaly ? 1 : 0,
   });
 }
 
@@ -263,6 +336,28 @@ export function getExtensionHistory(db: Database.Database, contractId: string, d
   return db.prepare(`
     SELECT * FROM extension_history WHERE contract_id = ? ORDER BY executed_at DESC
   `).all(contractId) as ExtensionRecord[];
+}
+
+export function getAverageResourceUsage(db: Database.Database, contractId: string, limit?: number): { avg_cpu_insns: number, avg_mem_bytes: number, count: number } | null {
+  const queryLimit = limit ? `LIMIT ${limit}` : "";
+  const rows = db.prepare(`
+    SELECT cpu_insns, mem_bytes 
+    FROM extension_history 
+    WHERE contract_id = ? AND cpu_insns IS NOT NULL AND mem_bytes IS NOT NULL
+    ORDER BY executed_at DESC, id DESC
+    ${queryLimit}
+  `).all(contractId) as { cpu_insns: number, mem_bytes: number }[];
+
+  if (rows.length === 0) return null;
+
+  const sumCpu = rows.reduce((acc, row) => acc + row.cpu_insns, 0);
+  const sumMem = rows.reduce((acc, row) => acc + row.mem_bytes, 0);
+
+  return {
+    avg_cpu_insns: sumCpu / rows.length,
+    avg_mem_bytes: sumMem / rows.length,
+    count: rows.length
+  };
 }
 
 // ---------------------------- Alert Delivery ----------------------------
@@ -410,6 +505,125 @@ export function getAlertHistory(db: Database.Database, contractId: string, limit
         ? db.prepare(sql).all(contractId, limit)
         : db.prepare(sql).all(contractId)
     ) as AlertHistoryRecord[];
+}
+
+// ---------------------------- Channel Accounts ----------------------------
+
+export interface ChannelAccount {
+    id: number;
+    public_key: string;
+    label: string | null;
+    network: string;
+    keypair_source: string | null;
+    funded: boolean;
+    balance_xlm: number | null;
+    balance_checked_at: string | null;
+    created_at: string;
+}
+
+export function insertChannelAccount(db: Database.Database, account: {
+    public_key: string;
+    label?: string;
+    network: string;
+}): void {
+    db.prepare(`
+        INSERT INTO channel_accounts (public_key, label, network)
+        VALUES (@public_key, @label, @network)
+    `).run({
+        public_key: account.public_key,
+        label: account.label ?? null,
+        network: account.network,
+    });
+}
+
+export function upsertChannelAccount(db: Database.Database, account: {
+    public_key: string;
+    keypair_source: string;
+    network: string;
+}): void {
+    db.prepare(`
+        INSERT INTO channel_accounts (public_key, keypair_source, network)
+        VALUES (@public_key, @keypair_source, @network)
+        ON CONFLICT(public_key) DO UPDATE SET
+            keypair_source = @keypair_source,
+            network = @network
+    `).run(account);
+}
+
+export function getChannelAccounts(db: Database.Database, network: string): ChannelAccount[] {
+    return db.prepare("SELECT * FROM channel_accounts WHERE network = ? ORDER BY id ASC")
+        .all(network) as ChannelAccount[];
+}
+
+export function updateChannelBalance(db: Database.Database, publicKey: string, balanceXlm: number): void {
+    db.prepare(`
+        UPDATE channel_accounts
+        SET balance_xlm = ?, balance_checked_at = datetime('now')
+        WHERE public_key = ?
+    `).run(balanceXlm, publicKey);
+}
+
+export function deleteChannelAccount(db: Database.Database, publicKey: string): void {
+    db.prepare("DELETE FROM channel_accounts WHERE public_key = ?").run(publicKey);
+}
+
+export function markChannelFunded(db: Database.Database, publicKey: string): void {
+    db.prepare("UPDATE channel_accounts SET funded = 1 WHERE public_key = ?").run(publicKey);
+}
+
+// ---------------------------- Database Access Functions For Schema: StateSnapshot ----------------------------
+export function insertStateSnapshot(db: Database.Database, snapshot: {
+    contract_entry_id: number;
+    snapshot_ledger: number;
+    value_hash: string;
+    value_xdr: string;
+}): number {
+    const result = db.prepare(`
+        INSERT INTO state_snapshots (contract_entry_id, snapshot_ledger, value_hash, value_xdr)
+        VALUES (@contract_entry_id, @snapshot_ledger, @value_hash, @value_xdr)
+    `).run(snapshot);
+    return result.lastInsertRowid as number;
+}
+
+export function getLatestSnapshot(db: Database.Database, contractEntryId: number): StateSnapshot | undefined {
+    return db.prepare(`
+        SELECT * FROM state_snapshots
+        WHERE contract_entry_id = ?
+        ORDER BY snapshot_ledger DESC, id DESC
+        LIMIT 1
+    `).get(contractEntryId) as StateSnapshot | undefined;
+}
+
+// ---------------------------- Database Access Functions For Schema: StateChange ----------------------------
+export function insertStateChange(db: Database.Database, change: {
+    contract_entry_id: number;
+    old_snapshot_id?: number;
+    new_snapshot_id?: number;
+    diff_type: StateChange["diff_type"];
+    diff_json: string;
+    detected_at_ledger: number;
+}): number {
+    const result = db.prepare(`
+        INSERT INTO state_changes (contract_entry_id, old_snapshot_id, new_snapshot_id, diff_type, diff_json, detected_at_ledger)
+        VALUES (@contract_entry_id, @old_snapshot_id, @new_snapshot_id, @diff_type, @diff_json, @detected_at_ledger)
+    `).run({
+        ...change,
+        old_snapshot_id: change.old_snapshot_id ?? null,
+        new_snapshot_id: change.new_snapshot_id ?? null,
+    });
+    return result.lastInsertRowid as number;
+}
+
+export function getStateChanges(db: Database.Database, contractEntryId: number, limit?: number): StateChange[] {
+    let sql = "SELECT * FROM state_changes WHERE contract_entry_id = ? ORDER BY detected_at_ledger DESC, id DESC";
+    if (limit !== undefined) {
+        if (limit < 0) {
+            throw new Error("limit must be non-negative");
+        }
+        sql += " LIMIT ?";
+        return db.prepare(sql).all(contractEntryId, limit) as StateChange[];
+    }
+    return db.prepare(sql).all(contractEntryId) as StateChange[];
 }
 
 // ─── Resource Alert Configuration & History ──────────────────────────────────

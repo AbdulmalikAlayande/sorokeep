@@ -50,6 +50,18 @@ export function getDatabase(customPath?: string): Database.Database {
         `ALTER TABLE alerts_fired ADD COLUMN delivered_at TEXT`,
         `ALTER TABLE alerts_fired ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
         `ALTER TABLE alert_configs ADD COLUMN webhook_secret TEXT`,
+        `CREATE TABLE IF NOT EXISTS channel_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            public_key TEXT NOT NULL UNIQUE,
+            keypair_source TEXT,
+            label TEXT,
+            network TEXT NOT NULL DEFAULT 'testnet',
+            funded BOOLEAN NOT NULL DEFAULT 0,
+            balance_xlm REAL,
+            balance_checked_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `ALTER TABLE contracts ADD COLUMN last_introspected_at DATETIME`,
     ];
     for (const sql of migrations) {
         try { db.exec(sql); } catch { /* column already exists — no-op */ }

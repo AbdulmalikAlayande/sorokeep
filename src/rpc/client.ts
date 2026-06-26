@@ -8,6 +8,7 @@ import {
     Operation,
     Keypair,
     SorobanDataBuilder,
+    Asset,
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
 
@@ -62,6 +63,10 @@ export interface SubmitTransactionResult {
     txHash: string;
     /** Ledger the transaction was included in. */
     ledger: number;
+    /** CPU instructions consumed by the transaction. */
+    cpuInsns?: number;
+    /** Memory bytes consumed by the transaction. */
+    memBytes?: number;
     /** Error message if the transaction failed. */
     error?: string;
 }
@@ -231,6 +236,46 @@ export class StellarRpcClient {
     }
 
     /**
+     * Call the 'get_monitored_keys' view method on a contract.
+     * Returns an array of XDR strings for the keys.
+     */
+    async getMonitoredKeys(contractId: string): Promise<string[]> {
+        const passphrase = await this.getNetworkPassphrase();
+        const contract = new Contract(contractId);
+        const op = contract.call("get_monitored_keys");
+
+        // Use a dummy account for simulation
+        const account = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0");
+
+        const tx = new TransactionBuilder(account, {
+            fee: "100",
+            networkPassphrase: passphrase,
+        })
+            .addOperation(op)
+            .setTimeout(30)
+            .build();
+
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            throw new Error(`Simulation failed: ${sim.error ?? "unknown error"}`);
+        }
+
+        const successSim = sim as rpc.Api.SimulateTransactionSuccessResponse;
+        
+        // Parse the result
+        const scv = successSim.result!.retval;
+        
+        // Assuming the return type is a Vec<ScVal> (or similar) of keys
+        if (scv.switch().name === "scvVec") {
+            const vec = scv.vec()!;
+            return vec.map(val => val.toXDR("base64"));
+        }
+        
+        return [];
+    }
+
+    /**
      * Simulate an ExtendFootprintTTLOp to estimate fees before submitting.
      */
     async simulateExtension(
@@ -325,6 +370,8 @@ export class StellarRpcClient {
                 txHash: "",
                 ledger: 0,
                 error: sim.error ?? "Simulation failed",
+                cpuInsns: 0,
+                memBytes: 0,
             };
         }
 
@@ -343,6 +390,8 @@ export class StellarRpcClient {
                 success: false,
                 txHash: sendResult.hash,
                 ledger: 0,
+                cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0),
+                memBytes: Number((sim as any).cost?.memBytes ?? 0),
                 error: `Transaction send error: ${diagnostics || sendResult.status}`,
             };
         }
@@ -350,7 +399,12 @@ export class StellarRpcClient {
         // Poll for completion
         const txResult = await this.pollTransaction(sendResult.hash);
         return txResult;
-    }
+    } 
+
+    // Helper to add resource usage to a successful transaction result
+    private addResourcesToSuccess(result: SubmitTransactionResult, sim: rpc.Api.SimulateTransactionSuccessResponse): SubmitTransactionResult {
+        return { ...result, cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0), memBytes: Number((sim as any).cost?.memBytes ?? 0) };
+    } 
 
     /**
      * Build, sign, and submit a RestoreFootprintOp transaction to restore archived entries.
@@ -390,6 +444,8 @@ export class StellarRpcClient {
                 success: false,
                 txHash: "",
                 ledger: 0,
+                cpuInsns: 0,
+                memBytes: 0,
                 error: sim.error ?? "Simulation failed",
             };
         }
@@ -403,6 +459,61 @@ export class StellarRpcClient {
             const diagnostics = (sendResult as any).errorResult
                 ?? (sendResult as any).diagnosticEventsXdr
                 ?? "";
+            return {
+                success: false,
+                txHash: sendResult.hash,
+                ledger: 0,
+                cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0),
+                memBytes: Number((sim as any).cost?.memBytes ?? 0),
+                error: `Transaction send error: ${diagnostics || sendResult.status}`,
+            };
+        }
+
+        const txResult = await this.pollTransaction(sendResult.hash);
+        return txResult.success ? this.addResourcesToSuccess(txResult, sim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
+    } 
+
+    /**
+     * Send XLM payments from a source keypair to multiple destination accounts.
+     * Builds a single transaction with one PaymentOp per destination.
+     */
+    async sendPayments(
+        destinations: { publicKey: string; amountXlm: string }[],
+        secretKey: string,
+    ): Promise<SubmitTransactionResult> {
+        if (destinations.length === 0) {
+            return { success: true, txHash: "", ledger: 0 };
+        }
+
+        const passphrase = await this.getNetworkPassphrase();
+        const keypair = Keypair.fromSecret(secretKey);
+        const publicKey = keypair.publicKey();
+
+        const accountResponse = await this.server.getAccount(publicKey);
+        const account = new Account(publicKey, accountResponse.sequenceNumber());
+
+        const builder = new TransactionBuilder(account, {
+            fee: String(100 * destinations.length),
+            networkPassphrase: passphrase,
+        });
+
+        for (const dest of destinations) {
+            builder.addOperation(
+                Operation.payment({
+                    destination: dest.publicKey,
+                    asset: Asset.native(),
+                    amount: dest.amountXlm,
+                }),
+            );
+        }
+
+        const tx = builder.setTimeout(30).build();
+        tx.sign(keypair);
+
+        const sendResult = await this.server.sendTransaction(tx);
+
+        if (sendResult.status === "ERROR") {
+            const diagnostics = (sendResult as any).errorResult ?? "";
             return {
                 success: false,
                 txHash: sendResult.hash,
