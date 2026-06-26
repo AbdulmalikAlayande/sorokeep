@@ -19,7 +19,9 @@
     "mcp": "tsx src/mcp/index.ts",
     "lint": "eslint src/ tests/",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "docker:build": "docker build -t sorokeep .",
+    "docker:run": "docker run --rm -v sorokeep-data:/home/sorokeep/.sorokeep sorokeep"
   },
   "keywords": [
     "stellar",
