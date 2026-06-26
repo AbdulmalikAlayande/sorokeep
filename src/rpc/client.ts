@@ -47,6 +47,13 @@ export interface SimulateExtensionResult {
     error?: string;
 }
 
+export interface FeeStatsResult {
+    latestLedger?: number;
+    baseFeeStroops: number;
+    surgeFeeStroops: number;
+    surgePricingMultiplier: number;
+}
+
 export interface SubmitTransactionResult {
     /** Whether the transaction succeeded. */
     success: boolean;
@@ -97,6 +104,34 @@ export class StellarRpcClient {
         }
 
         throw new Error("Unable to determine latest ledger from RPC server");
+    }
+
+    async getFeeStats(): Promise<FeeStatsResult> {
+        const serverAny = this.server as any;
+        if (typeof serverAny.getFeeStats !== "function") {
+            throw new Error("RPC server does not support getFeeStats");
+        }
+
+        const response = await serverAny.getFeeStats();
+        const inclusionFee = response.sorobanInclusionFee ?? response.inclusionFee;
+        if (!inclusionFee) {
+            throw new Error("RPC fee stats response did not include inclusion fee data");
+        }
+
+        const baseFeeStroops = parseFeeStat(inclusionFee.p50 ?? inclusionFee.mode ?? inclusionFee.min);
+        const surgeFeeStroops = parseFeeStat(
+            inclusionFee.p95 ?? inclusionFee.p90 ?? inclusionFee.max ?? baseFeeStroops,
+        );
+        const surgePricingMultiplier = baseFeeStroops > 0
+            ? Math.max(surgeFeeStroops / baseFeeStroops, 1)
+            : 1;
+
+        return {
+            latestLedger: typeof response.latestLedger === "number" ? response.latestLedger : undefined,
+            baseFeeStroops,
+            surgeFeeStroops,
+            surgePricingMultiplier,
+        };
     }
 
     async getContractInstanceEntry(contractId: string): Promise<ContractInstanceResult | null> {
@@ -441,4 +476,11 @@ export class StellarRpcClient {
             error: `Transaction polling timed out after ${maxAttempts} attempts`,
         };
     }
+}
+
+function parseFeeStat(value: string | number | bigint | undefined): number {
+    if (value === undefined) return 0;
+    if (typeof value === "bigint") return Number(value);
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
 }
