@@ -49,7 +49,7 @@ function seedContract(
             entry_key_xdr: entry.keyXdr,
             entry_type: entry.type,
             live_until_ledger: entry.liveUntil,
-            discovery_source: "e2e-test",
+            discovery_source: "deterministic",
         });
     }
 }
@@ -264,10 +264,11 @@ describe("e2e: monitoring daemon execution cycles", () => {
             const onCycle = vi.fn();
             await startDaemon(db, "testnet", { intervalMs: 5000, onCycle });
 
-            // First cycle should complete with error
+            // First cycle should complete with error in result
             expect(onCycle).toHaveBeenCalledTimes(1);
-            expect(onCycle.mock.calls[0][0]).toBeNull();
-            expect(onCycle.mock.calls[0][1]).toBeInstanceOf(Error);
+            expect(onCycle.mock.calls[0][0]).not.toBeNull();
+            expect(onCycle.mock.calls[0][0].errors).toHaveLength(1);
+            expect(onCycle.mock.calls[0][1]).toBeUndefined();
 
             // Advance to trigger second cycle
             await vi.advanceTimersByTimeAsync(5000);
@@ -288,14 +289,18 @@ describe("e2e: monitoring daemon execution cycles", () => {
             ]);
 
             // First contract succeeds, second fails
-            mockGetEntryTTLs
-                .mockResolvedValueOnce({
-                    latestLedger: LEDGER,
-                    entries: [
-                        { entryKeyXdr: "ok-key", liveUntilLedgerSeq: LEDGER + 48000, lastModifiedLedgerSeq: LEDGER - 10, remainingTTL: 48000 },
-                    ],
-                })
-                .mockRejectedValueOnce(new Error("Connection refused"));
+            mockGetEntryTTLs.mockImplementation(async (keys) => {
+                const keyArray = keys as string[];
+                if (keyArray.includes("ok-key")) {
+                    return {
+                        latestLedger: LEDGER,
+                        entries: [
+                            { entryKeyXdr: "ok-key", liveUntilLedgerSeq: LEDGER + 48000, lastModifiedLedgerSeq: LEDGER - 10, remainingTTL: 48000 },
+                        ],
+                    };
+                }
+                throw new Error("Connection refused");
+            });
 
             const onCycle = vi.fn();
             await startDaemon(db, "testnet", { intervalMs: 5000, onCycle });
@@ -347,9 +352,18 @@ describe("e2e: monitoring daemon execution cycles", () => {
             const onCycle = vi.fn();
             await startDaemon(db, "testnet", { intervalMs: 5000, onCycle });
 
-            // Trigger two more cycles
+            // Trigger two more cycles and wait for them to complete
+            const cycle2Promise = new Promise(resolve => {
+                onCycle.mockImplementationOnce(resolve);
+            });
             await vi.advanceTimersByTimeAsync(5000);
+            await cycle2Promise;
+
+            const cycle3Promise = new Promise(resolve => {
+                onCycle.mockImplementationOnce(resolve);
+            });
             await vi.advanceTimersByTimeAsync(5000);
+            await cycle3Promise;
 
             expect(onCycle).toHaveBeenCalledTimes(3);
 
