@@ -7,6 +7,9 @@ import {
     getAlertConfigsForContract,
     getAlertConfigById,
     deleteAlertConfig,
+    insertResourceAlertConfig,
+    getResourceAlertConfigsForContract,
+    deleteResourceAlertConfig,
     getContract,
     getAlertHistory,
 } from "../db/repositories.js";
@@ -22,19 +25,30 @@ export function registerAlertsCommand(program: Command): void {
     // ── alerts add ─────────────────────────────────────────────────────
     alerts
         .command("add")
-        .description("Add a new alert configuration")
+        .description("Add a new alert configuration (TTL-based or resource-based)")
         .requiredOption("--contract <id>", "The contract ID to alert on")
-        .requiredOption("--type <type>", "The notification channel type ('webhook' or 'slack')")
-        .option("--url <url>", "Webhook URL (required if --type is webhook)")
+        .requiredOption("--type <type>", "The notification channel type ('webhook', 'slack', 'discord', 'telegram', or 'pagerduty')")
+        .option("--url <url>", "Webhook URL (required if --type is webhook or discord)")
         .option("--channel <channel>", "Slack channel (required if --type is slack)")
+        .option("--routing-key <key>", "PagerDuty integration key (required if --type is pagerduty)")
         .option("--secret <secret>", "HMAC secret for webhook signing (auto-generated if omitted for webhooks)")
-        .requiredOption("--threshold <ledgers>", "Threshold in number of ledgers", (val) => parseInt(val, 10))
+        .option("--threshold <ledgers>", "Threshold in number of ledgers (for TTL-based alerts)", (val) => parseInt(val, 10))
+        .option("--cpu-limit <instructions>", "CPU instruction limit for resource alerts (default: 100,000,000)", (val) => parseInt(val, 10))
+        .option("--mem-limit <bytes>", "Memory byte limit for resource alerts (default: 50,000,000)", (val) => parseInt(val, 10))
         .action((options) => {
             const contractId = options.contract;
-            const threshold = options.threshold;
 
-            if (isNaN(threshold) || threshold <= 0) {
-                console.error(chalk.red("Error: --threshold must be a positive integer."));
+            // Determine if this is a TTL alert or resource alert
+            const isTTLAlert = typeof options.threshold !== "undefined";
+            const isResourceAlert = typeof options.cpuLimit !== "undefined" || typeof options.memLimit !== "undefined";
+
+            if (!isTTLAlert && !isResourceAlert) {
+                console.error(chalk.red("Error: You must specify either --threshold (for TTL alerts) or --cpu-limit/--mem-limit (for resource alerts)."));
+                process.exit(1);
+            }
+
+            if (isTTLAlert && isResourceAlert) {
+                console.error(chalk.red("Error: Cannot mix TTL alerts and resource alerts. Use either --threshold or --cpu-limit/--mem-limit, not both."));
                 process.exit(1);
             }
 
@@ -62,31 +76,86 @@ export function registerAlertsCommand(program: Command): void {
                     process.exit(1);
                 }
                 target = options.channel;
+            } else if (options.type === "pagerduty") {
+                if (!options.routingKey) {
+                    console.error(chalk.red("Error: --routing-key is required when --type is pagerduty."));
+                    process.exit(1);
+                }
+                target = options.routingKey;
+            } else if (options.type === "discord") {
+                if (!options.url) {
+                    console.error(chalk.red("Error: --url is required when --type is discord. Paste the full Discord webhook URL."));
+                    process.exit(1);
+                }
+                target = options.url;
+            } else if (options.type === "telegram") {
+                if (!options.channel) {
+                    console.error(chalk.red("Error: --channel is required when --type is telegram (use chat ID or @channelname)."));
+                    process.exit(1);
+                }
+                target = options.channel;
             } else if (options.type === "email") {
-                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook', 'slack', 'discord', 'telegram', or 'pagerduty'."));
                 process.exit(1);
             } else {
-                console.error(chalk.red("Error: --type must be 'webhook' or 'slack'."));
+                console.error(chalk.red("Error: --type must be 'webhook', 'slack', 'discord', 'telegram', or 'pagerduty'."));
                 process.exit(1);
             }
 
-            insertAlertConfig(db, {
-                contract_id: contractId,
-                channel_type: options.type,
-                channel_target: target,
-                threshold_ledgers: threshold,
-                webhook_secret: webhookSecret,
-            });
+            if (isTTLAlert) {
+                const threshold = options.threshold;
+                if (isNaN(threshold) || threshold <= 0) {
+                    console.error(chalk.red("Error: --threshold must be a positive integer."));
+                    process.exit(1);
+                }
 
-            console.log(
-                chalk.green(
-                    `Successfully added alert config: type=${options.type}, target=${target}, threshold=${threshold} ledgers`
-                )
-            );
+                insertAlertConfig(db, {
+                    contract_id: contractId,
+                    channel_type: options.type,
+                    channel_target: target,
+                    threshold_ledgers: threshold,
+                    webhook_secret: webhookSecret,
+                });
 
-            if (webhookSecret) {
-                console.log(`  ${chalk.bold("Webhook secret:")} ${webhookSecret}`);
-                console.log(chalk.dim("  Save this secret — it signs payloads via X-Sorokeep-Signature header."));
+                console.log(
+                    chalk.green(
+                        `Successfully added alert config: type=${options.type}, target=${target}, threshold=${threshold} ledgers`
+                    )
+                );
+
+                if (webhookSecret) {
+                    console.log(`  ${chalk.bold("Webhook secret:")} ${webhookSecret}`);
+                    console.log(chalk.dim("  Save this secret — it signs payloads via X-Sorokeep-Signature header."));
+                }
+            } else {
+                // Resource alert
+                const cpuLimit = options.cpuLimit ?? 100_000_000;
+                const memLimit = options.memLimit ?? 50_000_000;
+
+                if (cpuLimit <= 0 || memLimit <= 0) {
+                    console.error(chalk.red("Error: --cpu-limit and --mem-limit must be positive integers."));
+                    process.exit(1);
+                }
+
+                insertResourceAlertConfig(db, {
+                    contract_id: contractId,
+                    channel_type: options.type,
+                    channel_target: target,
+                    cpu_limit: cpuLimit,
+                    mem_limit: memLimit,
+                    webhook_secret: webhookSecret,
+                });
+
+                console.log(
+                    chalk.green(
+                        `Successfully added alert config: type=${options.type}, target=${target}, CPU=${cpuLimit.toLocaleString()} instr, MEM=${memLimit.toLocaleString()} bytes`
+                    )
+                );
+
+                if (webhookSecret) {
+                    console.log(`  ${chalk.bold("Webhook secret:")} ${webhookSecret}`);
+                    console.log(chalk.dim("  Save this secret — it signs payloads via X-Sorokeep-Signature header."));
+                }
             }
         });
 
