@@ -13,6 +13,7 @@ import {
 
 const mockSendWebhookAlert = vi.fn();
 const mockSendSlackAlert = vi.fn();
+const mockSendPagerDutyAlert = vi.fn();
 
 vi.mock("../../src/alerts/webhook.js", () => ({
     sendWebhookAlert: (...args: unknown[]) => mockSendWebhookAlert(...args),
@@ -20,6 +21,10 @@ vi.mock("../../src/alerts/webhook.js", () => ({
 
 vi.mock("../../src/alerts/slack.js", () => ({
     sendSlackAlert: (...args: unknown[]) => mockSendSlackAlert(...args),
+}));
+
+vi.mock("../../src/alerts/pagerduty.js", () => ({
+    sendPagerDutyAlert: (...args: unknown[]) => mockSendPagerDutyAlert(...args),
 }));
 
 import { deliverPendingAlerts } from "../../src/alerts/dispatcher";
@@ -34,7 +39,7 @@ function seedContractWithAlert(
         network?: string;
         entryKeyXdr?: string;
         entryType?: string;
-        channelType?: "webhook" | "slack";
+        channelType?: "webhook" | "slack" | "pagerduty";
         channelTarget?: string;
         thresholdLedgers?: number;
         ttlAtFire?: number;
@@ -153,6 +158,22 @@ describe("deliverPendingAlerts", () => {
 
             expect(mockSendSlackAlert).toHaveBeenCalledTimes(1);
             expect(mockSendWebhookAlert).not.toHaveBeenCalled();
+            expect(mockSendPagerDutyAlert).not.toHaveBeenCalled();
+        });
+
+        it("routes pagerduty alerts to sendPagerDutyAlert", async () => {
+            mockSendPagerDutyAlert.mockResolvedValue(undefined);
+            seedContractWithAlert(db, {
+                contractId: "CA",
+                channelType: "pagerduty",
+                channelTarget: "routing-key-123",
+            });
+
+            await deliverPendingAlerts(db, "testnet");
+
+            expect(mockSendPagerDutyAlert).toHaveBeenCalledTimes(1);
+            expect(mockSendWebhookAlert).not.toHaveBeenCalled();
+            expect(mockSendSlackAlert).not.toHaveBeenCalled();
         });
 
         it("calls sendWebhookAlert with the correct URL, event payload, and secret", async () => {
