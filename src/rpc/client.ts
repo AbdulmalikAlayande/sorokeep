@@ -48,6 +48,13 @@ export interface SimulateExtensionResult {
     error?: string;
 }
 
+export interface FeeStatsResult {
+    latestLedger?: number;
+    baseFeeStroops: number;
+    surgeFeeStroops: number;
+    surgePricingMultiplier: number;
+}
+
 export interface SubmitTransactionResult {
     /** Whether the transaction succeeded. */
     success: boolean;
@@ -55,6 +62,10 @@ export interface SubmitTransactionResult {
     txHash: string;
     /** Ledger the transaction was included in. */
     ledger: number;
+    /** CPU instructions consumed by the transaction. */
+    cpuInsns?: number;
+    /** Memory bytes consumed by the transaction. */
+    memBytes?: number;
     /** Error message if the transaction failed. */
     error?: string;
 }
@@ -98,6 +109,34 @@ export class StellarRpcClient {
         }
 
         throw new Error("Unable to determine latest ledger from RPC server");
+    }
+
+    async getFeeStats(): Promise<FeeStatsResult> {
+        const serverAny = this.server as any;
+        if (typeof serverAny.getFeeStats !== "function") {
+            throw new Error("RPC server does not support getFeeStats");
+        }
+
+        const response = await serverAny.getFeeStats();
+        const inclusionFee = response.sorobanInclusionFee ?? response.inclusionFee;
+        if (!inclusionFee) {
+            throw new Error("RPC fee stats response did not include inclusion fee data");
+        }
+
+        const baseFeeStroops = parseFeeStat(inclusionFee.p50 ?? inclusionFee.mode ?? inclusionFee.min);
+        const surgeFeeStroops = parseFeeStat(
+            inclusionFee.p95 ?? inclusionFee.p90 ?? inclusionFee.max ?? baseFeeStroops,
+        );
+        const surgePricingMultiplier = baseFeeStroops > 0
+            ? Math.max(surgeFeeStroops / baseFeeStroops, 1)
+            : 1;
+
+        return {
+            latestLedger: typeof response.latestLedger === "number" ? response.latestLedger : undefined,
+            baseFeeStroops,
+            surgeFeeStroops,
+            surgePricingMultiplier,
+        };
     }
 
     async getContractInstanceEntry(contractId: string): Promise<ContractInstanceResult | null> {
@@ -189,6 +228,46 @@ export class StellarRpcClient {
         });
 
         return { latestLedger, entries };
+    }
+
+    /**
+     * Call the 'get_monitored_keys' view method on a contract.
+     * Returns an array of XDR strings for the keys.
+     */
+    async getMonitoredKeys(contractId: string): Promise<string[]> {
+        const passphrase = await this.getNetworkPassphrase();
+        const contract = new Contract(contractId);
+        const op = contract.call("get_monitored_keys");
+
+        // Use a dummy account for simulation
+        const account = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0");
+
+        const tx = new TransactionBuilder(account, {
+            fee: "100",
+            networkPassphrase: passphrase,
+        })
+            .addOperation(op)
+            .setTimeout(30)
+            .build();
+
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            throw new Error(`Simulation failed: ${sim.error ?? "unknown error"}`);
+        }
+
+        const successSim = sim as rpc.Api.SimulateTransactionSuccessResponse;
+        
+        // Parse the result
+        const scv = successSim.result!.retval;
+        
+        // Assuming the return type is a Vec<ScVal> (or similar) of keys
+        if (scv.switch().name === "scvVec") {
+            const vec = scv.vec()!;
+            return vec.map(val => val.toXDR("base64"));
+        }
+        
+        return [];
     }
 
     /**
@@ -286,6 +365,8 @@ export class StellarRpcClient {
                 txHash: "",
                 ledger: 0,
                 error: sim.error ?? "Simulation failed",
+                cpuInsns: 0,
+                memBytes: 0,
             };
         }
 
@@ -304,6 +385,8 @@ export class StellarRpcClient {
                 success: false,
                 txHash: sendResult.hash,
                 ledger: 0,
+                cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0),
+                memBytes: Number((sim as any).cost?.memBytes ?? 0),
                 error: `Transaction send error: ${diagnostics || sendResult.status}`,
             };
         }
@@ -311,7 +394,12 @@ export class StellarRpcClient {
         // Poll for completion
         const txResult = await this.pollTransaction(sendResult.hash);
         return txResult;
-    }
+    } 
+
+    // Helper to add resource usage to a successful transaction result
+    private addResourcesToSuccess(result: SubmitTransactionResult, sim: rpc.Api.SimulateTransactionSuccessResponse): SubmitTransactionResult {
+        return { ...result, cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0), memBytes: Number((sim as any).cost?.memBytes ?? 0) };
+    } 
 
     /**
      * Build, sign, and submit a RestoreFootprintOp transaction to restore archived entries.
@@ -351,6 +439,8 @@ export class StellarRpcClient {
                 success: false,
                 txHash: "",
                 ledger: 0,
+                cpuInsns: 0,
+                memBytes: 0,
                 error: sim.error ?? "Simulation failed",
             };
         }
@@ -368,12 +458,15 @@ export class StellarRpcClient {
                 success: false,
                 txHash: sendResult.hash,
                 ledger: 0,
+                cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0),
+                memBytes: Number((sim as any).cost?.memBytes ?? 0),
                 error: `Transaction send error: ${diagnostics || sendResult.status}`,
             };
         }
 
-        return this.pollTransaction(sendResult.hash);
-    }
+        const txResult = await this.pollTransaction(sendResult.hash);
+        return txResult.success ? this.addResourcesToSuccess(txResult, sim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
+    } 
 
     /**
      * Send XLM payments from a source keypair to multiple destination accounts.
@@ -494,4 +587,11 @@ export class StellarRpcClient {
             error: `Transaction polling timed out after ${maxAttempts} attempts`,
         };
     }
+}
+
+function parseFeeStat(value: string | number | bigint | undefined): number {
+    if (value === undefined) return 0;
+    if (typeof value === "bigint") return Number(value);
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
 }

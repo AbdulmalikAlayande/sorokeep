@@ -15,12 +15,20 @@ export const registerWatchCommand = (program: Command): void => {
         .option("--network <network>", "The stellar network to use (testnet, mainnet)", "testnet")
         .option("-r, --rpc-url <url>", "Custom RPC URL")
         .option("--storage-keys <keys>", "Comma-separated base64 XDR storage keys to watch")
+        .option("--no-introspection", "Skip automatic contract introspection (WASM code fetching)")
         .action(async (contractId, options) => {
             const displayId = formatContractID(contractId);
             const spinner = ora(`Registering contract ${formatContractID(contractId)} and discovering entries...`).start();
             try {
                 const db = getDatabase();
-                const watchResult = await watchContract(db, {contractId, network: options.network, name: options.name, rpcUrl: options.rpcUrl, storageKeys: options.storageKeys});
+                const watchResult = await watchContract(db, {
+                    contractId,
+                    network: options.network,
+                    name: options.name,
+                    rpcUrl: options.rpcUrl,
+                    storageKeys: options.storageKeys,
+                    noIntrospection: options.noIntrospection,
+                });
                 if (!watchResult.success) {
                     spinner.fail(chalk.red(watchResult.error))
                     process.exit(1);
