@@ -2,54 +2,78 @@ import { Command } from "commander";
 import chalk from "chalk";
 import { getDatabase } from "../db/database.js";
 import { getContract, getEntriesForContract } from "../db/repositories.js";
-import { StellarRpcClient } from "../rpc/client.js";
-
-const LOW_TTL_THRESHOLD = 10;
+import {
+    classifyTTL,
+    statusIndicator,
+    formatTimeToCloseLedger,
+    formatContractID,
+} from "../utils/formatting.js";
 
 export function registerCheckCommand(program: Command): void {
     program
         .command("check <contractId>")
-        .description("Run CI-style checks against a watched contract (can be forced)")
+        .description("Check TTL health for a watched contract (CI-friendly, can be forced)")
         .option("--force", "Bypass CI TTL failures and exit 0")
-        .action(async (contractId: string, options: { force?: boolean }) => {
+        .requiredOption(
+            "--fail-under <ledgers>",
+            "Exit with code 1 if any entry TTL is below this many ledgers",
+            parseInt,
+        )
+        .action((contractId: string, options: { failUnder: number; force?: boolean }) => {
             const db = getDatabase();
             const contract = getContract(db, contractId);
 
             if (!contract) {
-                console.log(chalk.red(`Contract ${contractId} is not registered.`));
+                console.log(chalk.red(`Contract ${formatContractID(contractId)} is not registered.`));
+                console.log(chalk.dim("Run 'sorokeep watch <contractId>' first."));
                 process.exit(1);
             }
 
             const entries = getEntriesForContract(db, contractId);
+            const lastChecked = contract.last_checked_ledger;
 
-            if (entries.length === 0) {
-                console.log(chalk.yellow("No entries tracked for this contract."));
+            if (entries.length === 0 || lastChecked == null) {
+                console.log(chalk.green("All TTLs are safe."));
                 process.exit(0);
             }
 
-            const client = new StellarRpcClient(contract.network);
+            let hasFailure = false;
 
-            try {
-                const entryKeyXdrs = entries.map(e => e.entry_key_xdr);
-                const ttls = await client.getEntryTTLs(entryKeyXdrs);
+            for (const entry of entries) {
+                if (entry.live_until_ledger == null) continue;
 
-                const low = ttls.entries.some(e => (e.remainingTTL ?? 0) < LOW_TTL_THRESHOLD);
+                const remainingTTL = entry.live_until_ledger - lastChecked;
+                const label =
+                    entry.entry_type === "instance"
+                        ? "Instance"
+                        : entry.entry_type === "wasm"
+                          ? "WASM Code"
+                          : entry.label ?? entry.entry_type;
+                const timeStr = formatTimeToCloseLedger(remainingTTL);
+                const status = classifyTTL(remainingTTL);
 
-                if (low) {
-                    if (options.force) {
-                        console.log("WARNING: CI checks bypassed with --force");
-                        process.exit(0);
-                    }
+                if (remainingTTL < options.failUnder) {
+                    hasFailure = true;
+                    console.log(
+                        `${chalk.bold(label)}  TTL: ${remainingTTL.toLocaleString().padStart(9)} ledgers (${timeStr})  ${statusIndicator(status)}  ${chalk.red("FAIL")}`,
+                    );
+                } else {
+                    console.log(
+                        `${chalk.bold(label)}  TTL: ${remainingTTL.toLocaleString().padStart(9)} ledgers (${timeStr})  ${statusIndicator(status)}  ${chalk.green("PASS")}`,
+                    );
+                }
+            }
 
-                    console.log(chalk.red("One or more entries have low TTL — aborting."));
+            if (hasFailure) {
+                if (options.force) {
+                    console.log("WARNING: CI checks bypassed with --force");
+                    process.exit(0);
+                } else {
                     process.exit(1);
                 }
-
-                console.log(chalk.green("All entries healthy."));
-                process.exit(0);
-            } catch (err: any) {
-                console.log(chalk.red("Error checking TTLs:"), err?.message ?? String(err));
-                process.exit(1);
             }
+
+            console.log(chalk.green("All TTLs are safe."));
+            process.exit(0);
         });
 }
