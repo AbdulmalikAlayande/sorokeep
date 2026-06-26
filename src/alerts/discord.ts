@@ -49,20 +49,39 @@ function buildTitle(event: AlertEvent): string {
 function buildEmbed(event: AlertEvent): DiscordEmbed {
     const contractDisplay = event.contractName ?? event.contractId;
 
-    return {
-        title: buildTitle(event),
-        color: SEVERITY_COLORS[event.severity],
-        fields: [
+    const fields: DiscordField[] = [
+        {
+            name: "Contract",
+            value: contractDisplay,
+            inline: true,
+        },
+        {
+            name: "Network",
+            value: event.network,
+            inline: true,
+        },
+    ];
+
+    if (event.type === "resource_alert") {
+        fields.push(
             {
-                name: "Contract",
-                value: contractDisplay,
+                name: "Resource",
+                value: event.resource.type === "cpu" ? "CPU" : "Memory",
                 inline: true,
             },
             {
-                name: "Network",
-                value: event.network,
+                name: "Usage",
+                value: `${event.resource.usagePercent}% (${event.resource.currentUsage.toLocaleString()} / ${event.resource.limit.toLocaleString()})`,
                 inline: true,
             },
+            {
+                name: "Severity",
+                value: event.severity.toUpperCase(),
+                inline: true,
+            }
+        );
+    } else {
+        fields.push(
             {
                 name: "Entry",
                 value: event.entry.label ?? event.entry.type,
@@ -82,8 +101,14 @@ function buildEmbed(event: AlertEvent): DiscordEmbed {
                 name: "Severity",
                 value: event.severity.toUpperCase(),
                 inline: true,
-            },
-        ],
+            }
+        );
+    }
+
+    return {
+        title: buildTitle(event),
+        color: SEVERITY_COLORS[event.severity],
+        fields,
         footer: {
             text: `Run \`sorokeep status ${event.contractId}\` for details.`,
         },
