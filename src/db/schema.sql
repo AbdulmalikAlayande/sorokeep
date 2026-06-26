@@ -122,6 +122,27 @@ CREATE TABLE IF NOT EXISTS resource_alert_configs (
     UNIQUE(contract_id, channel_type, channel_target)
 );
 
+CREATE TABLE IF NOT EXISTS resource_usage_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    cpu_insns INTEGER NOT NULL,
+    mem_bytes INTEGER NOT NULL,
+    fee_instructions INTEGER,
+    fee_read_ledger_entries INTEGER,
+    fee_write_ledger_entries INTEGER,
+    fee_read_bytes INTEGER,
+    fee_write_bytes INTEGER,
+    fee_transaction_size INTEGER,
+    fee_historical_ledger INTEGER,
+    fee_rent_ledger INTEGER,
+    fee_refundable INTEGER,
+    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_contract_id
+    ON resource_usage_logs(contract_id);
+CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_recorded_at
+    ON resource_usage_logs(recorded_at DESC);
+
 CREATE TABLE IF NOT EXISTS resource_alerts_fired (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     resource_alert_config_id INTEGER NOT NULL REFERENCES resource_alert_configs(id) ON DELETE CASCADE,
