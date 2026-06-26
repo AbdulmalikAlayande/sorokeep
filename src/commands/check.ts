@@ -1,88 +1,73 @@
 import { Command } from "commander";
 import chalk from "chalk";
 import { getDatabase } from "../db/database.js";
+import { getContract, getEntriesForContract } from "../db/repositories.js";
 import {
-    getAllContracts,
-    getEntriesForContract,
-    getAlertConfigsForContract,
-} from "../db/repositories.js";
-
-interface CheckResult {
-    totalContracts: number;
-    totalEntries: number;
-    entriesBelowThreshold: number;
-    entriesHealthy: number;
-}
-
-function runCheck(): CheckResult {
-    const dbPath = process.env.SOROKEEP_DB_PATH;
-    const db = getDatabase(dbPath);
-    const contracts = getAllContracts(db);
-
-    if (contracts.length === 0) {
-        return { totalContracts: 0, totalEntries: 0, entriesBelowThreshold: 0, entriesHealthy: 0 };
-    }
-
-    let totalEntries = 0;
-    let entriesBelowThreshold = 0;
-
-    for (const contract of contracts) {
-        if (contract.last_checked_ledger == null) continue;
-
-        const entries = getEntriesForContract(db, contract.id);
-        if (entries.length === 0) continue;
-
-        const alertConfigs = getAlertConfigsForContract(db, contract.id);
-        if (alertConfigs.length === 0) continue;
-
-        const maxThreshold = Math.max(...alertConfigs.map(c => c.threshold_ledgers));
-
-        for (const entry of entries) {
-            totalEntries++;
-            if (entry.live_until_ledger == null) continue;
-            const remainingTTL = entry.live_until_ledger - contract.last_checked_ledger;
-            if (remainingTTL < maxThreshold) {
-                entriesBelowThreshold++;
-            }
-        }
-    }
-
-    return {
-        totalContracts: contracts.length,
-        totalEntries,
-        entriesBelowThreshold,
-        entriesHealthy: totalEntries - entriesBelowThreshold,
-    };
-}
+    classifyTTL,
+    statusIndicator,
+    formatTimeToCloseLedger,
+    formatContractID,
+} from "../utils/formatting.js";
 
 export function registerCheckCommand(program: Command): void {
     program
-        .command("check")
-        .description("Check TTL health of all watched contracts; exits non-zero if any TTL bounds are crossed")
-        .action(() => {
-            const result = runCheck();
+        .command("check <contractId>")
+        .description("Check TTL health for a watched contract (CI-friendly)")
+        .requiredOption(
+            "--fail-under <ledgers>",
+            "Exit with code 1 if any entry TTL is below this many ledgers",
+            parseInt,
+        )
+        .action((contractId: string, options: { failUnder: number }) => {
+            const db = getDatabase();
+            const contract = getContract(db, contractId);
 
-            console.log();
-            console.log(chalk.bold("  TTL Health Check Results"));
-            console.log(chalk.dim(`  Contracts: ${result.totalContracts}`));
-            console.log(chalk.dim(`  Entries:   ${result.totalEntries}`));
-
-            if (result.totalContracts === 0) {
-                console.log(chalk.yellow("  No contracts registered."));
-                console.log(chalk.dim("  Run 'sorokeep watch <contractId>' first."));
-            }
-
-            if (result.entriesBelowThreshold > 0) {
-                console.log(chalk.red(`  ${result.entriesBelowThreshold} entries below TTL threshold(s)`));
-            }
-            console.log(chalk.green(`  ${result.entriesHealthy} entries healthy`));
-
-            if (result.entriesBelowThreshold > 0) {
-                console.log(chalk.red.bold("\n  ✗ TTL bounds crossed — check failed."));
+            if (!contract) {
+                console.log(chalk.red(`Contract ${formatContractID(contractId)} is not registered.`));
+                console.log(chalk.dim("Run 'sorokeep watch <contractId>' first."));
                 process.exit(1);
             }
 
-            console.log(chalk.green.bold("\n  ✓ All TTLs are within bounds."));
+            const entries = getEntriesForContract(db, contractId);
+            const lastChecked = contract.last_checked_ledger;
+
+            if (entries.length === 0 || lastChecked == null) {
+                console.log(chalk.green("All TTLs are safe."));
+                process.exit(0);
+            }
+
+            let hasFailure = false;
+
+            for (const entry of entries) {
+                if (entry.live_until_ledger == null) continue;
+
+                const remainingTTL = entry.live_until_ledger - lastChecked;
+                const label =
+                    entry.entry_type === "instance"
+                        ? "Instance"
+                        : entry.entry_type === "wasm"
+                          ? "WASM Code"
+                          : entry.label ?? entry.entry_type;
+                const timeStr = formatTimeToCloseLedger(remainingTTL);
+                const status = classifyTTL(remainingTTL);
+
+                if (remainingTTL < options.failUnder) {
+                    hasFailure = true;
+                    console.log(
+                        `${chalk.bold(label)}  TTL: ${remainingTTL.toLocaleString().padStart(9)} ledgers (${timeStr})  ${statusIndicator(status)}  ${chalk.red("FAIL")}`,
+                    );
+                } else {
+                    console.log(
+                        `${chalk.bold(label)}  TTL: ${remainingTTL.toLocaleString().padStart(9)} ledgers (${timeStr})  ${statusIndicator(status)}  ${chalk.green("PASS")}`,
+                    );
+                }
+            }
+
+            if (hasFailure) {
+                process.exit(1);
+            }
+
+            console.log(chalk.green("All TTLs are safe."));
             process.exit(0);
         });
 }
