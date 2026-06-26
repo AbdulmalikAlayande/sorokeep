@@ -7,6 +7,7 @@ import {
     Account,
     Operation,
     Keypair,
+    SorobanDataBuilder,
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
 
@@ -73,7 +74,7 @@ export class StellarRpcClient {
         if (!url) {
             throw new Error(`Unknown network "${network}". Use "testnet", "mainnet", or provide a custom URL.`);
         }
-        this.server = new rpc.Server(url);
+        this.server = new rpc.Server(url, { allowHttp: url.startsWith("http://") });
     }
 
     getNetwork(): string {
@@ -87,8 +88,12 @@ export class StellarRpcClient {
     async getCurrentLedger(): Promise<number> {
         const serverAny = this.server as any;
         if (typeof serverAny.getLatestLedger === "function") {
-            const response = await serverAny.getLatestLedger();
-            if (response && typeof response.sequence === "number") return response.sequence;
+            try {
+                const response = await serverAny.getLatestLedger();
+                if (response && typeof response.sequence === "number") return response.sequence;
+            } catch (error) {
+                logger.debug("getLatestLedger failed, falling back to getHealth", error);
+            }
         }
 
         const health = await this.server.getHealth();
@@ -217,7 +222,7 @@ export class StellarRpcClient {
             )
             .setTimeout(30)
             .setSorobanData(
-                new (rpc as any).SorobanDataBuilder()
+                new SorobanDataBuilder()
                     .setReadOnly(keys)
                     .build(),
             )
@@ -270,7 +275,7 @@ export class StellarRpcClient {
             )
             .setTimeout(30)
             .setSorobanData(
-                new (rpc as any).SorobanDataBuilder()
+                new SorobanDataBuilder()
                     .setReadOnly(keys)
                     .build(),
             )
@@ -337,7 +342,7 @@ export class StellarRpcClient {
             )
             .setTimeout(30)
             .setSorobanData(
-                new (rpc as any).SorobanDataBuilder()
+                new SorobanDataBuilder()
                     .setReadWrite(keys)
                     .build(),
             )
