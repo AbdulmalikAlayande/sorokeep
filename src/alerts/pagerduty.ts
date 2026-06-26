@@ -13,12 +13,20 @@ function mapSeverity(event: AlertEvent): PagerDutySeverity {
 }
 
 function buildDedupKey(event: AlertEvent): string {
+    if (event.type === "resource_alert") {
+        return `sorokeep:${event.network}:${event.contractId}:resource:${event.resource.type}`;
+    }
     const entryKey = event.entry.keyXdr || event.entry.type;
     return `sorokeep:${event.network}:${event.contractId}:${entryKey}:${event.threshold.configuredLedgers}`;
 }
 
 function buildSummary(event: AlertEvent): string {
     const contractDisplay = event.contractName ?? event.contractId;
+
+    if (event.type === "resource_alert") {
+        const resourceLabel = event.resource.type === "cpu" ? "CPU" : "Memory";
+        return `Sorokeep alert: ${contractDisplay} is consuming too much ${resourceLabel} (${event.resource.usagePercent}% used).`;
+    }
 
     if (event.type === "threshold_crossed") {
         return `Sorokeep alert: ${contractDisplay} has crossed the TTL threshold (${event.threshold.currentRemainingLedgers} ledgers remaining).`;
@@ -27,31 +35,48 @@ function buildSummary(event: AlertEvent): string {
     return `Sorokeep alert resolved: ${contractDisplay} has recovered above threshold.`;
 }
 
+function buildCustomDetails(event: AlertEvent): Record<string, unknown> {
+    if (event.type === "resource_alert") {
+        return {
+            contractId: event.contractId,
+            contractName: event.contractName,
+            network: event.network,
+            resourceType: event.resource.type,
+            usagePercent: event.resource.usagePercent,
+            currentUsage: event.resource.currentUsage,
+            limit: event.resource.limit,
+            firedAtLedger: event.firedAtLedger,
+            timestamp: event.timestamp,
+        };
+    }
+    return {
+        contractId: event.contractId,
+        contractName: event.contractName,
+        network: event.network,
+        entryKeyXdr: event.entry.keyXdr,
+        entryType: event.entry.type,
+        entryLabel: event.entry.label,
+        currentRemainingLedgers: event.threshold.currentRemainingLedgers,
+        configuredLedgers: event.threshold.configuredLedgers,
+        approximateTimeRemaining: event.threshold.approximateTimeRemaining,
+        firedAtLedger: event.firedAtLedger,
+        timestamp: event.timestamp,
+    };
+}
+
 function buildPayload(event: AlertEvent): unknown {
     return {
         routing_key: "",
-        event_action: event.type === "threshold_crossed" ? "trigger" : "resolve",
+        event_action: event.type === "threshold_crossed" || event.type === "resource_alert" ? "trigger" : "resolve",
         dedup_key: buildDedupKey(event),
         payload: {
             summary: buildSummary(event),
             source: event.contractId,
             severity: mapSeverity(event),
-            component: event.entry.label ?? event.entry.type,
+            component: event.type === "resource_alert" ? "resource_monitor" : (event.entry.label ?? event.entry.type),
             group: event.network,
-            class: `threshold:${event.threshold.configuredLedgers}`,
-            custom_details: {
-                contractId: event.contractId,
-                contractName: event.contractName,
-                network: event.network,
-                entryKeyXdr: event.entry.keyXdr,
-                entryType: event.entry.type,
-                entryLabel: event.entry.label,
-                currentRemainingLedgers: event.threshold.currentRemainingLedgers,
-                configuredLedgers: event.threshold.configuredLedgers,
-                approximateTimeRemaining: event.threshold.approximateTimeRemaining,
-                firedAtLedger: event.firedAtLedger,
-                timestamp: event.timestamp,
-            },
+            class: event.type === "resource_alert" ? `resource:${event.resource.type}` : `threshold:${event.threshold.configuredLedgers}`,
+            custom_details: buildCustomDetails(event),
         },
     };
 }

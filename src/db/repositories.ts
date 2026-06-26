@@ -411,3 +411,200 @@ export function getAlertHistory(db: Database.Database, contractId: string, limit
         : db.prepare(sql).all(contractId)
     ) as AlertHistoryRecord[];
 }
+
+// ─── Resource Alert Configuration & History ──────────────────────────────────
+
+export interface ResourceAlertConfig {
+    id: number;
+    contract_id: string;
+    channel_type: "slack" | "webhook";
+    channel_target: string;
+    cpu_limit: number;
+    mem_limit: number;
+    webhook_secret: string | null;
+    created_at: Date;
+}
+
+export function insertResourceAlertConfig(db: Database.Database, config: {
+    contract_id: string;
+    channel_type: string;
+    channel_target: string;
+    cpu_limit: number;
+    mem_limit: number;
+    webhook_secret?: string;
+}): void {
+    db.prepare(`
+        INSERT INTO resource_alert_configs (contract_id, channel_type, channel_target, cpu_limit, mem_limit, webhook_secret)
+        VALUES (@contract_id, @channel_type, @channel_target, @cpu_limit, @mem_limit, @webhook_secret)
+    `).run({
+        contract_id: config.contract_id,
+        channel_type: config.channel_type,
+        channel_target: config.channel_target,
+        cpu_limit: config.cpu_limit,
+        mem_limit: config.mem_limit,
+        webhook_secret: config.webhook_secret ?? null,
+    });
+}
+
+export function getResourceAlertConfigsForContract(db: Database.Database, contractId: string): ResourceAlertConfig[] {
+    return db.prepare("SELECT * FROM resource_alert_configs WHERE contract_id = ?").all(contractId) as ResourceAlertConfig[];
+}
+
+export function getResourceAlertConfigById(db: Database.Database, id: number): ResourceAlertConfig | undefined {
+    return db.prepare("SELECT * FROM resource_alert_configs WHERE id = ?").get(id) as ResourceAlertConfig | undefined;
+}
+
+export function deleteResourceAlertConfig(db: Database.Database, id: number): void {
+    db.prepare("DELETE FROM resource_alert_configs WHERE id = ?").run(id);
+}
+
+export function recordResourceAlertFired(db: Database.Database, alert: {
+    resource_alert_config_id: number;
+    resource_type: "cpu" | "memory";
+    usage: number;
+    limit: number;
+    usage_percent: number;
+    fired_at_ledger?: number;
+}): number {
+    const result = db.prepare(`
+      INSERT INTO resource_alerts_fired (resource_alert_config_id, resource_type, usage, "limit", usage_percent, fired_at_ledger)
+      VALUES (@resource_alert_config_id, @resource_type, @usage, @limit, @usage_percent, @fired_at_ledger)
+    `).run({
+      resource_alert_config_id: alert.resource_alert_config_id,
+      resource_type: alert.resource_type,
+      usage: alert.usage,
+      limit: alert.limit,
+      usage_percent: alert.usage_percent,
+      fired_at_ledger: alert.fired_at_ledger ?? null,
+    });
+    return result.lastInsertRowid as number;
+}
+
+export interface ResourceUsageRecord {
+    resourceType: "cpu" | "memory";
+    usage: number;
+    usagePercent: number;
+    firedAt: string;
+}
+
+export function getResourceUsageHistory(db: Database.Database, contractId: string, days?: number): ResourceUsageRecord[] {
+    if (days) {
+        return db.prepare(`
+            SELECT raf.resource_type AS resourceType,
+                   raf.usage,
+                   raf.usage_percent AS usagePercent,
+                   raf.fired_at AS firedAt
+            FROM resource_alerts_fired raf
+            JOIN resource_alert_configs rac ON rac.id = raf.resource_alert_config_id
+            WHERE rac.contract_id = ?
+              AND raf.fired_at >= datetime('now', ?)
+            ORDER BY raf.fired_at DESC
+        `).all(contractId, `-${days} days`) as ResourceUsageRecord[];
+    }
+
+    return db.prepare(`
+        SELECT raf.resource_type AS resourceType,
+               raf.usage,
+               raf.usage_percent AS usagePercent,
+               raf.fired_at AS firedAt
+        FROM resource_alerts_fired raf
+        JOIN resource_alert_configs rac ON rac.id = raf.resource_alert_config_id
+        WHERE rac.contract_id = ?
+        ORDER BY raf.fired_at DESC
+    `).all(contractId) as ResourceUsageRecord[];
+}
+
+export function getUndeliveredResourceAlerts(db: Database.Database, network: string): Array<{
+    alertFiredId: number;
+    resourceAlertConfigId: number;
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    resourceType: "cpu" | "memory";
+    usage: number;
+    limit: number;
+    usagePercent: number;
+    channelType: "webhook" | "slack";
+    channelTarget: string;
+    webhookSecret: string | null;
+    retryCount: number;
+    firedAtLedger: number | null;
+}> {
+    return db.prepare(`
+        SELECT
+            raf.id               AS alertFiredId,
+            raf.resource_alert_config_id AS resourceAlertConfigId,
+            c.id                 AS contractId,
+            c.name               AS contractName,
+            c.network,
+            raf.resource_type    AS resourceType,
+            raf.usage,
+            raf."limit",
+            raf.usage_percent    AS usagePercent,
+            rac.channel_type     AS channelType,
+            rac.channel_target   AS channelTarget,
+            rac.webhook_secret   AS webhookSecret,
+            raf.retry_count      AS retryCount,
+            raf.fired_at_ledger  AS firedAtLedger
+        FROM resource_alerts_fired raf
+        JOIN resource_alert_configs rac ON rac.id = raf.resource_alert_config_id
+        JOIN contracts c ON c.id = rac.contract_id
+        WHERE c.network = ? AND raf.delivered = 0 AND raf.retry_count < ?
+        ORDER BY raf.fired_at DESC
+    `).all(network, MAX_RETRY_COUNT) as Array<{
+        alertFiredId: number;
+        resourceAlertConfigId: number;
+        contractId: string;
+        contractName: string | null;
+        network: string;
+        resourceType: "cpu" | "memory";
+        usage: number;
+        limit: number;
+        usagePercent: number;
+        channelType: "webhook" | "slack";
+        channelTarget: string;
+        webhookSecret: string | null;
+        retryCount: number;
+        firedAtLedger: number | null;
+    }>;
+}
+
+export function markResourceAlertDelivered(db: Database.Database, alertFiredId: number): void {
+    db.prepare(`
+        UPDATE resource_alerts_fired SET delivered = 1, delivered_at = datetime('now') WHERE id = ?
+    `).run(alertFiredId);
+}
+
+export function incrementResourceAlertRetryCount(db: Database.Database, alertFiredId: number): void {
+    db.prepare("UPDATE resource_alerts_fired SET retry_count = retry_count + 1 WHERE id = ?").run(alertFiredId);
+}
+
+export function hasUnresolvedResourceAlert(
+  db: Database.Database,
+  configId: number,
+  resourceType: "cpu" | "memory",
+  currentUsagePercent?: number,
+): boolean {
+  if (typeof currentUsagePercent === "undefined") {
+    const result = db.prepare(`
+      SELECT 1 FROM resource_alerts_fired
+      WHERE resource_alert_config_id = ? AND resource_type = ? AND resolved = 0
+      LIMIT 1
+    `).get(configId, resourceType);
+    return !!result;
+  }
+
+  // If we have a current usage percent, only consider an existing unresolved
+  // alert to be blocking if its recorded usage_percent is greater than or
+  // equal to the current usage (i.e., no increase). If the current usage
+  // is higher, allow firing a new alert.
+  const row = db.prepare(`
+    SELECT usage_percent FROM resource_alerts_fired
+    WHERE resource_alert_config_id = ? AND resource_type = ? AND resolved = 0
+    ORDER BY fired_at DESC
+    LIMIT 1
+  `).get(configId, resourceType) as { usage_percent?: number } | undefined;
+
+  if (!row || typeof row.usage_percent === "undefined") return false;
+  return row.usage_percent >= currentUsagePercent;
+}
