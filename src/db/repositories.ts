@@ -280,7 +280,7 @@ export function hasUnresolvedAlert(db: Database.Database, alertConfigId: number,
     SELECT 1 FROM alerts_fired
     WHERE alert_config_id = ? AND contract_entry_id = ? AND resolved = 0
     LIMIT 1
-  `).get(alertConfigId, entryId);
+  `).get(alertConfigId, entryId) as { 1: number } | undefined;
   return row !== undefined;
 }
 
@@ -804,7 +804,7 @@ export function hasUnresolvedResourceAlert(
       SELECT 1 FROM resource_alerts_fired
       WHERE resource_alert_config_id = ? AND resource_type = ? AND resolved = 0
       LIMIT 1
-    `).get(configId, resourceType);
+    `).get(configId, resourceType) as { 1: number } | undefined;
     return !!result;
   }
 
