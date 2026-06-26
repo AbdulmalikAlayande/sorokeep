@@ -3,7 +3,12 @@
   "version": "0.1.2",
   "description": "The missing operations layer for deployed Soroban smart contracts",
   "main": "dist/index.js",
-  "files": ["dist", "README.md", "LICENSE", "CONTRIBUTING.md"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md"
+  ],
   "bin": {
     "sorokeep": "dist/index.js"
   },
@@ -32,6 +37,7 @@
     "url": "https://github.com/AbdulmalikAlayande/sorokeep.git"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
     "@stellar/stellar-sdk": "^15.1.0",
     "better-sqlite3": "^12.9.0",
     "chalk": "^5.6.2",
