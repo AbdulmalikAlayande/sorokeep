@@ -9,6 +9,7 @@ import {
     recordExtension,
     upsertEntry,
     updateLastCheckedLedger,
+    getAverageResourceUsage,
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
@@ -32,6 +33,14 @@ export interface ExtensionResult {
     error?: string;
     /** Estimated fee in stroops (from simulation). */
     estimatedFee?: number;
+    /** CPU instructions consumed by the transaction. */
+    cpuInsns?: number;
+    /** Memory bytes consumed by the transaction. */
+    memBytes?: number;
+    /** Whether resource usage spiked. */
+    isAnomaly?: boolean;
+    /** Details about the anomaly if present. */
+    anomalyDetails?: string;
 }
 
 export interface AutoExtensionResult {
@@ -49,6 +58,8 @@ export interface AutoExtensionResult {
         txHash: string;
         entriesExtended: number;
         ledger: number;
+        isAnomaly?: boolean;
+        anomalyDetails?: string;
     }>;
 }
 
@@ -147,6 +158,24 @@ export async function extendEntries(
         };
     }
 
+    let isAnomaly = false;
+    let anomalyDetails: string | undefined = undefined;
+
+    if (txResult.cpuInsns && txResult.memBytes) {
+        const baseline = getAverageResourceUsage(db, contractId, 10);
+        if (baseline && baseline.avg_cpu_insns > 0 && baseline.avg_mem_bytes > 0) {
+            const cpuRatio = txResult.cpuInsns / baseline.avg_cpu_insns;
+            const memRatio = txResult.memBytes / baseline.avg_mem_bytes;
+            if (cpuRatio >= 2.0 || memRatio >= 2.0) {
+                isAnomaly = true;
+                const details = [];
+                if (cpuRatio >= 2.0) details.push(`CPU usage is ${cpuRatio.toFixed(2)}x baseline`);
+                if (memRatio >= 2.0) details.push(`Memory usage is ${memRatio.toFixed(2)}x baseline`);
+                anomalyDetails = `Resource anomaly detected: ` + details.join(", ");
+            }
+        }
+    }
+
     // Fetch fresh TTLs after extension to update DB and record history
     const freshTTLs = await client.getEntryTTLs(entryKeyXdrs);
     const entries = getEntriesForContract(db, contractId);
@@ -169,6 +198,9 @@ export async function extendEntries(
                 old_ttl_ledgers: Math.max(0, oldTTL),
                 new_ttl_ledgers: freshEntry.remainingTTL,
                 tx_hash: txResult.txHash,
+                cpu_insns: txResult.cpuInsns,
+                mem_bytes: txResult.memBytes,
+                is_anomaly: isAnomaly,
                 executed_at_ledger: freshTTLs.latestLedger,
             });
 
@@ -198,6 +230,10 @@ export async function extendEntries(
         entriesExtended: entryKeyXdrs.length,
         txHash: txResult.txHash,
         ledger: txResult.ledger,
+        cpuInsns: txResult.cpuInsns,
+        memBytes: txResult.memBytes,
+        isAnomaly,
+        anomalyDetails,
     };
 }
 
@@ -308,6 +344,8 @@ export async function runAutoExtensions(
                         txHash: extResult.txHash!,
                         entriesExtended: extResult.entriesExtended,
                         ledger: extResult.ledger!,
+                        isAnomaly: extResult.isAnomaly,
+                        anomalyDetails: extResult.anomalyDetails,
                     });
                 } else {
                     result.errors.push(
