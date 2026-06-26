@@ -12,6 +12,28 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
             return { status: "healthy", latestLedger: 2443398, oldestLedger: 2322439, ledgerRetentionWindow: 120960 };
         }
 
+        async getFeeStats() {
+            return {
+                latestLedger: 2443398,
+                inclusionFee: {
+                    max: "250",
+                    min: "100",
+                    mode: "100",
+                    p10: "100",
+                    p20: "100",
+                    p30: "100",
+                    p40: "100",
+                    p50: "125",
+                    p60: "150",
+                    p70: "175",
+                    p80: "200",
+                    p90: "225",
+                    p95: "250",
+                    p99: "250",
+                },
+            };
+        }
+
         /*
         Returns mock entries that match actual real life Stellar RPC response, matching the expected response
          */
@@ -154,6 +176,17 @@ describe("StellarRpcClient", () => {
         it("returns the current ledger number", async () => {
             const ledger = await client.getCurrentLedger();
             expect(ledger).toBe(2443398);
+        });
+    });
+
+    describe("getFeeStats", () => {
+        it("normalizes live fee stats for cost projection", async () => {
+            const feeStats = await client.getFeeStats();
+
+            expect(feeStats.latestLedger).toBe(2443398);
+            expect(feeStats.baseFeeStroops).toBe(125);
+            expect(feeStats.surgeFeeStroops).toBe(250);
+            expect(feeStats.surgePricingMultiplier).toBe(2);
         });
     });
 });

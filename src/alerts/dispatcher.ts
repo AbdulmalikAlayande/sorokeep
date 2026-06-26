@@ -3,6 +3,7 @@ import { getUndeliveredAlerts, markAlertDelivered, incrementRetryCount, MAX_RETR
 import { buildAlertEvent, type AlertEvent } from "./types.js";
 import { sendWebhookAlert } from "./webhook.js";
 import { sendSlackAlert } from "./slack.js";
+import { sendPagerDutyAlert } from "./pagerduty.js";
 import { sendDiscordAlert } from "./discord.js";
 import { sendTelegramAlert } from "./telegram.js";
 import { getLogger } from "../logging/index.js";
@@ -130,6 +131,9 @@ async function route(
             break;
         case "slack":
             await sendSlackAlert(channelTarget, event);
+            break;
+        case "pagerduty":
+            await sendPagerDutyAlert(channelTarget, event);
             break;
         case "discord":
             await sendDiscordAlert(channelTarget, event);

@@ -11,6 +11,7 @@ export interface WatchOptions {
     name?: string;
     rpcUrl?: string;
     storageKeys?: string[];
+    noIntrospection?: boolean;
 }
 
 export type WatchResult =
@@ -72,7 +73,7 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         let wasmEntry: SorokeepLedgerEntryResult | null = null;
         let wasmWarning: string | undefined;
 
-        if (instanceEntry.wasmHash) {
+        if (instanceEntry.wasmHash && !options.noIntrospection) {
             wasmEntry = await client.getWasmCodeEntry(instanceEntry.wasmHash);
             if (!wasmEntry) {
                 wasmWarning = `WASM entry for hash ${instanceEntry.wasmHash} not found. It might be archived.`;
@@ -84,6 +85,20 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         if (storageKeys && storageKeys.length > 0) {
             const ttls = await client.getEntryTTLs(storageKeys);
             extraEntries.push(...ttls.entries);
+        }
+
+        // 3.5. Introspection: Fetch monitored keys if contract supports it
+        const introspectedEntries: SorokeepLedgerEntryResult[] = [];
+        if (!options.noIntrospection) {
+            try {
+                const keys = await client.getMonitoredKeys(contractId);
+                if (keys.length > 0) {
+                    const ttls = await client.getEntryTTLs(keys);
+                    introspectedEntries.push(...ttls.entries);
+                }
+            } catch (error) {
+                logger.debug(`Introspection skipped for ${contractId}: ${error}`);
+            }
         }
 
         // 4. Store in Database
@@ -129,6 +144,19 @@ export async function watchContract(db: Database.Database, options: WatchOptions
                 live_until_ledger: entry.liveUntilLedgerSeq,
                 last_modified_ledger: entry.lastModifiedLedgerSeq,
                 discovery_source: "manual",
+            });
+        }
+
+        // Store Introspected Entries
+        for (const entry of introspectedEntries) {
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: entry.entryKeyXdr,
+                entry_type: "persistent", // Defaulting to persistent for introspected keys
+                label: "Introspected Storage Entry",
+                live_until_ledger: entry.liveUntilLedgerSeq,
+                last_modified_ledger: entry.lastModifiedLedgerSeq,
+                discovery_source: "introspection",
             });
         }
 
