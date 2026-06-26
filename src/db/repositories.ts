@@ -476,7 +476,7 @@ export function insertStateChange(db: Database.Database, change: {
 }
 
 export function getStateChanges(db: Database.Database, contractEntryId: number, limit?: number): StateChange[] {
-    let sql = "SELECT * FROM state_changes WHERE contract_entry_id = ? ORDER BY detected_at_ledger DESC";
+    let sql = "SELECT * FROM state_changes WHERE contract_entry_id = ? ORDER BY detected_at_ledger DESC, id DESC";
     if (limit !== undefined) {
         if (limit < 0) {
             throw new Error("limit must be non-negative");
