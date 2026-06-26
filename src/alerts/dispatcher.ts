@@ -4,6 +4,7 @@ import { buildAlertEvent, type AlertEvent } from "./types.js";
 import { sendWebhookAlert } from "./webhook.js";
 import { sendSlackAlert } from "./slack.js";
 import { sendDiscordAlert } from "./discord.js";
+import { sendTelegramAlert } from "./telegram.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "AlertDispatcher" });
@@ -132,6 +133,9 @@ async function route(
             break;
         case "discord":
             await sendDiscordAlert(channelTarget, event);
+            break;
+        case "telegram":
+            await sendTelegramAlert(channelTarget, event);
             break;
         default:
             throw new Error(`Unknown channel type: ${channelType}`);
