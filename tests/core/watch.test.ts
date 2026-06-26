@@ -10,12 +10,14 @@ import { watchContract } from "../../src/core/watch.js";
 const mockGetContractInstanceEntry = vi.fn();
 const mockGetWasmCodeEntry = vi.fn();
 const mockGetEntryTTLs = vi.fn();
+const mockGetMonitoredKeys = vi.fn();
 
 vi.mock("../../src/rpc/client.js", () => {
     class MockStellarRpcClient {
         getContractInstanceEntry = mockGetContractInstanceEntry;
         getWasmCodeEntry = mockGetWasmCodeEntry;
         getEntryTTLs = mockGetEntryTTLs;
+        getMonitoredKeys = mockGetMonitoredKeys;
         checkHealth = vi.fn().mockResolvedValue({ status: "healthy", latestLedger: 2443398 });
         getNetwork = vi.fn().mockReturnValue("testnet");
     }
@@ -34,7 +36,98 @@ describe("watchContract - Deep Coverage Suite", () => {
         vi.clearAllMocks();
     });
 
-    // --- 1. SUCCESS PATHS ---
+    // ... (keep existing tests)
+
+    it("automatically introspects and watches declared keys on contracts", async () => {
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key-xdr",
+            latestLedger: MOCK_LEDGER,
+            liveUntilLedgerSeq: MOCK_LEDGER + 10000,
+            lastModifiedLedgerSeq: MOCK_LEDGER - 500,
+            remainingTTL: 10000,
+            executableType: "contractExecutableWasm",
+            wasmHash: "ab".repeat(32),
+        });
+
+        // WASM entry is needed, and we mock it to avoid warning
+        mockGetWasmCodeEntry.mockResolvedValue({
+            entryKeyXdr: "wasm-key-xdr",
+            latestLedger: MOCK_LEDGER,
+            liveUntilLedgerSeq: MOCK_LEDGER + 50000,
+            lastModifiedLedgerSeq: MOCK_LEDGER - 1000,
+            remainingTTL: 50000,
+        });
+
+        mockGetMonitoredKeys.mockResolvedValue(["key1-xdr", "key2-xdr"]);
+
+        mockGetEntryTTLs.mockResolvedValue({
+            latestLedger: MOCK_LEDGER,
+            entries: [
+                {
+                    entryKeyXdr: "key1-xdr",
+                    latestLedger: MOCK_LEDGER,
+                    liveUntilLedgerSeq: MOCK_LEDGER + 5000,
+                    lastModifiedLedgerSeq: MOCK_LEDGER - 100,
+                    remainingTTL: 5000,
+                },
+                {
+                    entryKeyXdr: "key2-xdr",
+                    latestLedger: MOCK_LEDGER,
+                    liveUntilLedgerSeq: MOCK_LEDGER + 5000,
+                    lastModifiedLedgerSeq: MOCK_LEDGER - 100,
+                    remainingTTL: 5000,
+                }
+            ]
+        });
+
+        const result = await watchContract(db, {
+            contractId: VALID_CID,
+            network: "testnet",
+        });
+
+        expect(result.success).toBe(true);
+        expect(mockGetMonitoredKeys).toHaveBeenCalledWith(VALID_CID);
+
+        const entries = getEntriesForContract(db, VALID_CID);
+        // Instance(1) + WASM(1) + Introspected(2) = 4
+        expect(entries).toHaveLength(4);
+        expect(entries.filter(e => e.discovery_source === "introspection")).toHaveLength(2);
+    });
+
+    it("completes watch cleanly if introspection method is absent", async () => {
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key-xdr",
+            latestLedger: MOCK_LEDGER,
+            liveUntilLedgerSeq: MOCK_LEDGER + 10000,
+            lastModifiedLedgerSeq: MOCK_LEDGER - 500,
+            remainingTTL: 10000,
+            executableType: "contractExecutableWasm",
+            wasmHash: "ab".repeat(32),
+        });
+
+        mockGetWasmCodeEntry.mockResolvedValue({
+            entryKeyXdr: "wasm-key-xdr",
+            latestLedger: MOCK_LEDGER,
+            liveUntilLedgerSeq: MOCK_LEDGER + 50000,
+            lastModifiedLedgerSeq: MOCK_LEDGER - 1000,
+            remainingTTL: 50000,
+        });
+
+        // Simulate method not found
+        mockGetMonitoredKeys.mockRejectedValue(new Error("method not found"));
+
+        const result = await watchContract(db, {
+            contractId: VALID_CID,
+            network: "testnet",
+        });
+
+        expect(result.success).toBe(true);
+        expect(mockGetMonitoredKeys).toHaveBeenCalled();
+
+        const entries = getEntriesForContract(db, VALID_CID);
+        // Instance(1) + WASM(1) = 2
+        expect(entries).toHaveLength(2);
+    });
 
     it("registers a standard WASM contract with full discovery (Instance and WASM)", async () => {
         mockGetContractInstanceEntry.mockResolvedValue({
@@ -249,5 +342,25 @@ describe("watchContract - Deep Coverage Suite", () => {
         // Original registration is unchanged
         const contract = getContract(db, VALID_CID);
         expect(contract!.network).toBe("testnet");
+    });
+
+    it("skips WASM discovery when noIntrospection is true", async () => {
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key-xdr",
+            latestLedger: MOCK_LEDGER,
+            liveUntilLedgerSeq: MOCK_LEDGER + 10000,
+            lastModifiedLedgerSeq: MOCK_LEDGER - 500,
+            remainingTTL: 10000,
+            executableType: "contractExecutableWasm",
+            wasmHash: "ab".repeat(32),
+        });
+
+        await watchContract(db, {
+            contractId: VALID_CID,
+            network: "testnet",
+            noIntrospection: true,
+        });
+
+        expect(mockGetWasmCodeEntry).not.toHaveBeenCalled();
     });
 });
