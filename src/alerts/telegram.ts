@@ -39,6 +39,21 @@ function buildMessage(event: AlertEvent): string {
     const icon = severityEmoji(event);
     const contractDisplay = event.contractName ?? event.contractId;
 
+    if (event.type === "resource_alert") {
+        const level = event.severity === "critical" ? "CRITICAL" : "Warning";
+        const resourceLabel = event.resource.type === "cpu" ? "CPU" : "Memory";
+        
+        return [
+            `${icon} *Resource ${level}* — ${escapeMarkdown(contractDisplay)}`,
+            ``,
+            `*Resource:* ${resourceLabel}`,
+            `*Network:* ${escapeMarkdown(event.network)}`,
+            `*Usage:* ${event.resource.usagePercent}% \\(${event.resource.currentUsage.toLocaleString()} / ${event.resource.limit.toLocaleString()}\\)`,
+            ``,
+            `_Severity: ${escapeMarkdown(event.severity)} \\| Contract: ${escapeMarkdown(event.contractId)}_`,
+        ].join("\n");
+    }
+
     const status = event.type === "threshold_crossed"
         ? `TTL ${event.severity === "critical" ? "CRITICAL" : "Warning"}`
         : "Alert Resolved";
