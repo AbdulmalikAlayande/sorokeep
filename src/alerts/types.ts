@@ -3,11 +3,12 @@ import { formatTimeToCloseLedger } from "../utils/formatting.js";
 // ─── Core event type ─────────────────────────────────────────────────────────
 
 export type AlertSeverity = "critical" | "warning" | "info";
+export type AlertEventType = "threshold_crossed" | "alert_resolved" | "resource_alert";
 
-export interface AlertEvent {
-    /** Whether this is a new threshold crossing or a resolved alert. */
+// ─── TTL-based alert event ──────────────────────────────────────────────────
+
+export interface TTLAlertEvent {
     type: "threshold_crossed" | "alert_resolved";
-    /** Severity based on how close to expiry the entry is. */
     severity: AlertSeverity;
     contractId: string;
     contractName: string | null;
@@ -31,6 +32,35 @@ export interface AlertEvent {
     timestamp: string;
 }
 
+// ─── Resource-based alert event ─────────────────────────────────────────────
+
+export interface ResourceAlertEvent {
+    type: "resource_alert";
+    severity: AlertSeverity;
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    resource: {
+        type: "cpu" | "memory";
+        /** Current usage (in instructions or bytes). */
+        currentUsage: number;
+        /** Configured limit (in instructions or bytes). */
+        limit: number;
+        /** Usage as a percentage of limit. */
+        usagePercent: number;
+    };
+    /** Human-readable message about the resource usage. */
+    message: string;
+    /** Ledger sequence number at the time of detection (if available). */
+    firedAtLedger?: number;
+    /** ISO 8601 timestamp. */
+    timestamp: string;
+}
+
+// ─── Union of all alert event types ──────────────────────────────────────────
+
+export type AlertEvent = TTLAlertEvent | ResourceAlertEvent;
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
@@ -47,11 +77,22 @@ export function computeSeverity(remainingTTL: number, thresholdLedgers: number, 
 }
 
 /**
- * Build an AlertEvent from raw data.  Keeps the assembly logic in one place
- * so both the dispatcher and any future test fixtures share it.
+ * Compute alert severity from resource usage percentage.
+ * - critical: 95% or higher
+ * - warning:  80-95%
+ * - info:     not used for resource alerts
+ */
+export function computeResourceSeverity(usagePercent: number): AlertSeverity {
+    if (usagePercent >= 95) return "critical";
+    if (usagePercent >= 80) return "warning";
+    return "info";
+}
+
+/**
+ * Build a TTL-based AlertEvent from raw data.
  */
 export function buildAlertEvent(opts: {
-    type: AlertEvent["type"];
+    type: "threshold_crossed" | "alert_resolved";
     contractId: string;
     contractName: string | null;
     network: string;
@@ -61,7 +102,7 @@ export function buildAlertEvent(opts: {
     configuredLedgers: number;
     remainingTTL: number;
     firedAtLedger: number;
-}): AlertEvent {
+}): TTLAlertEvent {
     return {
         type: opts.type,
         severity: computeSeverity(opts.remainingTTL, opts.configuredLedgers, opts.type === "alert_resolved"),
@@ -78,6 +119,45 @@ export function buildAlertEvent(opts: {
             currentRemainingLedgers: opts.remainingTTL,
             approximateTimeRemaining: formatTimeToCloseLedger(opts.remainingTTL),
         },
+        firedAtLedger: opts.firedAtLedger,
+        timestamp: new Date().toISOString(),
+    };
+}
+
+/**
+ * Build a resource-based AlertEvent from raw data.
+ */
+export function buildResourceAlertEvent(opts: {
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    resourceType: "cpu" | "memory";
+    currentUsage: number;
+    limit: number;
+    usagePercent: number;
+    firedAtLedger?: number;
+}): ResourceAlertEvent {
+    const resourceLabel = opts.resourceType === "cpu" ? "CPU" : "Memory";
+    const usageUnit = opts.resourceType === "cpu" ? "instructions" : "bytes";
+    
+    let message = `${resourceLabel} usage is at ${opts.usagePercent}% of limit`;
+    if (opts.usagePercent > 100) {
+        message = `${resourceLabel} usage exceeds limit: ${opts.currentUsage} ${usageUnit} / ${opts.limit} ${usageUnit}`;
+    }
+
+    return {
+        type: "resource_alert",
+        severity: computeResourceSeverity(opts.usagePercent),
+        contractId: opts.contractId,
+        contractName: opts.contractName,
+        network: opts.network,
+        resource: {
+            type: opts.resourceType,
+            currentUsage: opts.currentUsage,
+            limit: opts.limit,
+            usagePercent: opts.usagePercent,
+        },
+        message,
         firedAtLedger: opts.firedAtLedger,
         timestamp: new Date().toISOString(),
     };
