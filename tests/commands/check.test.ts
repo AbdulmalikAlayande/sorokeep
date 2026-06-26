@@ -210,4 +210,42 @@ describe("check command", () => {
             expect.stringContaining("100,000")
         );
     });
+
+    it("exits with code 0 and prints warning when any TTL is below the fail-under threshold but --force is used", () => {
+        upsertEntry(mockDb, {
+            contract_id: contractID,
+            entry_key_xdr: "AAAAA",
+            entry_type: "instance",
+            live_until_ledger: 500000,
+            last_modified_ledger: 400000,
+            discovery_source: "deterministic",
+        });
+        upsertEntry(mockDb, {
+            contract_id: contractID,
+            entry_key_xdr: "AAAAAB",
+            entry_type: "wasm",
+            live_until_ledger: 405000,
+            last_modified_ledger: 400000,
+            discovery_source: "deterministic",
+        });
+        updateLastCheckedLedger(mockDb, contractID, 400000);
+
+        const program = new Command();
+        registerCheckCommand(program);
+
+        expect(() => {
+            program.parse([
+                "node",
+                "sorokeep",
+                "check",
+                contractID,
+                "--fail-under",
+                "100000",
+                "--force",
+            ]);
+        }).toThrow("process.exit called");
+
+        expect(exitSpy).toHaveBeenCalledWith(0);
+        expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining("CI checks bypassed with --force"));
+    });
 });

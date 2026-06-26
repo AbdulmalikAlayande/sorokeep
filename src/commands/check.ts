@@ -12,13 +12,14 @@ import {
 export function registerCheckCommand(program: Command): void {
     program
         .command("check <contractId>")
-        .description("Check TTL health for a watched contract (CI-friendly)")
+        .description("Check TTL health for a watched contract (CI-friendly, can be forced)")
+        .option("--force", "Bypass CI TTL failures and exit 0")
         .requiredOption(
             "--fail-under <ledgers>",
             "Exit with code 1 if any entry TTL is below this many ledgers",
             parseInt,
         )
-        .action((contractId: string, options: { failUnder: number }) => {
+        .action((contractId: string, options: { failUnder: number; force?: boolean }) => {
             const db = getDatabase();
             const contract = getContract(db, contractId);
 
@@ -64,7 +65,12 @@ export function registerCheckCommand(program: Command): void {
             }
 
             if (hasFailure) {
-                process.exit(1);
+                if (options.force) {
+                    console.log("WARNING: CI checks bypassed with --force");
+                    process.exit(0);
+                } else {
+                    process.exit(1);
+                }
             }
 
             console.log(chalk.green("All TTLs are safe."));

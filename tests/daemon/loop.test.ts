@@ -7,6 +7,8 @@ import type { MonitorCycleResult } from "../../src/core/monitor";
 
 const mockRunMonitorCycle = vi.fn();
 const mockDeliverPendingAlerts = vi.fn();
+const mockVacuumDatabase = vi.fn();
+const mockAggregateDailyCostSnapshots = vi.fn();
 
 vi.mock("../../src/core/monitor.js", () => ({
     runMonitorCycle: (...args: unknown[]) => mockRunMonitorCycle(...args),
@@ -14,6 +16,18 @@ vi.mock("../../src/core/monitor.js", () => ({
 
 vi.mock("../../src/alerts/dispatcher.js", () => ({
     deliverPendingAlerts: (...args: unknown[]) => mockDeliverPendingAlerts(...args),
+}));
+
+vi.mock("../../src/db/database.js", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../src/db/database.js")>();
+    return {
+        ...actual,
+        vacuumDatabase: (...args: unknown[]) => mockVacuumDatabase(...args),
+    };
+});
+
+vi.mock("../../src/db/repositories.js", () => ({
+    aggregateDailyCostSnapshots: (...args: unknown[]) => mockAggregateDailyCostSnapshots(...args),
 }));
 
 import { startDaemon, stopDaemon } from "../../src/daemon/loop.js";
@@ -57,6 +71,45 @@ describe("daemon loop", () => {
     });
 
     // =========================================================================
+    // 0. MAINTENANCE
+    // =========================================================================
+    describe("Maintenance", () => {
+        it("runs scheduled vacuum only when the configured interval has elapsed", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+            mockVacuumDatabase.mockReturnValue(true);
+
+            await startDaemon(db, "testnet", { intervalMs: 5000, vacuumIntervalMs: 5000 });
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(0);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(2);
+        });
+
+        it("skips scheduled vacuum when the database is already in a transaction", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+            mockVacuumDatabase.mockReturnValue(true);
+
+            await startDaemon(db, "testnet", { intervalMs: 5000, vacuumIntervalMs: 5000 });
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(0);
+
+            db.exec("BEGIN IMMEDIATE");
+            expect(db.inTransaction).toBe(true);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(0);
+
+            db.exec("ROLLBACK");
+            expect(db.inTransaction).toBe(false);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockVacuumDatabase).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    // =========================================================================
     // 1. STARTUP & INITIAL CYCLE
     // =========================================================================
     describe("Startup and initial cycle", () => {
@@ -91,6 +144,16 @@ describe("daemon loop", () => {
             await expect(
                 startDaemon(db, "testnet", { intervalMs: 5000 }),
             ).resolves.not.toThrow();
+        });
+
+        it("calls daily snapshot aggregation after each cycle", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            await startDaemon(db, "testnet", { intervalMs: 5000 });
+            expect(mockAggregateDailyCostSnapshots).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockAggregateDailyCostSnapshots).toHaveBeenCalledTimes(2);
         });
 
         it("still schedules subsequent cycles after an initial cycle failure", async () => {
