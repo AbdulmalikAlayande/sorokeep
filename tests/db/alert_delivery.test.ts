@@ -22,7 +22,7 @@ function seedFull(
         entryKeyXdr?: string;
         entryType?: string;
         liveUntil?: number;
-        channelType?: "webhook" | "slack";
+        channelType?: "webhook" | "slack" | "pagerduty";
         channelTarget?: string;
         thresholdLedgers?: number;
         ttlAtFire?: number;
