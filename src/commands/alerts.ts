@@ -27,9 +27,10 @@ export function registerAlertsCommand(program: Command): void {
         .command("add")
         .description("Add a new alert configuration (TTL-based or resource-based)")
         .requiredOption("--contract <id>", "The contract ID to alert on")
-        .requiredOption("--type <type>", "The notification channel type ('webhook', 'slack', 'discord', or 'telegram')")
+        .requiredOption("--type <type>", "The notification channel type ('webhook', 'slack', 'discord', 'telegram', or 'pagerduty')")
         .option("--url <url>", "Webhook URL (required if --type is webhook or discord)")
         .option("--channel <channel>", "Slack channel (required if --type is slack)")
+        .option("--routing-key <key>", "PagerDuty integration key (required if --type is pagerduty)")
         .option("--secret <secret>", "HMAC secret for webhook signing (auto-generated if omitted for webhooks)")
         .option("--threshold <ledgers>", "Threshold in number of ledgers (for TTL-based alerts)", (val) => parseInt(val, 10))
         .option("--cpu-limit <instructions>", "CPU instruction limit for resource alerts (default: 100,000,000)", (val) => parseInt(val, 10))
@@ -75,6 +76,12 @@ export function registerAlertsCommand(program: Command): void {
                     process.exit(1);
                 }
                 target = options.channel;
+            } else if (options.type === "pagerduty") {
+                if (!options.routingKey) {
+                    console.error(chalk.red("Error: --routing-key is required when --type is pagerduty."));
+                    process.exit(1);
+                }
+                target = options.routingKey;
             } else if (options.type === "discord") {
                 if (!options.url) {
                     console.error(chalk.red("Error: --url is required when --type is discord. Paste the full Discord webhook URL."));
@@ -88,10 +95,10 @@ export function registerAlertsCommand(program: Command): void {
                 }
                 target = options.channel;
             } else if (options.type === "email") {
-                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook', 'slack', 'discord', or 'telegram'."));
+                console.error(chalk.red("Error: Email alerting is not yet implemented. Use 'webhook', 'slack', 'discord', 'telegram', or 'pagerduty'."));
                 process.exit(1);
             } else {
-                console.error(chalk.red("Error: --type must be 'webhook', 'slack', 'discord', or 'telegram'."));
+                console.error(chalk.red("Error: --type must be 'webhook', 'slack', 'discord', 'telegram', or 'pagerduty'."));
                 process.exit(1);
             }
 
