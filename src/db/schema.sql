@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS contracts (
     wasm_hash TEXT,
     tags TEXT,
     registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_checked_ledger INTEGER
+    last_checked_ledger INTEGER,
+    last_introspected_at DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS contract_entries (

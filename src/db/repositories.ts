@@ -8,6 +8,8 @@ export interface Contract {
     tags: string | null;
     registered_at: Date;
     last_checked_ledger?: number | null;
+    /** ISO-8601 timestamp of the last successful introspection (instance/WASM key discovery). NULL if never introspected. */
+    last_introspected_at?: string | null;
 }
 
 export interface ContractEntry {
@@ -120,6 +122,48 @@ export function updateLastCheckedLedger(db: Database.Database, contractId: strin
 
 export function deleteContract(db: Database.Database, id: string): void {
   db.prepare("DELETE FROM contracts WHERE id = ?").run(id);
+}
+
+/**
+ * Record that a successful contract introspection (instance/WASM key discovery)
+ * was performed at the given timestamp. Accepts an ISO-8601 string so callers
+ * can control the clock in tests.
+ */
+export function updateLastIntrospectedAt(
+  db: Database.Database,
+  contractId: string,
+  isoTimestamp: string,
+): void {
+  db.prepare(
+    "UPDATE contracts SET last_introspected_at = ? WHERE id = ?",
+  ).run(isoTimestamp, contractId);
+}
+
+/**
+ * Return true when the introspection cache for the given contract is still
+ * valid — i.e. `last_introspected_at` is not NULL and the timestamp is
+ * strictly less than `maxAgeMs` milliseconds ago.
+ *
+ * The default max-age is 24 hours (86 400 000 ms).
+ * The boundary is *exclusive on the valid side*: exactly 24 h ago is expired.
+ */
+export function isIntrospectionCacheValid(
+  db: Database.Database,
+  contractId: string,
+  maxAgeMs = 24 * 60 * 60 * 1_000,
+): boolean {
+  const row = db
+    .prepare(
+      "SELECT last_introspected_at FROM contracts WHERE id = ?",
+    )
+    .get(contractId) as { last_introspected_at: string | null } | undefined;
+
+  if (!row || row.last_introspected_at === null) return false;
+
+  const introspectedAt = new Date(row.last_introspected_at).getTime();
+  const ageMs = Date.now() - introspectedAt;
+  // strictly less than → at exactly 24 h the cache is expired
+  return ageMs < maxAgeMs;
 }
 
 // ---------------------------- Database Access Functions For Schema: ContractEntry ----------------------------

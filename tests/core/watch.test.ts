@@ -268,14 +268,15 @@ describe("watchContract - Deep Coverage Suite", () => {
         });
         await watchContract(db, { contractId: VALID_CID, network: "testnet", name: "Old Name" });
 
-        // 2nd Watch
+        // 2nd Watch — forceRefresh bypasses the introspection cache so the
+        // updated name and TTL are written to the DB from fresh RPC data.
         mockGetContractInstanceEntry.mockResolvedValue({
             entryKeyXdr: "instance-key",
             latestLedger: 200,
             liveUntilLedgerSeq: 1100,
             remainingTTL: 900,
         });
-        const result = await watchContract(db, { contractId: VALID_CID, network: "testnet", name: "New Name" });
+        const result = await watchContract(db, { contractId: VALID_CID, network: "testnet", name: "New Name", forceRefresh: true });
 
         expect(result.success).toBe(true);
 
