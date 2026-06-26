@@ -1,0 +1,70 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# sorokeep — GitLab CI Template
+# Integrate TTL health checks for Soroban smart contracts into your pipeline.
+#
+# Quick start:
+#   1. Copy this file into your project's `.gitlab-ci.yml`.
+#   2. Set the required CI/CD variables (see "Variables" section below).
+#   3. Ensure the sorokeep database is available (see "Database" section).
+#   4. Push — the `check` stage runs on every commit to `main`.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ─── Variables ────────────────────────────────────────────────────────────────
+# Set these in your GitLab project's CI/CD Settings → Variables.
+#
+# SOROKEEP_DB_PATH        (required) Path to the sorokeep SQLite database file.
+#                          Default: $HOME/.sorokeep/sorokeep.db
+#                          You can also restore the DB from a previous pipeline
+#                          artifact (recommended if the daemon runs elsewhere).
+#
+# How the database is populated:
+#   sorokeep requires a SQLite database populated by a running daemon
+#   (sorokeep daemon) or a one-time poll. In CI, restore the DB from an
+#   artifact produced by a previous daemon pipeline:
+#
+#     artifacts:
+#       paths:
+#         - .sorokeep/sorokeep.db
+#
+# ─── Stages ───────────────────────────────────────────────────────────────────
+
+stages:
+  - check
+
+sorokeep:check:
+  stage: check
+  image: node:22-alpine
+  variables:
+    SOROKEEP_DB_PATH: "${CI_PROJECT_DIR}/.sorokeep/sorokeep.db"
+  script:
+    # 1. Install sorokeep globally
+    - npm install -g sorokeep
+
+    # 2. Restore the database from a previous pipeline's artifact
+    #    (Adjust the path to match your artifact layout.)
+    - mkdir -p "$(dirname $SOROKEEP_DB_PATH)"
+    - cp previous-artifacts/sorokeep.db "$SOROKEEP_DB_PATH"
+
+    # 3. Run the TTL health check
+    #    Exits 0 if all TTLs are within bounds.
+    #    Exits 1 if any TTL bounds are crossed → pipeline fails.
+    - sorokeep check
+
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_MERGE_REQUEST_ID
+
+  # ─── Credentials mapping ────────────────────────────────────────────────────
+  # The check command reads from the local SQLite database only — no RPC
+  # credentials are needed for the check itself (the daemon that populates
+  # the DB needs the RPC URL).
+  #
+  # GitLab Variable          → sorokeep
+  # ────────────────────────────────────────────────────────────────────
+  # SOROKEEP_DB_PATH         → SOROKEEP_DB_PATH env var (overrides default
+  #                            $HOME/.sorokeep/sorokeep.db)
+  #
+  # For daemon pipelines (separate from this check stage), configure:
+  #   SOROKEEP_RPC_URL       → --rpc-url CLI flag
+  #   SOROKEEP_NETWORK       → --network CLI flag (default: testnet)
