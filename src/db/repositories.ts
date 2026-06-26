@@ -20,7 +20,7 @@ export interface ContractEntry {
     label: string | null;
     live_until_ledger: number;
     last_modified_ledger: number;
-    discovery_source: "deterministic" | "manual" | "instance_scan" | "footprint";
+    discovery_source: "deterministic" | "manual" | "instance_scan" | "footprint" | "introspection";
     first_seen_at: Date;
     last_checked_at: Date | null;
 }
