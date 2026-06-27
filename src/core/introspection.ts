@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import type Database from "better-sqlite3";
 
 export interface IntrospectionResult {
@@ -7,9 +8,9 @@ export interface IntrospectionResult {
 }
 
 export async function runIntrospectionRescan(
-    db: Database.Database,
-    network: string,
-    rpcUrl: string | undefined,
+    _db: Database.Database,
+    _network: string,
+    _rpcUrl: string | undefined,
 ): Promise<IntrospectionResult> {
     return {
         contractsChecked: 0,
