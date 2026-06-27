@@ -459,7 +459,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
                 COALESCE(SUM(temporary_cost_xlm), 0.0) AS temporary_cost_xlm
             FROM cost_daily_snapshots
             WHERE contract_id = ? AND snapshot_date >= date('now', ?)
-        `).get(contractId, ...snapshotParams)
+        `).get(contractId, ...snapshotParams) as any
         : db.prepare(`
             SELECT
                 COALESCE(SUM(total_extensions), 0) AS total_extensions,
@@ -474,7 +474,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
                 COALESCE(SUM(temporary_cost_xlm), 0.0) AS temporary_cost_xlm
             FROM cost_daily_snapshots
             WHERE contract_id = ?
-        `).get(contractId);
+        `).get(contractId) as any;
 
     const currentDayRow = db.prepare(`
         SELECT
@@ -492,7 +492,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
         JOIN contract_entries ce ON ce.id = eh.contract_entry_id
         WHERE eh.contract_id = ?
           AND date(eh.executed_at) = date('now')
-    `).get(contractId);
+    `).get(contractId) as any;
 
     return {
         contract_id: contractId,
