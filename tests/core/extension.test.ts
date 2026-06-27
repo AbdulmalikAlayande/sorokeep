@@ -6,6 +6,7 @@ import {
     upsertEntry,
     upsertExtensionPolicy,
     getEntriesForContract,
+    recordExtension,
     getExtensionHistory,
 } from "../../src/db/repositories.js";
 
@@ -118,6 +119,8 @@ describe("Core Extension Logic", () => {
             mockSubmitExtension.mockResolvedValue({
                 success: true,
                 txHash: "abc123txhash",
+                cpuInsns: 10000,
+                memBytes: 1024,
                 ledger: 2500100,
             });
 
@@ -158,6 +161,8 @@ describe("Core Extension Logic", () => {
             const history = getExtensionHistory(db, contractId);
             expect(history.length).toBe(2);
             expect(history[0]!.tx_hash).toBe("abc123txhash");
+            expect(history[0]!.cpu_insns).toBe(10000);
+            expect(history[0]!.mem_bytes).toBe(1024);
 
             // Verify entries were updated with fresh TTLs
             const updatedEntries = getEntriesForContract(db, contractId);
@@ -517,6 +522,61 @@ describe("Core Extension Logic", () => {
             expect(result.contractsChecked).toBe(2);
             // At least one should have been checked, and we should have errors
             expect(result.errors.length).toBeGreaterThanOrEqual(1);
+        });
+
+        it("flags anomalous execution if resource usage spikes", async () => {
+            const contractId = seedContract(db);
+
+            // Seed with some normal history
+            recordExtension(db, {
+                contract_id: contractId, contract_entry_id: 1, old_ttl_ledgers: 1, new_ttl_ledgers: 2,
+                tx_hash: "h1", cost_xlm: 0.1, executed_at_ledger: 1, cpu_insns: 1000, mem_bytes: 100
+            });
+            recordExtension(db, {
+                contract_id: contractId, contract_entry_id: 1, old_ttl_ledgers: 1, new_ttl_ledgers: 2,
+                tx_hash: "h2", cost_xlm: 0.1, executed_at_ledger: 2, cpu_insns: 1200, mem_bytes: 120
+            });
+
+            // Set instance entry with low TTL
+            upsertEntry(db, {
+                contract_id: contractId, entry_key_xdr: "instance-key-xdr", entry_type: "instance",
+                live_until_ledger: 2410000,
+            });
+
+            upsertExtensionPolicy(db, {
+                contract_id: contractId, enabled: true, target_ttl_ledgers: 100000,
+                extend_when_below_ledgers: 20000, keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            // This extension will have a huge resource spike (3x CPU, 4x MEM)
+            mockSubmitExtension.mockResolvedValue({
+                success: true, txHash: "anomaly-tx", ledger: 2400100,
+                cpuInsns: 3301, // > 3 * 1100
+                memBytes: 441, // > 4 * 110
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [{
+                    entryKeyXdr: "instance-key-xdr", latestLedger: 2400100,
+                    liveUntilLedgerSeq: 2500100, remainingTTL: 100000,
+                }],
+            });
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            expect(result.contractsExtended).toBe(1);
+            expect(result.extensions[0]!.isAnomaly).toBe(true);
+            expect(result.extensions[0]!.anomalyDetails).toContain("CPU usage is 3.00x baseline");
+            expect(result.extensions[0]!.anomalyDetails).toContain("Memory usage is 4.01x baseline");
+
+            // Verify the new extension was recorded with anomaly flag
+            const history = getExtensionHistory(db, contractId);
+            const anomaly = history.find(h => h.tx_hash === "anomaly-tx");
+            expect(anomaly!.is_anomaly).toBe(1);
         });
     });
 });

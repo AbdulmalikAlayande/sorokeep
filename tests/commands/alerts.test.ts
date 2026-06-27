@@ -101,7 +101,7 @@ describe("alerts command", () => {
         });
     });
 
-    it("adds an email alert configuration", () => {
+    it("adds a pagerduty alert configuration", () => {
         const program = new Command();
         registerAlertsCommand(program);
 
@@ -113,9 +113,9 @@ describe("alerts command", () => {
             "--contract",
             contractID,
             "--type",
-            "email",
-            "--to",
-            "ops@example.com",
+            "pagerduty",
+            "--routing-key",
+            "pagerduty-key-123",
             "--threshold",
             "3000",
         ]);
@@ -124,13 +124,13 @@ describe("alerts command", () => {
         expect(configs).toHaveLength(1);
         expect(configs[0]).toMatchObject({
             contract_id: contractID,
-            channel_type: "email",
-            channel_target: "ops@example.com",
+            channel_type: "pagerduty",
+            channel_target: "pagerduty-key-123",
             threshold_ledgers: 3000,
         });
     });
 
-    it("fails if --to is missing when --type is email", () => {
+    it("rejects email alert type as not yet implemented", () => {
         const program = new Command();
         registerAlertsCommand(program);
 
