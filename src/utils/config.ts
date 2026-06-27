@@ -17,6 +17,12 @@ export interface SorokeepConfig {
     pollingIntervalSeconds: number;
     /** Slack bot token for Slack alert delivery. */
     slackToken?: string;
+    /**
+     * Monthly rent budget in XLM. When set, the `costs` command will compare
+     * the 30/60/90-day forecasted rent windows against this value and display
+     * a warning in red when any window exceeds it.
+     */
+    monthlyBudgetXlm?: number;
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
@@ -54,6 +60,9 @@ export function loadConfig(customPath?: string): SorokeepConfig {
                 ? parsed.pollingIntervalSeconds
                 : DEFAULT_CONFIG.pollingIntervalSeconds,
             slackToken: parsed.slackToken,
+            monthlyBudgetXlm: typeof parsed.monthlyBudgetXlm === "number" && parsed.monthlyBudgetXlm > 0
+                ? parsed.monthlyBudgetXlm
+                : undefined,
         };
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
