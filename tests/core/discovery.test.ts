@@ -20,7 +20,7 @@ vi.mock("@stellar/stellar-sdk", async () => {
             return { latestLedger: 10000 };
         }
 
-        async getEvents(request: any) {
+        async getEvents(_request: any) {
             if (this.url.includes("no-events")) return { events: [] };
             if (this.url.includes("throw-events")) throw new Error("RPC error fetching events");
 
@@ -37,7 +37,7 @@ vi.mock("@stellar/stellar-sdk", async () => {
             };
         }
 
-        async getLedgerEntries(key: any) {
+        async getLedgerEntries(_key: any) {
             if (this.url.includes("missing-entries")) return { entries: [] };
             
             return {
@@ -104,8 +104,6 @@ describe("Discovery Core", () => {
 
         it("ignores keys that are already tracked", async () => {
             // Mock that "hello" is already in DB
-            const val1 = new xdr.ScVal.scvString("hello");
-            const dummyContractAddress = xdr.ScAddress.scAddressTypeContract(Buffer.from(validContractId, "hex") as any); // Doesn't perfectly match `buildContractDataKey` decoding, but let's assume we mock `getEntriesForContract` with base64 strings we construct or just rely on the Set.
             // Rather than building the exact XDR, we know the test upserts 2 keys. Let's let it run and ensure the existing logic works.
             vi.spyOn(dbRepo, "getEntriesForContract").mockReturnValue([
                 // To properly test, we need the exact XDR base64 string that `buildContractDataKey` generates

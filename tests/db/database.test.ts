@@ -1,6 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { getDatabase, closeDatabase, vacuumDatabase, getDatabaseForTesting } from "../../src/db/database";
-import Database from "better-sqlite3";
 import fs from "fs";
 import path from "path";
 

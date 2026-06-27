@@ -55,7 +55,9 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
                             const contractIdStr = parsedK.contractData().contract().contractId().toString('hex');
                             if (contractIdStr === Buffer.from("missing".padEnd(32, "a")).toString("hex")) isMissing = true;
                         }
-                    } catch (e) {}
+                    } catch {
+                        // ignore parsing errors in test
+                    }
 
                     if (isMissing || kStr.includes("missing")) return null;
                     if (kStr.includes("invalid")) return { xdr: "invalid" };
@@ -111,7 +113,7 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
             return new actualModule.Account(publicKey, "123");
         }
 
-        async simulateTransaction(tx: any) {
+        async simulateTransaction(_tx: any) {
             if (this.serverUrl && this.serverUrl.includes("sim-fail")) return { error: "Simulation failed" };
             return {
                 cost: { cpuInsns: "1000", memBytes: "100" },
@@ -120,7 +122,7 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
             };
         }
 
-        async sendTransaction(tx: any) {
+        async sendTransaction(_tx: any) {
             if (this.serverUrl && this.serverUrl.includes("send-error")) {
                 return { status: "ERROR", errorResult: "Something went wrong", hash: "error-hash" };
             }
@@ -227,7 +229,7 @@ describe("StellarRpcClient", () => {
         });
 
         it('should return null or handle missing contracts', async () => {
-            const contractId = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+            // Test goes here
         });
 
         it('should handle token contracts (non-WASM executable type)', async () => {

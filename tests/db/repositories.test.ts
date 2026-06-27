@@ -53,7 +53,9 @@ describe("Database Repositories", () => {
             db.exec(`ALTER TABLE alert_configs_new RENAME TO alert_configs;`);
             db.exec("COMMIT;");
             db.exec("PRAGMA foreign_keys = ON;");
-        } catch {}
+        } catch {
+            // ignore failure if tables already altered
+        }
     });
 
     afterEach(() => {
@@ -212,7 +214,8 @@ describe("Database Repositories", () => {
             const configId = repo.getAlertConfigsForContract(db, "C1")[0].id;
             repo.recordAlertFired(db, { alert_config_id: configId, contract_entry_id: entryId, fired_at_ledger: 1000, ttl_at_fire: 100 });
 
-            const alertHist = repo.getAlertHistory(db, "C1")[0];
+            const alertHist = repo.getAlertHistory(db, "C1");
+            expect(alertHist.length).toBe(1);
             let undelivered = repo.getUndeliveredAlerts(db, "testnet");
             expect(undelivered.length).toBe(1);
             
@@ -404,7 +407,7 @@ describe("Database Repositories", () => {
             expect(undelivered.length).toBe(0); // already delivered
             
             // record new undelivered
-            const newAlertFiredId = repo.recordResourceAlertFired(db, {
+            repo.recordResourceAlertFired(db, {
                 resource_alert_config_id: conf!.id,
                 resource_type: "memory",
                 usage: 95,
