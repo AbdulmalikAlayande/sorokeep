@@ -443,6 +443,19 @@ export function getCostDailySnapshots(db: Database.Database, contractId: string,
 }
 
 export function getContractCostSummary(db: Database.Database, contractId: string, days?: number) : ContractCostSummary {
+    interface CostAggregateRow {
+        total_extensions: number;
+        total_cost_xlm: number;
+        instance_extensions: number;
+        instance_cost_xlm: number;
+        wasm_extensions: number;
+        wasm_cost_xlm: number;
+        persistent_extensions: number;
+        persistent_cost_xlm: number;
+        temporary_extensions: number;
+        temporary_cost_xlm: number;
+    }
+
     const snapshotParams = days ? [`-${Math.max(days - 1, 0)} days`] : [];
     const snapshotRow = days
         ? db.prepare(`
@@ -459,7 +472,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
                 COALESCE(SUM(temporary_cost_xlm), 0.0) AS temporary_cost_xlm
             FROM cost_daily_snapshots
             WHERE contract_id = ? AND snapshot_date >= date('now', ?)
-        `).get(contractId, ...snapshotParams)
+        `).get(contractId, ...snapshotParams) as CostAggregateRow
         : db.prepare(`
             SELECT
                 COALESCE(SUM(total_extensions), 0) AS total_extensions,
@@ -474,7 +487,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
                 COALESCE(SUM(temporary_cost_xlm), 0.0) AS temporary_cost_xlm
             FROM cost_daily_snapshots
             WHERE contract_id = ?
-        `).get(contractId);
+        `).get(contractId) as CostAggregateRow;
 
     const currentDayRow = db.prepare(`
         SELECT
@@ -492,7 +505,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
         JOIN contract_entries ce ON ce.id = eh.contract_entry_id
         WHERE eh.contract_id = ?
           AND date(eh.executed_at) = date('now')
-    `).get(contractId);
+    `).get(contractId) as CostAggregateRow;
 
     return {
         contract_id: contractId,

@@ -19,7 +19,6 @@ describe("resources command", () => {
     const contractID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
     let consoleLogSpy: any;
     let consoleErrorSpy: any;
-    let exitSpy: any;
 
     beforeEach(() => {
         mockDb = getDatabaseForTesting();
@@ -31,7 +30,7 @@ describe("resources command", () => {
 
         consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
         consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-        exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+        vi.spyOn(process, "exit").mockImplementation(() => {
             throw new Error("process.exit called");
         });
     });
