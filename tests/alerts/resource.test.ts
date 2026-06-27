@@ -3,9 +3,7 @@ import type Database from "better-sqlite3";
 import { getDatabaseForTesting } from "../../src/db/database";
 import {
     insertContract,
-    upsertEntry,
     insertResourceAlertConfig,
-    recordResourceAlertFired,
 } from "../../src/db/repositories";
 import { checkResourceLimitsAndAlert } from "../../src/alerts/resource";
 
@@ -246,7 +244,7 @@ describe("Resource Alert Detection and Dispatch", () => {
             checkResourceLimitsAndAlert(db, "CTEST1234", resourceData);
 
             expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
-            const [url, event, secret] = mockSendWebhookAlert.mock.calls[0]!;
+            const [, , secret] = mockSendWebhookAlert.mock.calls[0]!;
             expect(secret).toBe("test-secret-key");
         });
     });

@@ -89,7 +89,6 @@ export async function discoverStorageKeys(
         const allEvents: rpc.Api.EventResponse[] = [];
         let cursor: string | undefined;
 
-        // eslint-disable-next-line no-constant-condition
         while (true) {
             const request: any = {
                 filters: [
