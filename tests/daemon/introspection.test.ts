@@ -1,4 +1,4 @@
-import { describe, it, vi, beforeEach } from "vitest";
+import { describe, it, vi, beforeEach, afterEach } from "vitest";
 import { getDatabaseForTesting } from "../../src/db/database";
 import { stopDaemon } from "../../src/daemon/loop";
 
