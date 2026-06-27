@@ -37,7 +37,6 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
         /*
         Returns mock entries that match actual real life Stellar RPC response, matching the expected response
          */
->>>>>>> main
         async getLedgerEntries(...keys: any[]) {
             return {
                 latestLedger: 2443398,

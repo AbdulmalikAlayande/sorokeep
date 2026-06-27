@@ -26,9 +26,13 @@ vi.mock("../../src/db/database.js", async (importOriginal) => {
     };
 });
 
-vi.mock("../../src/db/repositories.js", () => ({
-    aggregateDailyCostSnapshots: (...args: unknown[]) => mockAggregateDailyCostSnapshots(...args),
-}));
+vi.mock("../../src/db/repositories.js", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../src/db/repositories.js")>();
+    return {
+        ...actual,
+        aggregateDailyCostSnapshots: (...args: unknown[]) => mockAggregateDailyCostSnapshots(...args),
+    };
+});
 
 import { startDaemon, stopDaemon } from "../../src/daemon/loop.js";
 
