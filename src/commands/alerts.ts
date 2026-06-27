@@ -8,8 +8,6 @@ import {
     getAlertConfigById,
     deleteAlertConfig,
     insertResourceAlertConfig,
-    getResourceAlertConfigsForContract,
-    deleteResourceAlertConfig,
     getContract,
     getAlertHistory,
 } from "../db/repositories.js";

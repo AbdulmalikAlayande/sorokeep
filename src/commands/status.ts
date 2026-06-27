@@ -17,11 +17,12 @@ export function registerStatusCommand(program: Command): void {
             let status;
             try {
                 status = getContractStatus(db, contractId);
-            } catch (error) {
-                if (error instanceof ContractNotFoundError) {
+            } catch (error: any) {
+                if (error instanceof ContractNotFoundError || error?.name === "ContractNotFoundError") {
                     console.log(chalk.red(`Contract ${formatContractID(contractId)} is not registered.`));
                     console.log(chalk.dim("Run 'sorokeep watch <contractId>' first."));
                     process.exit(1);
+                    return;
                 }
                 throw error;
             }
