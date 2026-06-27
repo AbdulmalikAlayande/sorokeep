@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  stellar:
+    image: stellar/quickstart:latest
+    container_name: stellar-quickstart
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    command: ["--local", "--enable-soroban-rpc"]
+    volumes:
+      - stellar-data:/opt/stellar
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - sorokeep-network
+
+  sorokeep:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sorokeep-daemon
+    depends_on:
+      stellar:
+        condition: service_healthy
+    environment:
+      - SOROKEEP_NETWORK=${SOROKEEP_NETWORK:-standalone}
+      - SOROKEEP_RPC_URL=${SOROKEEP_RPC_URL:-http://stellar:8000/soroban/rpc}
+      - SOROKEEP_POLLING_INTERVAL=${SOROKEEP_POLLING_INTERVAL:-300000}
+    command: ["daemon", "--network", "${SOROKEEP_NETWORK:-standalone}", "--rpc-url", "${SOROKEEP_RPC_URL:-http://stellar:8000/soroban/rpc}", "--interval", "${SOROKEEP_POLLING_INTERVAL:-300000}"]
+    volumes:
+      - sorokeep-data:/home/sorokeep/.sorokeep
+    networks:
+      - sorokeep-network
+
+networks:
+  sorokeep-network:
+    driver: bridge
+
+volumes:
+  stellar-data:
+  sorokeep-data:
