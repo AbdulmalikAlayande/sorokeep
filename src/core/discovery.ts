@@ -60,13 +60,13 @@ export async function discoverStorageKeys(
         transactionsScanned: 0,
     };
 
-    try {
         const url = rpcUrl ?? RPC_URLS[network];
         if (!url) {
             result.error = `Unknown network "${network}"`;
             return result;
         }
 
+    try {
         const server = new rpc.Server(url);
 
         // Get the latest ledger to set up the event window
