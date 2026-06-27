@@ -821,7 +821,71 @@ export function getStateChanges(db: Database.Database, contractEntryId: number, 
     return db.prepare(sql).all(contractEntryId) as StateChange[];
 }
 
+export interface StateChangeHistoryRecord {
+    changeId: number;
+    contractEntryId: number;
+    entryKeyXdr: string;
+    entryType: string;
+    entryLabel: string | null;
+    diffType: "created" | "updated" | "deleted";
+    diffJson: string;
+    detectedAtLedger: number;
+    createdAt: string;
+    oldValueXdr: string | null;
+    newValueXdr: string | null;
+}
+
+/**
+ * Return a rich history view of state changes for a contract,
+ * joining state_changes → contract_entries → state_snapshots.
+ */
+export function getStateChangeHistory(
+    db: Database.Database,
+    contractId: string,
+    opts?: { limit?: number; entryKeyXdr?: string },
+): StateChangeHistoryRecord[] {
+    const limit = opts?.limit;
+    const entryKeyXdr = opts?.entryKeyXdr;
+
+    let sql = `
+        SELECT
+            sc.id              AS changeId,
+            sc.contract_entry_id AS contractEntryId,
+            ce.entry_key_xdr   AS entryKeyXdr,
+            ce.entry_type      AS entryType,
+            ce.label           AS entryLabel,
+            sc.diff_type       AS diffType,
+            sc.diff_json       AS diffJson,
+            sc.detected_at_ledger AS detectedAtLedger,
+            sc.created_at      AS createdAt,
+            old_snap.value_xdr AS oldValueXdr,
+            new_snap.value_xdr AS newValueXdr
+        FROM state_changes sc
+        JOIN contract_entries ce ON ce.id = sc.contract_entry_id
+        LEFT JOIN state_snapshots old_snap ON old_snap.id = sc.old_snapshot_id
+        LEFT JOIN state_snapshots new_snap ON new_snap.id = sc.new_snapshot_id
+        WHERE ce.contract_id = ?
+    `;
+
+    const params: (string | number)[] = [contractId];
+
+    if (entryKeyXdr) {
+        sql += " AND ce.entry_key_xdr = ?";
+        params.push(entryKeyXdr);
+    }
+
+    sql += " ORDER BY sc.detected_at_ledger DESC, sc.id DESC";
+
+    if (limit !== undefined && limit >= 0) {
+        sql += " LIMIT ?";
+        params.push(limit);
+    }
+
+    return db.prepare(sql).all(...params) as StateChangeHistoryRecord[];
+}
+
 // ─── Resource Alert Configuration & History ──────────────────────────────────
+
 
 export interface ResourceAlertConfig {
     id: number;

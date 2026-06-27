@@ -11,6 +11,7 @@ import { registerCostsCommand } from "./commands/costs.js";
 import { registerResourcesCommand } from "./commands/resources.js";
 import { registerRestoreCommand } from "./commands/restore.js";
 import { registerChannelsCommand } from "./commands/channels.js";
+import { registerHistoryCommand } from "./commands/history.js";
 
 initLogger({ mode: "cli" });
 
@@ -31,5 +32,6 @@ registerCostsCommand(program);
 registerResourcesCommand(program);
 registerRestoreCommand(program);
 registerChannelsCommand(program);
+registerHistoryCommand(program);
 
 program.parse(process.argv);
