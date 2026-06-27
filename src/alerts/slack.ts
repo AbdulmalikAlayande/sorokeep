@@ -1,6 +1,7 @@
 import type { AlertEvent } from "./types.js";
 import { loadConfig } from "../utils/config.js";
 import { getLogger } from "../logging/index.js";
+import { renderAlertTemplate } from "./templates.js";
 
 const logger = getLogger().child({ component: "SlackHandler" });
 const SLACK_API_URL = "https://slack.com/api/chat.postMessage";
@@ -167,6 +168,34 @@ export async function sendSlackAlert(channel: string, event: AlertEvent): Promis
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
+    const customMessage = renderAlertTemplate("slack", event);
+    let payload: { text: string; blocks?: any[] };
+
+    if (customMessage !== null) {
+        try {
+            const parsed = JSON.parse(customMessage);
+            if (parsed && typeof parsed === "object") {
+                if (Array.isArray(parsed)) {
+                    payload = { text: buildFallbackText(event), blocks: parsed };
+                } else {
+                    payload = {
+                        text: parsed.text ?? buildFallbackText(event),
+                        blocks: parsed.blocks,
+                    };
+                }
+            } else {
+                payload = { text: customMessage };
+            }
+        } catch {
+            payload = { text: customMessage };
+        }
+    } else {
+        payload = {
+            text: buildFallbackText(event),
+            blocks: buildBlocks(event),
+        };
+    }
+
     let response: Response;
     try {
         response = await fetch(SLACK_API_URL, {
@@ -177,8 +206,7 @@ export async function sendSlackAlert(channel: string, event: AlertEvent): Promis
             },
             body: JSON.stringify({
                 channel,
-                text: buildFallbackText(event),
-                blocks: buildBlocks(event),
+                ...payload,
             }),
             signal: controller.signal,
         });
