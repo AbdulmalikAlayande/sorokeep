@@ -460,8 +460,37 @@ describe("Alert Operations", () => {
             ttl_at_fire: 450,
         });
 
-        resolveAlerts(db, contractEntryID);
+        resolveAlerts(db, contractEntryID, contractAlertConfigID);
         expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
+    });
+
+    it("should resolve only the targeted alert configuration for an entry", () => {
+        insertAlertConfig(db, {
+            contract_id: contractID,
+            channel_type: "webhook",
+            channel_target: "https://other.example.com",
+            threshold_ledgers: 1000,
+        });
+        const configs = getAlertConfigsForContract(db, contractID);
+        const secondConfigId = configs.find(c => c.threshold_ledgers === 1000)!.id;
+
+        recordAlertFired(db, {
+            alert_config_id: contractAlertConfigID,
+            contract_entry_id: contractEntryID,
+            fired_at_ledger: 100,
+            ttl_at_fire: 400,
+        });
+        recordAlertFired(db, {
+            alert_config_id: secondConfigId,
+            contract_entry_id: contractEntryID,
+            fired_at_ledger: 100,
+            ttl_at_fire: 400,
+        });
+
+        resolveAlerts(db, contractEntryID, contractAlertConfigID);
+
+        expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
+        expect(hasUnresolvedAlert(db, secondConfigId, contractEntryID)).toBe(true);
     });
 
     it('should only resolve alerts for the specific entry', () => {
@@ -486,7 +515,7 @@ describe("Alert Operations", () => {
             ttl_at_fire: 10,
         });
 
-        resolveAlerts(db, contractEntryID);
+        resolveAlerts(db, contractEntryID, contractAlertConfigID);
         expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
         expect(hasUnresolvedAlert(db, contractAlertConfigID, anotherEntryID)).toBe(true);
     });
@@ -509,7 +538,7 @@ describe("Alert Operations", () => {
         });
 
         // Resolve the alerts for this entry (monitor would trigger this on the next cycle)
-        resolveAlerts(db, contractEntryID);
+        resolveAlerts(db, contractEntryID, contractAlertConfigID);
 
         expect(hasUnresolvedAlert(db, contractAlertConfigID, contractEntryID)).toBe(false);
     });
