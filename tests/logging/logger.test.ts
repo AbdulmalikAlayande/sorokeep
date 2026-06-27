@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { Writable } from "node:stream";
-import { execFileSync } from "node:child_process";
 import { createLogger } from "../../src/logging/logger";
 
 /**
@@ -61,18 +60,13 @@ describe("JSON log format", () => {
         expect(lines.at(-1)!).not.toMatch(/\[/);
     });
 
-    it("produces output that jq can parse", () => {
+    it("produces valid JSON that can be parsed", () => {
         const { logger, lines } = captureJsonLogger();
 
         logger.child({ component: "DaemonLoop" }).info("checked 3 contracts");
         logger.info("done");
 
-        const messages = execFileSync("jq", ["-r", ".msg"], {
-            input: lines.join("\n"),
-        })
-            .toString()
-            .trim()
-            .split("\n");
+        const messages = lines.map(line => JSON.parse(line).msg);
 
         expect(messages).toContain("checked 3 contracts");
         expect(messages).toContain("done");
