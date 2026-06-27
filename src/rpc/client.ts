@@ -102,12 +102,22 @@ const NETWORK_PASSPHRASES: Record<string, string> = {
     mainnet: Networks.PUBLIC,
 };
 
+export interface StellarRpcClientOptions {
+    maxRequestsPerSecond?: number;
+}
+
 export class StellarRpcClient {
     private readonly network: string;
     private readonly server: rpc.Server;
+    private readonly maxRequestsPerSecond: number;
+    private readonly requestIntervalMs: number;
+    private requestQueue: Promise<void> = Promise.resolve();
+    private lastRequestStartedAt = 0;
 
-    constructor(network: string, customUrl?: string) {
+    constructor(network: string, customUrl?: string, options: StellarRpcClientOptions = {}) {
         this.network = network;
+        this.maxRequestsPerSecond = options.maxRequestsPerSecond ?? 5;
+        this.requestIntervalMs = this.maxRequestsPerSecond > 0 ? Math.ceil(1000 / this.maxRequestsPerSecond) : 1000;
         const url = customUrl ?? RPC_URLS[network];
         if (!url) {
             throw new Error(`Unknown network "${network}". Use "testnet", "mainnet", or provide a custom URL.`);
@@ -120,54 +130,58 @@ export class StellarRpcClient {
     }
 
     async checkHealth() {
-        return await this.server.getHealth();
+        return await this.withRateLimit(() => this.server.getHealth());
     }
 
     async getCurrentLedger(): Promise<number> {
-        const serverAny = this.server as any;
-        if (typeof serverAny.getLatestLedger === "function") {
-            try {
-                const response = await serverAny.getLatestLedger();
-                if (response && typeof response.sequence === "number") return response.sequence;
-            } catch (error) {
-                logger.debug("getLatestLedger failed, falling back to getHealth", error);
+        return await this.withRateLimit(async () => {
+            const serverAny = this.server as any;
+            if (typeof serverAny.getLatestLedger === "function") {
+                try {
+                    const response = await serverAny.getLatestLedger();
+                    if (response && typeof response.sequence === "number") return response.sequence;
+                } catch (error) {
+                    logger.debug("getLatestLedger failed, falling back to getHealth", error);
+                }
             }
-        }
 
-        const health = await this.server.getHealth();
-        if (health && typeof (health as any).latestLedger === "number") {
-            return (health as any).latestLedger;
-        }
+            const health = await this.server.getHealth();
+            if (health && typeof (health as any).latestLedger === "number") {
+                return (health as any).latestLedger;
+            }
 
-        throw new Error("Unable to determine latest ledger from RPC server");
+            throw new Error("Unable to determine latest ledger from RPC server");
+        });
     }
 
     async getFeeStats(): Promise<FeeStatsResult> {
-        const serverAny = this.server as any;
-        if (typeof serverAny.getFeeStats !== "function") {
-            throw new Error("RPC server does not support getFeeStats");
-        }
+        return await this.withRateLimit(async () => {
+            const serverAny = this.server as any;
+            if (typeof serverAny.getFeeStats !== "function") {
+                throw new Error("RPC server does not support getFeeStats");
+            }
 
-        const response = await serverAny.getFeeStats();
-        const inclusionFee = response.sorobanInclusionFee ?? response.inclusionFee;
-        if (!inclusionFee) {
-            throw new Error("RPC fee stats response did not include inclusion fee data");
-        }
+            const response = await serverAny.getFeeStats();
+            const inclusionFee = response.sorobanInclusionFee ?? response.inclusionFee;
+            if (!inclusionFee) {
+                throw new Error("RPC fee stats response did not include inclusion fee data");
+            }
 
-        const baseFeeStroops = parseFeeStat(inclusionFee.p50 ?? inclusionFee.mode ?? inclusionFee.min);
-        const surgeFeeStroops = parseFeeStat(
-            inclusionFee.p95 ?? inclusionFee.p90 ?? inclusionFee.max ?? baseFeeStroops,
-        );
-        const surgePricingMultiplier = baseFeeStroops > 0
-            ? Math.max(surgeFeeStroops / baseFeeStroops, 1)
-            : 1;
+            const baseFeeStroops = parseFeeStat(inclusionFee.p50 ?? inclusionFee.mode ?? inclusionFee.min);
+            const surgeFeeStroops = parseFeeStat(
+                inclusionFee.p95 ?? inclusionFee.p90 ?? inclusionFee.max ?? baseFeeStroops,
+            );
+            const surgePricingMultiplier = baseFeeStroops > 0
+                ? Math.max(surgeFeeStroops / baseFeeStroops, 1)
+                : 1;
 
-        return {
-            latestLedger: typeof response.latestLedger === "number" ? response.latestLedger : undefined,
-            baseFeeStroops,
-            surgeFeeStroops,
-            surgePricingMultiplier,
-        };
+            return {
+                latestLedger: typeof response.latestLedger === "number" ? response.latestLedger : undefined,
+                baseFeeStroops,
+                surgeFeeStroops,
+                surgePricingMultiplier,
+            };
+        });
     }
 
     async getContractInstanceEntry(contractId: string): Promise<ContractInstanceResult | null> {
@@ -558,25 +572,27 @@ export class StellarRpcClient {
     private async getNetworkPassphrase(): Promise<string> {
         if (this._cachedPassphrase) return this._cachedPassphrase;
 
-        // Try fetching from the RPC server first
-        try {
-            const networkInfo = await this.server.getNetwork();
-            if (networkInfo.passphrase) {
-                this._cachedPassphrase = networkInfo.passphrase;
-                return networkInfo.passphrase;
+        return await this.withRateLimit(async () => {
+            // Try fetching from the RPC server first
+            try {
+                const networkInfo = await this.server.getNetwork();
+                if (networkInfo.passphrase) {
+                    this._cachedPassphrase = networkInfo.passphrase;
+                    return networkInfo.passphrase;
+                }
+            } catch {
+                // Fall through to hardcoded table
             }
-        } catch {
-            // Fall through to hardcoded table
-        }
 
-        const passphrase = NETWORK_PASSPHRASES[this.network];
-        if (!passphrase) {
-            throw new Error(
-                `No network passphrase for "${this.network}". Use "testnet" or "mainnet".`,
-            );
-        }
-        this._cachedPassphrase = passphrase;
-        return passphrase;
+            const passphrase = NETWORK_PASSPHRASES[this.network];
+            if (!passphrase) {
+                throw new Error(
+                    `No network passphrase for "${this.network}". Use "testnet" or "mainnet".`,
+                );
+            }
+            this._cachedPassphrase = passphrase;
+            return passphrase;
+        });
     }
 
     /**
@@ -588,7 +604,7 @@ export class StellarRpcClient {
         intervalMs = 1000,
     ): Promise<SubmitTransactionResult> {
         for (let i = 0; i < maxAttempts; i++) {
-            const txResponse = await this.server.getTransaction(txHash);
+            const txResponse = await this.withRateLimit(() => this.server.getTransaction(txHash));
 
             if (txResponse.status === "SUCCESS") {
                 const resultMetaXdr = (txResponse as any).resultMetaXdr;
@@ -636,6 +652,35 @@ export class StellarRpcClient {
             ledger: 0,
             error: `Transaction polling timed out after ${maxAttempts} attempts`,
         };
+    }
+
+    private async withRateLimit<T>(operation: () => Promise<T>): Promise<T> {
+        const queuedOperation = this.requestQueue.then(async () => {
+            const waitMs = this.calculateWaitMs();
+            if (waitMs > 0) {
+                await this.sleep(waitMs);
+            }
+            this.lastRequestStartedAt = Date.now();
+            return await operation();
+        });
+
+        this.requestQueue = queuedOperation.then(() => undefined, () => undefined);
+        return await queuedOperation;
+    }
+
+    private calculateWaitMs(): number {
+        if (this.lastRequestStartedAt === 0) {
+            return 0;
+        }
+
+        const now = Date.now();
+        const nextAllowedAt = this.lastRequestStartedAt + this.requestIntervalMs;
+        return Math.max(0, nextAllowedAt - now);
+    }
+
+    private async sleep(ms: number): Promise<void> {
+        if (ms <= 0) return;
+        await new Promise<void>((resolve) => setTimeout(resolve, ms));
     }
 }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StellarRpcClient, extractResourceCosts } from "../../src/rpc/client";
 import { Contract } from "@stellar/stellar-sdk";
 
@@ -95,6 +95,10 @@ describe("StellarRpcClient", () => {
 
     beforeEach(() => {
         client = new StellarRpcClient("testnet")
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     describe("RPC Client Construction", () => {
@@ -222,6 +226,58 @@ describe("StellarRpcClient", () => {
             expect(feeStats.baseFeeStroops).toBe(125);
             expect(feeStats.surgeFeeStroops).toBe(250);
             expect(feeStats.surgePricingMultiplier).toBe(2);
+        });
+    });
+
+    describe("RPC rate limiting", () => {
+        it("does not exceed the configured requests per second", async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+
+            const timestamps: number[] = [];
+            const server = {
+                getHealth: vi.fn(async () => {
+                    timestamps.push(Date.now());
+                    return { status: "healthy", latestLedger: 2443398 };
+                }),
+            };
+
+            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
+            (rateLimitedClient as any).server = server;
+
+            const requests = [1, 2, 3, 4].map(() => rateLimitedClient.checkHealth());
+
+            await vi.runAllTimersAsync();
+            await Promise.all(requests);
+
+            expect(timestamps).toHaveLength(4);
+            expect(timestamps[1] - timestamps[0]).toBeGreaterThanOrEqual(500);
+            expect(timestamps[2] - timestamps[1]).toBeGreaterThanOrEqual(500);
+            expect(timestamps[3] - timestamps[2]).toBeGreaterThanOrEqual(500);
+        });
+
+        it("queues requests and resolves them successfully", async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+
+            const responses = [1, 2, 3, 4].map(() => ({ status: "healthy" }));
+            const server = {
+                getHealth: vi.fn(async () => {
+                    const response = responses.shift();
+                    return response ?? { status: "healthy" };
+                }),
+            };
+
+            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
+            (rateLimitedClient as any).server = server;
+
+            const requests = [1, 2, 3, 4].map(() => rateLimitedClient.checkHealth());
+
+            await vi.runAllTimersAsync();
+            const settled = await Promise.all(requests);
+
+            expect(settled).toHaveLength(4);
+            expect(settled.every((result) => result.status === "healthy")).toBe(true);
         });
     });
 });
