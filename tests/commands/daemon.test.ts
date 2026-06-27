@@ -7,6 +7,31 @@ import * as daemonLib from "../../src/daemon/loop";
 vi.mock("../../src/db/database");
 vi.mock("../../src/daemon/loop");
 
+function getDaemonCommand(): Command {
+    const program = new Command();
+    registerDaemonCommand(program);
+    const daemon = program.commands.find((c) => c.name() === "daemon");
+    expect(daemon).toBeDefined();
+    return daemon!;
+}
+
+describe("daemon command --log-format option", () => {
+    it("registers a --log-format option", () => {
+        const opt = getDaemonCommand().options.find((o) => o.long === "--log-format");
+        expect(opt).toBeDefined();
+    });
+
+    it("defaults the log format to 'pretty'", () => {
+        const opt = getDaemonCommand().options.find((o) => o.long === "--log-format");
+        expect(opt!.defaultValue).toBe("pretty");
+    });
+
+    it("documents that json is a supported value", () => {
+        const opt = getDaemonCommand().options.find((o) => o.long === "--log-format");
+        expect(opt!.description.toLowerCase()).toContain("json");
+    });
+});
+
 describe("Daemon Command CLI", () => {
     let program: Command;
     let mockExit: any;
@@ -64,5 +89,5 @@ describe("Daemon Command CLI", () => {
                 rpcUrl: "https://my-rpc.com"
             })
         );
-    });
+    });   
 });
