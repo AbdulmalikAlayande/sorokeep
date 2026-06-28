@@ -7,6 +7,12 @@ import { insertContract, getAlertConfigsForContract, insertAlertConfig } from ".
 
 let mockDb: Database.Database;
 
+const mockDeliverSingleAlert = vi.fn();
+
+vi.mock("../../src/alerts/dispatcher.js", () => ({
+    deliverSingleAlert: (...args: unknown[]) => mockDeliverSingleAlert(...args),
+}));
+
 vi.mock("../../src/db/database.js", async (importOriginal) => {
     const actual = await importOriginal() as any;
     return {
@@ -239,5 +245,184 @@ describe("alerts command", () => {
         expect(consoleLogSpy).toHaveBeenCalledWith(
             expect.stringContaining("Successfully removed alert config ID")
         );
+    });
+
+    describe("alerts test", () => {
+        let webhookConfigId: number;
+
+        beforeEach(() => {
+            mockDeliverSingleAlert.mockReset();
+            insertAlertConfig(mockDb, {
+                contract_id: contractID,
+                channel_type: "webhook",
+                channel_target: "https://example.com/webhook",
+                threshold_ledgers: 1000,
+            });
+            const configs = getAlertConfigsForContract(mockDb, contractID);
+            webhookConfigId = configs[0]!.id;
+        });
+
+        it("calls deliverSingleAlert with the correct channel type, target, and event", async () => {
+            mockDeliverSingleAlert.mockResolvedValue(true);
+
+            const program = new Command();
+            registerAlertsCommand(program);
+
+            await program.parseAsync([
+                "node", "sorokeep", "alerts", "test",
+                "--id", webhookConfigId.toString(),
+            ]);
+
+            expect(mockDeliverSingleAlert).toHaveBeenCalledTimes(1);
+            const [channelType, channelTarget, event] = mockDeliverSingleAlert.mock.calls[0]!;
+            expect(channelType).toBe("webhook");
+            expect(channelTarget).toBe("https://example.com/webhook");
+            expect(event.type).toBe("threshold_crossed");
+            expect(event.contractId).toBe(contractID);
+        });
+
+        it("sends a threshold_crossed event with valid fields", async () => {
+            mockDeliverSingleAlert.mockResolvedValue(true);
+
+            const program = new Command();
+            registerAlertsCommand(program);
+
+            await program.parseAsync([
+                "node", "sorokeep", "alerts", "test",
+                "--id", webhookConfigId.toString(),
+            ]);
+
+            const [, , event] = mockDeliverSingleAlert.mock.calls[0]!;
+            expect(event.type).toBe("threshold_crossed");
+            expect(typeof event.timestamp).toBe("string");
+            expect(() => new Date(event.timestamp)).not.toThrow();
+            expect(event.threshold.configuredLedgers).toBe(1000);
+            expect(event.threshold.currentRemainingLedgers).toBeGreaterThan(0);
+        });
+
+        it("prints success message when delivery succeeds", async () => {
+            mockDeliverSingleAlert.mockResolvedValue(true);
+
+            const program = new Command();
+            registerAlertsCommand(program);
+
+            await program.parseAsync([
+                "node", "sorokeep", "alerts", "test",
+                "--id", webhookConfigId.toString(),
+            ]);
+
+            expect(consoleLogSpy).toHaveBeenCalledWith(
+                expect.stringContaining("Test alert delivered successfully")
+            );
+        });
+
+        it("prints error and exits with 1 when delivery fails", async () => {
+            mockDeliverSingleAlert.mockResolvedValue(false);
+
+            const program = new Command();
+            registerAlertsCommand(program);
+
+            await expect(
+                program.parseAsync([
+                    "node", "sorokeep", "alerts", "test",
+                    "--id", webhookConfigId.toString(),
+                ])
+            ).rejects.toThrow("process.exit called");
+
+            expect(consoleErrorSpy).toHaveBeenCalledWith(
+                expect.stringContaining("Test alert delivery failed")
+            );
+            expect(exitSpy).toHaveBeenCalledWith(1);
+        });
+
+        it("exits with error when alert config ID is not found", async () => {
+            const program = new Command();
+            registerAlertsCommand(program);
+
+            await expect(
+                program.parseAsync([
+                    "node", "sorokeep", "alerts", "test",
+                    "--id", "99999",
+                ])
+            ).rejects.toThrow("process.exit called");
+
+            expect(consoleErrorSpy).toHaveBeenCalledWith(
+                expect.stringContaining("Alert config ID 99999 not found")
+            );
+            expect(exitSpy).toHaveBeenCalledWith(1);
+            expect(mockDeliverSingleAlert).not.toHaveBeenCalled();
+        });
+
+        it("exits with error when --id is not a number", async () => {
+            const program = new Command();
+            registerAlertsCommand(program);
+
+            await expect(
+                program.parseAsync([
+                    "node", "sorokeep", "alerts", "test",
+                    "--id", "not-a-number",
+                ])
+            ).rejects.toThrow("process.exit called");
+
+            expect(consoleErrorSpy).toHaveBeenCalledWith(
+                expect.stringContaining("--id must be a number")
+            );
+            expect(exitSpy).toHaveBeenCalledWith(1);
+            expect(mockDeliverSingleAlert).not.toHaveBeenCalled();
+        });
+
+        it("passes the webhook secret from config to deliverSingleAlert", async () => {
+            insertAlertConfig(mockDb, {
+                contract_id: contractID,
+                channel_type: "webhook",
+                channel_target: "https://example.com/signed",
+                threshold_ledgers: 500,
+                webhook_secret: "my-signing-secret",
+            });
+            const allConfigs = getAlertConfigsForContract(mockDb, contractID);
+            const signedConfig = allConfigs.find((c) => c.webhook_secret === "my-signing-secret")!;
+
+            mockDeliverSingleAlert.mockResolvedValue(true);
+
+            const program = new Command();
+            registerAlertsCommand(program);
+
+            await program.parseAsync([
+                "node", "sorokeep", "alerts", "test",
+                "--id", signedConfig.id.toString(),
+            ]);
+
+            const [, , , secret] = mockDeliverSingleAlert.mock.calls[0]!;
+            expect(secret).toBe("my-signing-secret");
+        });
+
+        it("delivers a test alert to a slack channel", async () => {
+            insertAlertConfig(mockDb, {
+                contract_id: contractID,
+                channel_type: "slack",
+                channel_target: "#alerts-channel",
+                threshold_ledgers: 2000,
+            });
+            const allConfigs = getAlertConfigsForContract(mockDb, contractID);
+            const slackConfig = allConfigs.find((c) => c.channel_type === "slack")!;
+
+            mockDeliverSingleAlert.mockResolvedValue(true);
+
+            const program = new Command();
+            registerAlertsCommand(program);
+
+            await program.parseAsync([
+                "node", "sorokeep", "alerts", "test",
+                "--id", slackConfig.id.toString(),
+            ]);
+
+            expect(mockDeliverSingleAlert).toHaveBeenCalledTimes(1);
+            const [channelType, channelTarget] = mockDeliverSingleAlert.mock.calls[0]!;
+            expect(channelType).toBe("slack");
+            expect(channelTarget).toBe("#alerts-channel");
+            expect(consoleLogSpy).toHaveBeenCalledWith(
+                expect.stringContaining("Test alert delivered successfully")
+            );
+        });
     });
 });
