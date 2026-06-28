@@ -63,7 +63,6 @@ function buildBlocks(event: AlertEvent): SlackBlock[] {
 
     let details: SlackBlock;
     if (event.type === "resource_alert") {
-        const resourceType = event.resource.type === "cpu" ? "CPU Instructions" : "Memory Bytes";
         const usageStr = event.resource.currentUsage.toLocaleString();
         const limitStr = event.resource.limit.toLocaleString();
 
