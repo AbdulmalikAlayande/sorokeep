@@ -6,8 +6,11 @@ vi.mock("@aws-sdk/client-secrets-manager", async () => {
     const SecretsManagerClient = vi.fn().mockImplementation(() => {
         return {
             send: vi.fn().mockImplementation(async (command) => {
-                if (command.secretId === "my-stellar-key") {
+                if (command.input.SecretId === "my-stellar-key") {
                     return { SecretString: "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX" };
+                }
+                if (command.input.SecretId === "missing-string-key") {
+                    return {}; // Missing SecretString
                 }
                 throw new Error("Secret not found");
             }),
@@ -15,7 +18,7 @@ vi.mock("@aws-sdk/client-secrets-manager", async () => {
     });
     
     const GetSecretValueCommand = vi.fn().mockImplementation((args) => {
-        return { secretId: args.SecretId };
+        return { input: args };
     });
 
     return {
@@ -49,7 +52,12 @@ describe("AWSSecretsResolver", () => {
     });
     
     it("throws an error if secret is not found", async () => {
-        const resolver = new AWSSecretsResolver({ region: "us-east-1", profile: "default" });
+        const resolver = new AWSSecretsResolver({ region: "us-east-1" });
         await expect(resolver.resolveKey("unknown-key")).rejects.toThrow("Secret not found");
+    });
+
+    it("throws an error if SecretString is empty", async () => {
+        const resolver = new AWSSecretsResolver({ region: "us-east-1" });
+        await expect(resolver.resolveKey("missing-string-key")).rejects.toThrow("SecretString is empty for secret: missing-string-key");
     });
 });
