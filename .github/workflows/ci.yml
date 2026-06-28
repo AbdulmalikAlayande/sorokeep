@@ -1,23 +1,46 @@
-name: CI
+name: CI Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [ "main" ]
   pull_request:
-    branches: [main]
+    branches: [ "main" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  build-and-test:
     runs-on: ubuntu-latest
+    
     strategy:
       matrix:
-        node-version: [22]
+        node-version: [22.x]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-      - run: npm ci
-      - run: npx vitest run
-      - run: npx tsc --noEmit
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Clean Install Dependencies
+      run: |
+        rm -rf node_modules package-lock.json
+        npm install
+
+    - name: Lint Code
+      run: npm run lint
+
+    - name: Run Tests
+      run: npm run test -- --coverage
+
+    - name: Build Project
+      run: npm run build
