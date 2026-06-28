@@ -532,4 +532,36 @@ describe("daemon loop", () => {
             expect(onCycle).toHaveBeenNthCalledWith(2, result2, undefined);
         });
     });
+    // =========================================================================
+    // 10. ALERT DISPATCH
+    // =========================================================================
+    describe("Alert dispatch", () => {
+        it("triggers alert dispatch during daemon cycle", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+            
+            await startDaemon(db, "testnet", { intervalMs: 5000 });
+            
+            expect(mockDeliverPendingAlerts).toHaveBeenCalledTimes(1);
+            expect(mockDeliverPendingAlerts).toHaveBeenCalledWith(db, "testnet");
+            
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockDeliverPendingAlerts).toHaveBeenCalledTimes(2);
+            expect(mockDeliverPendingAlerts).toHaveBeenLastCalledWith(db, "testnet");
+        });
+
+        it("survives and logs if alert dispatch throws unexpectedly", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+            mockDeliverPendingAlerts.mockRejectedValueOnce(new Error("Dispatcher exploded"));
+            
+            // startDaemon should not throw, and the cycle should continue
+            await expect(startDaemon(db, "testnet", { intervalMs: 5000 })).resolves.not.toThrow();
+            
+            expect(mockDeliverPendingAlerts).toHaveBeenCalledTimes(1);
+
+            // The next interval should still trigger, showing the daemon didn't crash
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
+            expect(mockDeliverPendingAlerts).toHaveBeenCalledTimes(2);
+        });
+    });
 });
