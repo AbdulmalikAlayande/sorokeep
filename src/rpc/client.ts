@@ -12,20 +12,32 @@ import {
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
 
-export function assertSimulationSuccess(sim: any): asserts sim is rpc.Api.SimulateTransactionSuccessResponse {
-    if (rpc.Api.isSimulationError(sim)) {
-        const err = sim.error || "";
-        if (err.includes("txBadSeq")) {
-            throw new Error("Simulation failed: Expired sequence number");
+/**
+ * Executes an RPC action with exponential backoff on network timeouts or 429/5xx errors.
+ * Starts at 1 second, doubling up to 3 retries (max 4 attempts).
+ */
+export async function executeWithRetry<T>(action: () => Promise<T>): Promise<T> {
+    const MAX_RETRIES = 3;
+    let delayMs = 1000;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            return await action();
+        } catch (error: any) {
+            const isTimeout = error?.code === "ETIMEDOUT" || error?.code === "ECONNRESET" || error?.message?.includes("timeout");
+            const status = error?.response?.status;
+            const isRetryableHttp = status === 429 || (status >= 500 && status < 600);
+
+            if ((isTimeout || isRetryableHttp) && attempt < MAX_RETRIES) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+                delayMs *= 2;
+                continue;
+            }
+
+            throw error;
         }
-        if (err.includes("InsufficientBalance") || err.includes("txInsufficientBalance")) {
-            throw new Error("Simulation failed: Insufficient wallet balance");
-        }
-        if (err.includes("invalid key") || err.includes("has no entry") || err.includes("invalid footprint")) {
-            throw new Error("Simulation failed: Invalid footprint key");
-        }
-        throw new Error(`Simulation failed: ${err || "unknown error"}`);
     }
+    throw new Error("Unreachable");
 }
 
 const logger = getLogger().child({ component: "StellarRpcClient" });
