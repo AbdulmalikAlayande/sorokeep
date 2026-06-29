@@ -37,6 +37,10 @@ export interface EntryTTLsResult {
     entries: SorokeepLedgerEntryResult[];
 }
 
+export interface ContractStorageEntryResult extends SorokeepLedgerEntryResult {
+    valXdr?: string;
+}
+
 export interface SimulateExtensionResult {
     minResourceFee: number;
     success: boolean;
@@ -250,6 +254,72 @@ export class StellarRpcClient {
         return { latestLedger, entries };
     }
 
+    async getContractStorageEntries(entryKeyXdrs: string[]): Promise<ContractStorageEntryResult[]> {
+        if (entryKeyXdrs.length === 0) return [];
+        const keys = entryKeyXdrs.map((xdrStr) =>
+            xdr.LedgerKey.fromXDR(xdrStr, "base64")
+        );
+
+        const response = await this.server.getLedgerEntries(...keys);
+        const latestLedger = response.latestLedger;
+
+        return (response.entries ?? []).map((entry) => {
+            const liveUntilLedgerSeq = entry.liveUntilLedgerSeq ?? 0;
+            const lastModifiedLedgerSeq = entry.lastModifiedLedgerSeq ?? 0;
+            let valXdr: string | undefined;
+            try {
+                if (entry.val && entry.val.switch().name === "contractData") {
+                    valXdr = entry.val.contractData().val().toXDR("base64");
+                }
+            } catch {
+                // ignore
+            }
+            return {
+                entryKeyXdr: entry.key.toXDR("base64"),
+                latestLedger,
+                liveUntilLedgerSeq,
+                lastModifiedLedgerSeq,
+                remainingTTL: liveUntilLedgerSeq - latestLedger,
+                valXdr,
+            };
+        });
+    }
+
+    async getSacDecimals(contractId: string): Promise<number> {
+        try {
+            const passphrase = await this.getNetworkPassphrase();
+            const contract = new Contract(contractId);
+            const op = contract.call("decimals");
+            const account = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0");
+
+            const tx = new TransactionBuilder(account, {
+                fee: "100",
+                networkPassphrase: passphrase,
+            })
+                .addOperation(op)
+                .setTimeout(30)
+                .build();
+
+            const sim = await this.server.simulateTransaction(tx);
+            if (!rpc.Api.isSimulationError(sim)) {
+                const successSim = sim as rpc.Api.SimulateTransactionSuccessResponse;
+                if (successSim.result?.retval) {
+                    const retval = successSim.result.retval;
+                    if (retval.switch().name === "scvU32") {
+                        return retval.u32();
+                    }
+                }
+            }
+        } catch {
+            // fallback below
+        }
+        return 7; // standard SAC / XLM asset decimals
+    }
+
+    /**
+     * Call the 'get_monitored_keys' view method on a contract.
+     * Returns an array of XDR strings for the keys.
+     */
     async getMonitoredKeys(contractId: string): Promise<string[]> {
         const passphrase = await this.getNetworkPassphrase();
         const contract = new Contract(contractId);
