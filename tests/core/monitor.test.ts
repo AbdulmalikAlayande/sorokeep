@@ -7,7 +7,6 @@ import {
     insertAlertConfig,
     getAlertConfigsForContract,
     hasUnresolvedAlert,
-    recordAlertFired,
 } from "../../src/db/repositories.js";
 import {getDatabaseForTesting} from "../../src/db/database";
 import {MonitorCycleResult, runMonitorCycle} from "../../src/core/monitor";

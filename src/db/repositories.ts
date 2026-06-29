@@ -338,6 +338,200 @@ export function getExtensionHistory(db: Database.Database, contractId: string, d
   `).all(contractId) as ExtensionRecord[];
 }
 
+
+export interface CostDailySnapshot {
+    id: number;
+    contract_id: string;
+    snapshot_date: string;
+    total_extensions: number;
+    total_cost_xlm: number;
+    instance_extensions: number;
+    instance_cost_xlm: number;
+    wasm_extensions: number;
+    wasm_cost_xlm: number;
+    persistent_extensions: number;
+    persistent_cost_xlm: number;
+    temporary_extensions: number;
+    temporary_cost_xlm: number;
+    created_at: string;
+}
+
+export interface ContractCostSummary {
+    contract_id: string;
+    total_extensions: number;
+    total_cost_xlm: number;
+    byType: {
+        instance: { count: number; cost_xlm: number };
+        wasm: { count: number; cost_xlm: number };
+        persistent: { count: number; cost_xlm: number };
+        temporary: { count: number; cost_xlm: number };
+    };
+}
+
+export function aggregateDailyCostSnapshots(db: Database.Database): void {
+    const rows = db.prepare(`
+        SELECT
+            eh.contract_id AS contract_id,
+            date(eh.executed_at) AS snapshot_date,
+            COUNT(*) AS total_extensions,
+            SUM(COALESCE(eh.cost_xlm, 0.0)) AS total_cost_xlm,
+            SUM(CASE WHEN ce.entry_type = 'instance' THEN 1 ELSE 0 END) AS instance_extensions,
+            SUM(CASE WHEN ce.entry_type = 'instance' THEN COALESCE(eh.cost_xlm, 0.0) ELSE 0 END) AS instance_cost_xlm,
+            SUM(CASE WHEN ce.entry_type = 'wasm' THEN 1 ELSE 0 END) AS wasm_extensions,
+            SUM(CASE WHEN ce.entry_type = 'wasm' THEN COALESCE(eh.cost_xlm, 0.0) ELSE 0 END) AS wasm_cost_xlm,
+            SUM(CASE WHEN ce.entry_type = 'persistent' THEN 1 ELSE 0 END) AS persistent_extensions,
+            SUM(CASE WHEN ce.entry_type = 'persistent' THEN COALESCE(eh.cost_xlm, 0.0) ELSE 0 END) AS persistent_cost_xlm,
+            SUM(CASE WHEN ce.entry_type = 'temporary' THEN 1 ELSE 0 END) AS temporary_extensions,
+            SUM(CASE WHEN ce.entry_type = 'temporary' THEN COALESCE(eh.cost_xlm, 0.0) ELSE 0 END) AS temporary_cost_xlm
+        FROM extension_history eh
+        JOIN contract_entries ce ON ce.id = eh.contract_entry_id
+        WHERE date(eh.executed_at) < date('now')
+        GROUP BY eh.contract_id, date(eh.executed_at)
+    `).all() as Array<Omit<CostDailySnapshot, 'id' | 'created_at'>>;
+
+    const upsert = db.prepare(`
+        INSERT INTO cost_daily_snapshots (
+            contract_id, snapshot_date,
+            total_extensions, total_cost_xlm,
+            instance_extensions, instance_cost_xlm,
+            wasm_extensions, wasm_cost_xlm,
+            persistent_extensions, persistent_cost_xlm,
+            temporary_extensions, temporary_cost_xlm
+        ) VALUES (
+            @contract_id, @snapshot_date,
+            @total_extensions, @total_cost_xlm,
+            @instance_extensions, @instance_cost_xlm,
+            @wasm_extensions, @wasm_cost_xlm,
+            @persistent_extensions, @persistent_cost_xlm,
+            @temporary_extensions, @temporary_cost_xlm
+        )
+        ON CONFLICT(contract_id, snapshot_date) DO UPDATE SET
+            total_extensions = excluded.total_extensions,
+            total_cost_xlm = excluded.total_cost_xlm,
+            instance_extensions = excluded.instance_extensions,
+            instance_cost_xlm = excluded.instance_cost_xlm,
+            wasm_extensions = excluded.wasm_extensions,
+            wasm_cost_xlm = excluded.wasm_cost_xlm,
+            persistent_extensions = excluded.persistent_extensions,
+            persistent_cost_xlm = excluded.persistent_cost_xlm,
+            temporary_extensions = excluded.temporary_extensions,
+            temporary_cost_xlm = excluded.temporary_cost_xlm
+    `);
+
+    const transaction = db.transaction((snapshotRows: Array<typeof rows[number]>) => {
+        for (const row of snapshotRows) {
+            upsert.run(row);
+        }
+    });
+
+    transaction(rows);
+}
+
+export function getCostDailySnapshots(db: Database.Database, contractId: string, days?: number): CostDailySnapshot[] {
+    if (days) {
+        return db.prepare(`
+            SELECT * FROM cost_daily_snapshots
+            WHERE contract_id = ? AND snapshot_date >= date('now', ?)
+            ORDER BY snapshot_date DESC
+        `).all(contractId, `-${Math.max(days - 1, 0)} days`) as CostDailySnapshot[];
+    }
+    return db.prepare(`
+        SELECT * FROM cost_daily_snapshots
+        WHERE contract_id = ?
+        ORDER BY snapshot_date DESC
+    `).all(contractId) as CostDailySnapshot[];
+}
+
+export function getContractCostSummary(db: Database.Database, contractId: string, days?: number) : ContractCostSummary {
+    interface CostAggregateRow {
+        total_extensions: number;
+        total_cost_xlm: number;
+        instance_extensions: number;
+        instance_cost_xlm: number;
+        wasm_extensions: number;
+        wasm_cost_xlm: number;
+        persistent_extensions: number;
+        persistent_cost_xlm: number;
+        temporary_extensions: number;
+        temporary_cost_xlm: number;
+    }
+
+    const snapshotParams = days ? [`-${Math.max(days - 1, 0)} days`] : [];
+    const snapshotRow = days
+        ? db.prepare(`
+            SELECT
+                COALESCE(SUM(total_extensions), 0) AS total_extensions,
+                COALESCE(SUM(total_cost_xlm), 0.0) AS total_cost_xlm,
+                COALESCE(SUM(instance_extensions), 0) AS instance_extensions,
+                COALESCE(SUM(instance_cost_xlm), 0.0) AS instance_cost_xlm,
+                COALESCE(SUM(wasm_extensions), 0) AS wasm_extensions,
+                COALESCE(SUM(wasm_cost_xlm), 0.0) AS wasm_cost_xlm,
+                COALESCE(SUM(persistent_extensions), 0) AS persistent_extensions,
+                COALESCE(SUM(persistent_cost_xlm), 0.0) AS persistent_cost_xlm,
+                COALESCE(SUM(temporary_extensions), 0) AS temporary_extensions,
+                COALESCE(SUM(temporary_cost_xlm), 0.0) AS temporary_cost_xlm
+            FROM cost_daily_snapshots
+            WHERE contract_id = ? AND snapshot_date >= date('now', ?)
+        `).get(contractId, ...snapshotParams) as CostAggregateRow
+        : db.prepare(`
+            SELECT
+                COALESCE(SUM(total_extensions), 0) AS total_extensions,
+                COALESCE(SUM(total_cost_xlm), 0.0) AS total_cost_xlm,
+                COALESCE(SUM(instance_extensions), 0) AS instance_extensions,
+                COALESCE(SUM(instance_cost_xlm), 0.0) AS instance_cost_xlm,
+                COALESCE(SUM(wasm_extensions), 0) AS wasm_extensions,
+                COALESCE(SUM(wasm_cost_xlm), 0.0) AS wasm_cost_xlm,
+                COALESCE(SUM(persistent_extensions), 0) AS persistent_extensions,
+                COALESCE(SUM(persistent_cost_xlm), 0.0) AS persistent_cost_xlm,
+                COALESCE(SUM(temporary_extensions), 0) AS temporary_extensions,
+                COALESCE(SUM(temporary_cost_xlm), 0.0) AS temporary_cost_xlm
+            FROM cost_daily_snapshots
+            WHERE contract_id = ?
+        `).get(contractId) as CostAggregateRow;
+
+    const currentDayRow = db.prepare(`
+        SELECT
+            COUNT(*) AS total_extensions,
+            COALESCE(SUM(COALESCE(eh.cost_xlm, 0.0)), 0.0) AS total_cost_xlm,
+            COALESCE(SUM(CASE WHEN ce.entry_type = 'instance' THEN 1 ELSE 0 END), 0) AS instance_extensions,
+            COALESCE(SUM(CASE WHEN ce.entry_type = 'instance' THEN COALESCE(eh.cost_xlm, 0.0) ELSE 0 END), 0.0) AS instance_cost_xlm,
+            COALESCE(SUM(CASE WHEN ce.entry_type = 'wasm' THEN 1 ELSE 0 END), 0) AS wasm_extensions,
+            COALESCE(SUM(CASE WHEN ce.entry_type = 'wasm' THEN COALESCE(eh.cost_xlm, 0.0) ELSE 0 END), 0.0) AS wasm_cost_xlm,
+            COALESCE(SUM(CASE WHEN ce.entry_type = 'persistent' THEN 1 ELSE 0 END), 0) AS persistent_extensions,
+            COALESCE(SUM(CASE WHEN ce.entry_type = 'persistent' THEN COALESCE(eh.cost_xlm, 0.0) ELSE 0 END), 0.0) AS persistent_cost_xlm,
+            COALESCE(SUM(CASE WHEN ce.entry_type = 'temporary' THEN 1 ELSE 0 END), 0) AS temporary_extensions,
+            COALESCE(SUM(CASE WHEN ce.entry_type = 'temporary' THEN COALESCE(eh.cost_xlm, 0.0) ELSE 0 END), 0.0) AS temporary_cost_xlm
+        FROM extension_history eh
+        JOIN contract_entries ce ON ce.id = eh.contract_entry_id
+        WHERE eh.contract_id = ?
+          AND date(eh.executed_at) = date('now')
+    `).get(contractId) as CostAggregateRow;
+
+    return {
+        contract_id: contractId,
+        total_extensions: Number((snapshotRow.total_extensions ?? 0) + (currentDayRow.total_extensions ?? 0)),
+        total_cost_xlm: Number((snapshotRow.total_cost_xlm ?? 0) + (currentDayRow.total_cost_xlm ?? 0)),
+        byType: {
+            instance: {
+                count: Number((snapshotRow.instance_extensions ?? 0) + (currentDayRow.instance_extensions ?? 0)),
+                cost_xlm: Number((snapshotRow.instance_cost_xlm ?? 0) + (currentDayRow.instance_cost_xlm ?? 0)),
+            },
+            wasm: {
+                count: Number((snapshotRow.wasm_extensions ?? 0) + (currentDayRow.wasm_extensions ?? 0)),
+                cost_xlm: Number((snapshotRow.wasm_cost_xlm ?? 0) + (currentDayRow.wasm_cost_xlm ?? 0)),
+            },
+            persistent: {
+                count: Number((snapshotRow.persistent_extensions ?? 0) + (currentDayRow.persistent_extensions ?? 0)),
+                cost_xlm: Number((snapshotRow.persistent_cost_xlm ?? 0) + (currentDayRow.persistent_cost_xlm ?? 0)),
+            },
+            temporary: {
+                count: Number((snapshotRow.temporary_extensions ?? 0) + (currentDayRow.temporary_extensions ?? 0)),
+                cost_xlm: Number((snapshotRow.temporary_cost_xlm ?? 0) + (currentDayRow.temporary_cost_xlm ?? 0)),
+            },
+        },
+    };
+}
+
 export function getAverageResourceUsage(db: Database.Database, contractId: string, limit?: number): { avg_cpu_insns: number, avg_mem_bytes: number, count: number } | null {
   const queryLimit = limit ? `LIMIT ${limit}` : "";
   const rows = db.prepare(`
@@ -358,6 +552,7 @@ export function getAverageResourceUsage(db: Database.Database, contractId: strin
     avg_mem_bytes: sumMem / rows.length,
     count: rows.length
   };
+
 }
 
 // ---------------------------- Alert Delivery ----------------------------
@@ -442,6 +637,31 @@ export function markAlertDelivered(db: Database.Database, alertFiredId: number):
         SET delivered = 1, delivered_at = datetime('now')
         WHERE id = ?
     `).run(alertFiredId);
+}
+
+/**
+ * Count the number of undelivered alerts for the given network.
+ * Uses the same filtering logic as getUndeliveredAlerts:
+ * - delivered = 0
+ * - retry_count < MAX_RETRY_COUNT
+ * - matches the specified network
+ */
+export function countUndeliveredAlerts(
+    db: Database.Database,
+    network: string,
+): number {
+    const row = db.prepare(`
+        SELECT COUNT(*) as count
+        FROM alerts_fired af
+        JOIN alert_configs ac  ON ac.id  = af.alert_config_id
+        JOIN contract_entries ce ON ce.id = af.contract_entry_id
+        JOIN contracts c       ON c.id  = ce.contract_id
+        WHERE af.delivered = 0
+          AND af.retry_count < ?
+          AND c.network = ?
+    `).get(MAX_RETRY_COUNT, network) as { count: number };
+
+    return row.count;
 }
 
 /**
