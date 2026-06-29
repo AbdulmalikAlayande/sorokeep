@@ -128,7 +128,7 @@ export class StellarRpcClient {
         if (typeof serverAny.getLatestLedger === "function") {
             try {
                 const response = await serverAny.getLatestLedger();
-                if (response && typeof response.sequence === "number") return response.sequence;
+                if (response && typeof response.sequence === "number" && response.sequence > 0) return response.sequence;
             } catch (error) {
                 logger.debug("getLatestLedger failed, falling back to getHealth", error);
             }

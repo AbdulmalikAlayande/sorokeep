@@ -290,7 +290,7 @@ export async function runAutoExtensions(
             const needsExtension = entries.filter(e => {
                 if (!e.live_until_ledger) return false;
                 const remaining = e.live_until_ledger - latestLedger;
-                return remaining > 0 && remaining < policy.extend_when_below_ledgers;
+                return remaining >= 0 && remaining < policy.extend_when_below_ledgers;
             });
 
             if (needsExtension.length === 0) return;
