@@ -13,6 +13,7 @@ import {
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
+import { formatSecretKey } from "../utils/formatting.js";
 
 const logger = getLogger().child({ component: "Extension" });
 
@@ -314,7 +315,7 @@ export async function runAutoExtensions(
 
             if (!secretKey) {
                 result.errors.push(
-                    `Contract ${contract.id}: Cannot resolve keypair from source "${pool ? "channel pool" : policy.keypair_source}"`,
+                    `Contract ${contract.id}: Cannot resolve keypair from source "${pool ? "channel pool" : formatSecretKey(policy.keypair_source)}"`,
                 );
                 return;
             }
@@ -468,6 +469,6 @@ function resolveSecretKey(source: string | null): string | null {
         return source;
     }
 
-    logger.warn(`Unknown keypair_source format: ${source}`);
+    logger.warn(`Unknown keypair_source format: ${formatSecretKey(source)}`);
     return null;
 }
