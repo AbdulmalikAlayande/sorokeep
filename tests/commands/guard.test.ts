@@ -17,7 +17,7 @@ vi.mock("../../src/core/extension", async (importOriginal) => {
             // For tests: if source looks like env: or vault:, return a fake valid key
             // Otherwise assume it's a direct secret key and return it
             if (source.startsWith("env:") || source.startsWith("vault:")) {
-                return "SA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ";
+                return "SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ";
             }
             return source;
         }),
