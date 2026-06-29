@@ -12,6 +12,34 @@ import {
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
 
+/**
+ * Executes an RPC action with exponential backoff on network timeouts or 429/5xx errors.
+ * Starts at 1 second, doubling up to 3 retries (max 4 attempts).
+ */
+export async function executeWithRetry<T>(action: () => Promise<T>): Promise<T> {
+    const MAX_RETRIES = 3;
+    let delayMs = 1000;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            return await action();
+        } catch (error: any) {
+            const isTimeout = error?.code === "ETIMEDOUT" || error?.code === "ECONNRESET" || error?.message?.includes("timeout");
+            const status = error?.response?.status;
+            const isRetryableHttp = status === 429 || (status >= 500 && status < 600);
+
+            if ((isTimeout || isRetryableHttp) && attempt < MAX_RETRIES) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+                delayMs *= 2;
+                continue;
+            }
+
+            throw error;
+        }
+    }
+    throw new Error("Unreachable");
+}
+
 const logger = getLogger().child({ component: "StellarRpcClient" });
 
 const RPC_URLS: Record<string, string> = {
