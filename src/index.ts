@@ -12,15 +12,18 @@ import { registerResourcesCommand } from "./commands/resources.js";
 import { registerRestoreCommand } from "./commands/restore.js";
 import { registerChannelsCommand } from "./commands/channels.js";
 import { registerBudgetCommand } from "./commands/budget.js";
+import { registerDbCommand } from "./commands/db.js";
 
 initLogger({ mode: "cli" });
 
 const program = new Command();
 
 program
-    .name("sorokeep")
-    .description("Sorokeep — The missing operations layer for deployed Soroban smart contracts")
-    .version("0.1.2");
+  .name("sorokeep")
+  .description(
+    "Sorokeep — The missing operations layer for deployed Soroban smart contracts",
+  )
+  .version("0.1.2");
 
 registerWatchCommand(program);
 registerStatusCommand(program);
@@ -33,5 +36,6 @@ registerResourcesCommand(program);
 registerRestoreCommand(program);
 registerChannelsCommand(program);
 registerBudgetCommand(program);
+registerDbCommand(program);
 
 program.parse(process.argv);

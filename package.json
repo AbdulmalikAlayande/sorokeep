@@ -44,6 +44,8 @@
     "url": "https://github.com/AbdulmalikAlayande/sorokeep.git"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1075.0",
+    "@aws-sdk/credential-providers": "^3.1075.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@stellar/stellar-sdk": "^15.1.0",
     "better-sqlite3": "^12.9.0",
