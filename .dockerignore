@@ -7,8 +7,13 @@ coverage
 *.log
 .env
 .env.*
+.env.example
 .npmrc
 README.md
 CONTRIBUTING.md
 LICENSE
 stdout
+docker-compose*.yaml
+systemd/
+docs/
+templates/
