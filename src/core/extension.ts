@@ -76,6 +76,8 @@ export interface RestoreResult {
     ledger?: number;
     /** Error message if failed. */
     error?: string;
+    /** Fee charged in stroops. */
+    feeCharged?: number;
 }
 
 // ─── Core implementation ──────────────────────────────────────────────────────
@@ -439,6 +441,7 @@ export async function restoreEntries(
         entriesRestored: restored,
         txHash: txResult.txHash,
         ledger: txResult.ledger,
+        feeCharged: txResult.feeCharged,
     };
 }
 
