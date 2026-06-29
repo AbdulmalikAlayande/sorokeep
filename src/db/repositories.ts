@@ -532,6 +532,27 @@ export function getContractCostSummary(db: Database.Database, contractId: string
     };
 }
 
+/**
+ * Count the number of auto-extension transactions that were executed for the
+ * given contract within the last hour.
+ *
+ * Used by the rate limiter to enforce a maximum of N extensions per hour
+ * per contract (issue #142).
+ *
+ * @param db - The SQLite database connection.
+ * @param contractId - The contract to check.
+ * @returns The number of extensions recorded in the last 60 minutes.
+ */
+export function countExtensionsInLastHour(db: Database.Database, contractId: string): number {
+    const row = db.prepare(`
+        SELECT COUNT(*) AS cnt
+        FROM extension_history
+        WHERE contract_id = ?
+          AND executed_at >= datetime('now', '-1 hour')
+    `).get(contractId) as { cnt: number };
+    return row?.cnt ?? 0;
+}
+
 export function getAverageResourceUsage(db: Database.Database, contractId: string, limit?: number): { avg_cpu_insns: number, avg_mem_bytes: number, count: number } | null {
   const queryLimit = limit ? `LIMIT ${limit}` : "";
   const rows = db.prepare(`
