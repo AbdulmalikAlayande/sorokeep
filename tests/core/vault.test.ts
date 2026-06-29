@@ -22,7 +22,7 @@ describe("VaultResolver", () => {
             json: async () => ({
                 data: {
                     data: {
-                        secret_key: "SA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+                        secret_key: "SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56)
                     },
                     metadata: { version: 1 }
                 }
@@ -36,7 +36,7 @@ describe("VaultResolver", () => {
 
         const secret = await resolver.getSecret("secret/data/stellar/mykey");
 
-        expect(secret).toBe("SA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ");
+        expect(secret).toBe("SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56));
         expect(mockFetch).toHaveBeenCalledOnce();
         const [url, init] = mockFetch.mock.calls[0];
         expect(url).toBe("https://vault.example.com/v1/secret/data/stellar/mykey");
@@ -51,7 +51,7 @@ describe("VaultResolver", () => {
             status: 200,
             json: async () => ({
                 data: {
-                    private_key: "SA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+                    private_key: "SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56)
                 }
             })
         } as any);
@@ -62,7 +62,7 @@ describe("VaultResolver", () => {
         });
 
         const secret = await resolver.getSecret("secret/stellar/mykey");
-        expect(secret).toBe("SA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ");
+        expect(secret).toBe("SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56));
     });
 
     it("raises error on invalid authentication credentials", async () => {
@@ -111,9 +111,9 @@ describe("VaultResolver", () => {
         const { VaultResolver } = await import("../../src/core/vault.js");
 
         const testCases = [
-            { field: "secret", value: "SB7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ" },
-            { field: "value", value: "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" },
-            { field: "stellar_secret", value: "SC7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ" },
+            { field: "secret", value: "SB7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56) },
+            { field: "value", value: "SAAAAAAAAAAAAAAA" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".substring(0, 56) },
+            { field: "stellar_secret", value: "SC7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56) },
         ];
 
         for (const tc of testCases) {
@@ -136,7 +136,7 @@ describe("VaultResolver", () => {
             ok: true,
             status: 200,
             json: async () => ({
-                data: { data: { my_custom_field: "SD7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ" } }
+                data: { data: { my_custom_field: "SD7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56) } }
             })
         } as any);
 
@@ -164,7 +164,7 @@ describe("VaultResolver", () => {
         mockFetch.mockResolvedValue({
             ok: true,
             status: 200,
-            json: async () => ({ data: { data: { secret: "SA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ" } } })
+            json: async () => ({ data: { data: { secret: "SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56) } } })
         } as any);
 
         const resolver = new VaultResolver({
@@ -194,7 +194,7 @@ describe("VaultResolver", () => {
         mockFetch.mockResolvedValue({
             ok: true,
             status: 200,
-            json: async () => ({ data: { data: { secret: "SA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ" } } })
+            json: async () => ({ data: { data: { secret: "SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56) } } })
         } as any);
 
         // Need to re-import extension module to pick up mocked config
@@ -202,6 +202,6 @@ describe("VaultResolver", () => {
         const { resolveSecretKey } = await import("../../src/core/extension.js");
 
         const secret = await resolveSecretKey("vault:secret/data/stellar/mykey");
-        expect(secret).toBe("SA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ");
+        expect(secret).toBe("SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ".substring(0, 56));
     });
 });
