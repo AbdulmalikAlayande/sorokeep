@@ -27,7 +27,6 @@ export function registerRestoreCommand(program: Command): void {
                     process.exit(1);
                 }
 
-                // Resolve secret key
                 let secretKey: string | undefined;
 
                 if (options.keypairEnv) {
@@ -45,7 +44,6 @@ export function registerRestoreCommand(program: Command): void {
                     process.exit(1);
                 }
 
-                // Determine which entries to restore
                 let entryKeys: string[];
 
                 if (options.all && options.entry && options.entry.length > 0) {
@@ -94,9 +92,6 @@ export function registerRestoreCommand(program: Command): void {
         });
 }
 
-/**
- * Commander collect helper for repeatable options.
- */
 function collect(value: string, previous: string[]): string[] {
     return previous.concat([value]);
 }

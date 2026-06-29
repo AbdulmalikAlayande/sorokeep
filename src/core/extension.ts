@@ -16,43 +16,25 @@ import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "Extension" });
 
-// ─── Public contract ──────────────────────────────────────────────────────────
-
 export interface ExtensionResult {
-    /** Whether the extension was successful. */
     success: boolean;
-    /** Contract ID that was extended. */
     contractId: string;
-    /** Number of entries that were extended. */
     entriesExtended: number;
-    /** Transaction hash if submitted. */
     txHash?: string;
-    /** New ledger number after extension. */
     ledger?: number;
-    /** Error message if failed. */
     error?: string;
-    /** Estimated fee in stroops (from simulation). */
     estimatedFee?: number;
-    /** CPU instructions consumed by the transaction. */
     cpuInsns?: number;
-    /** Memory bytes consumed by the transaction. */
     memBytes?: number;
-    /** Whether resource usage spiked. */
     isAnomaly?: boolean;
-    /** Details about the anomaly if present. */
     anomalyDetails?: string;
 }
 
 export interface AutoExtensionResult {
-    /** Total contracts checked for auto-extension. */
     contractsChecked: number;
-    /** Number of contracts where entries were actually extended. */
     contractsExtended: number;
-    /** Total entries extended across all contracts. */
     entriesExtended: number;
-    /** Per-contract errors (non-fatal). */
     errors: string[];
-    /** Details of each successful extension. */
     extensions: Array<{
         contractId: string;
         txHash: string;
@@ -64,26 +46,18 @@ export interface AutoExtensionResult {
 }
 
 export interface RestoreResult {
-    /** Whether the restore was successful. */
     success: boolean;
-    /** Contract ID. */
     contractId: string;
-    /** Number of entries restored. */
     entriesRestored: number;
-    /** Transaction hash if submitted. */
     txHash?: string;
-    /** Ledger number. */
     ledger?: number;
-    /** Error message if failed. */
     error?: string;
+    estimatedFee?: number;
+    cpuInsns?: number;
+    memBytes?: number;
+    minResourceFee?: number;
 }
 
-// ─── Core implementation ──────────────────────────────────────────────────────
-
-/**
- * Simulate a TTL extension for specific entries of a contract.
- * Does NOT submit — only estimates fees. Useful for dry-run / cost preview.
- */
 export async function simulateExtension(
     db: Database.Database,
     contractId: string,
@@ -118,10 +92,6 @@ export async function simulateExtension(
     };
 }
 
-/**
- * Extend TTL for specific entries of a contract.
- * Builds, simulates, signs, and submits an ExtendFootprintTTLOp transaction.
- */
 export async function extendEntries(
     db: Database.Database,
     contractId: string,
@@ -176,12 +146,10 @@ export async function extendEntries(
         }
     }
 
-    // Fetch fresh TTLs after extension to update DB and record history
     const freshTTLs = await client.getEntryTTLs(entryKeyXdrs);
     const entries = getEntriesForContract(db, contractId);
     const entryMap = new Map(entries.map(e => [e.entry_key_xdr, e]));
 
-    // Wrap all DB updates in a transaction for atomicity
     const updateDb = db.transaction(() => {
         for (const freshEntry of freshTTLs.entries) {
             const dbEntry = entryMap.get(freshEntry.entryKeyXdr);
@@ -191,7 +159,6 @@ export async function extendEntries(
                 ? dbEntry.live_until_ledger - freshTTLs.latestLedger
                 : 0;
 
-            // Record the extension in history
             recordExtension(db, {
                 contract_id: contractId,
                 contract_entry_id: dbEntry.id,
@@ -204,7 +171,6 @@ export async function extendEntries(
                 executed_at_ledger: freshTTLs.latestLedger,
             });
 
-            // Update the entry with fresh TTL
             upsertEntry(db, {
                 contract_id: contractId,
                 entry_key_xdr: freshEntry.entryKeyXdr,
@@ -220,10 +186,6 @@ export async function extendEntries(
     });
     updateDb();
 
-    logger.info(
-        `Extension successful for ${contractId}: tx=${txResult.txHash}, entries=${entryKeyXdrs.length}`,
-    );
-
     return {
         success: true,
         contractId,
@@ -237,16 +199,6 @@ export async function extendEntries(
     };
 }
 
-/**
- * Run auto-extension for all contracts with enabled extension policies.
- * Called by the daemon after each monitor cycle.
- *
- * For each contract with an enabled policy, checks if any entries have
- * a remaining TTL below `extend_when_below_ledgers`. If so, extends them
- * to `target_ttl_ledgers`.
- *
- * Errors for individual contracts are collected, not thrown.
- */
 export async function runAutoExtensions(
     db: Database.Database,
     network: string,
@@ -272,7 +224,6 @@ export async function runAutoExtensions(
     const client = new StellarRpcClient(network, rpcUrl);
     const latestLedger = await client.getCurrentLedger();
 
-    // Build pool from registered channel accounts; fall back to per-policy keypairs
     const channelAccounts = getChannelAccounts(db, network);
     const pool = channelAccounts.length > 0
         ? new ChannelAccountPool(db, network)
@@ -280,7 +231,6 @@ export async function runAutoExtensions(
 
     result.contractsChecked = eligibleContracts.length;
 
-    // Process all eligible contracts concurrently, one channel account slot per task.
     await Promise.all(eligibleContracts.map(async contract => {
         const policy = getExtensionPolicy(db, contract.id)!;
 
@@ -295,7 +245,6 @@ export async function runAutoExtensions(
 
             if (needsExtension.length === 0) return;
 
-            // Resolve secret key: prefer channel pool, fall back to policy keypair
             let secretKey: string | null = null;
             let slot: import("./channels.js").ChannelSlot | null = null;
 
@@ -365,10 +314,33 @@ export async function runAutoExtensions(
     return result;
 }
 
-/**
- * Restore archived entries for a contract.
- * Submits a RestoreFootprintOp transaction.
- */
+export async function simulateRestore(
+    db: Database.Database,
+    contractId: string,
+    entryKeyXdrs: string[],
+    sourcePublicKey: string,
+    rpcUrl?: string,
+): Promise<RestoreResult> {
+    const contract = getContract(db, contractId);
+    if (!contract) {
+        return { success: false, contractId, entriesRestored: 0, error: "Contract not found" };
+    }
+
+    const client = new StellarRpcClient(contract.network, rpcUrl);
+    const sim = await client.simulateRestore(entryKeyXdrs, sourcePublicKey);
+
+    if (!sim.success) {
+        return { success: false, contractId, entriesRestored: 0, error: sim.error };
+    }
+
+    return {
+        success: true,
+        contractId,
+        entriesRestored: entryKeyXdrs.length,
+        estimatedFee: sim.minResourceFee,
+    };
+}
+
 export async function restoreEntries(
     db: Database.Database,
     contractId: string,
@@ -402,14 +374,12 @@ export async function restoreEntries(
         };
     }
 
-    // Refresh TTLs after restore
     const freshTTLs = await client.getEntryTTLs(entryKeyXdrs);
     const entries = getEntriesForContract(db, contractId);
     const entryMap = new Map(entries.map(e => [e.entry_key_xdr, e]));
 
     let restored = 0;
 
-    // Wrap all DB updates in a transaction for atomicity
     const updateDb = db.transaction(() => {
         for (const freshEntry of freshTTLs.entries) {
             const dbEntry = entryMap.get(freshEntry.entryKeyXdr);
@@ -439,17 +409,12 @@ export async function restoreEntries(
         entriesRestored: restored,
         txHash: txResult.txHash,
         ledger: txResult.ledger,
+        cpuInsns: txResult.cpuInsns,
+        memBytes: txResult.memBytes,
+        minResourceFee: txResult.minResourceFee,
     };
 }
 
-// ─── Private helpers ──────────────────────────────────────────────────────────
-
-/**
- * Resolve a secret key from a keypair_source string.
- * Supports:
- *   - "env:VAR_NAME" — reads from environment variable
- *   - Direct secret key string starting with "S" (56 chars)
- */
 function resolveSecretKey(source: string | null): string | null {
     if (!source) return null;
 
