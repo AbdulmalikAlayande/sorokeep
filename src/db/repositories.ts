@@ -640,6 +640,31 @@ export function markAlertDelivered(db: Database.Database, alertFiredId: number):
 }
 
 /**
+ * Count the number of undelivered alerts for the given network.
+ * Uses the same filtering logic as getUndeliveredAlerts:
+ * - delivered = 0
+ * - retry_count < MAX_RETRY_COUNT
+ * - matches the specified network
+ */
+export function countUndeliveredAlerts(
+    db: Database.Database,
+    network: string,
+): number {
+    const row = db.prepare(`
+        SELECT COUNT(*) as count
+        FROM alerts_fired af
+        JOIN alert_configs ac  ON ac.id  = af.alert_config_id
+        JOIN contract_entries ce ON ce.id = af.contract_entry_id
+        JOIN contracts c       ON c.id  = ce.contract_id
+        WHERE af.delivered = 0
+          AND af.retry_count < ?
+          AND c.network = ?
+    `).get(MAX_RETRY_COUNT, network) as { count: number };
+
+    return row.count;
+}
+
+/**
  * Increment the retry count for a failed alert delivery.
  */
 export function incrementRetryCount(db: Database.Database, alertFiredId: number): void {

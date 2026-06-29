@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { StellarRpcClient, extractResourceCosts } from "../../src/rpc/client";
+import { StellarRpcClient, extractResourceCosts, executeWithRetry } from "../../src/rpc/client";
 import { Contract, xdr, Keypair } from "@stellar/stellar-sdk";
 
 vi.mock("@stellar/stellar-sdk", async () =>  {
@@ -387,6 +387,73 @@ describe("StellarRpcClient", () => {
             const result = await mockClient["pollTransaction"]("missing", 2, 10);
             expect(result.success).toBe(false);
             expect(result.error).toContain("Transaction polling timed out after 2 attempts");
+        });
+    });
+
+    describe("executeWithRetry", () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+            vi.restoreAllMocks();
+        });
+
+        it("Succeeds if transient failure resolves within retries", async () => {
+            let attempts = 0;
+            const action = vi.fn().mockImplementation(async () => {
+                attempts++;
+                if (attempts < 3) {
+                    const error = new Error("503 Service Unavailable");
+                    (error as any).response = { status: 503 };
+                    throw error;
+                }
+                return "success";
+            });
+
+            const promise = executeWithRetry(action);
+            
+            // Advance timers for backoff
+            await vi.advanceTimersByTimeAsync(1000); // 1st retry
+            await vi.advanceTimersByTimeAsync(2000); // 2nd retry
+
+            const result = await promise;
+            
+            expect(result).toBe("success");
+            expect(action).toHaveBeenCalledTimes(3);
+        });
+
+        it("Network timeouts trigger retry attempts", async () => {
+            const action = vi.fn().mockImplementation(async () => {
+                const error = new Error("timeout");
+                (error as any).code = "ETIMEDOUT";
+                throw error;
+            });
+
+            let error: any;
+            const promise = executeWithRetry(action).catch(e => { error = e; });
+
+            // Fast forward through all retries: 1s, 2s, 4s
+            await vi.advanceTimersByTimeAsync(1000);
+            await vi.advanceTimersByTimeAsync(2000);
+            await vi.advanceTimersByTimeAsync(4000);
+
+            await promise;
+            expect(error).toBeDefined();
+            expect(error.message).toBe("timeout");
+            expect(action).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+        });
+        
+        it("Does not retry on non-transient errors like 400 Bad Request", async () => {
+            const action = vi.fn().mockImplementation(async () => {
+                const error = new Error("400 Bad Request");
+                (error as any).response = { status: 400 };
+                throw error;
+            });
+
+            await expect(executeWithRetry(action)).rejects.toThrow("400 Bad Request");
+            expect(action).toHaveBeenCalledTimes(1);
         });
     });
 });
