@@ -285,7 +285,7 @@ export interface MonitorCycleResult {
      * in this cycle. Used by the Scheduler to compute the next interval.
      * Empty when no entries were updated or the cycle failed.
      */
-    remainingTTLs: number[];
+    remainingTTLs?: number[];
 }
 ```
 

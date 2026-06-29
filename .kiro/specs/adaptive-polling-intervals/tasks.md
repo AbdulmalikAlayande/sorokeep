@@ -80,7 +80,7 @@ compatibility with the existing `intervalMs` option.
   - [ ] 4.5 Add re-entrance guard and structured logging
     - Re-entrance guard in `scheduledTick`: if `cycleInFlight` is true, log at `debug` level (`"Skipping tick — previous cycle still in flight"`) and return without scheduling a new cycle; reschedule normally when the in-flight cycle finishes
     - Emit `info` log after every rescheduling: `Scheduler — next cycle in {effectiveMs}ms | minTTL={minRemainingTTL} ledgers | errors={errorCount}`
-    - When interval changes vs previous cycle, append: ` | intervalChanged: {previousMs}ms → {effectiveMs}ms`
+    - When interval changes vs previous cycle, append: | `intervalChanged: {previousMs}ms → {effectiveMs}ms`
     - When `remainingTTLs` is empty, emit `debug` log: `Scheduler — no TTL data available; using maxInterval={maxIntervalMs}ms`
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.3_
 
@@ -102,7 +102,7 @@ compatibility with the existing `intervalMs` option.
     - TTL = 120,960 → safe interval (exactly at `TTL_TIER_WEEK`)
     - _Requirements: 1.1_
 
-  - [ ]* 6.2 Test `computeEffectiveInterval` with concrete examples
+  - [ ] 6.2 Test `computeEffectiveInterval` with concrete examples
     - Empty array → `DEFAULT_MAX_INTERVAL_MS` (3,600,000 ms)
     - Single critical TTL → 60,000 ms
     - Mixed-tier array → minimum of the per-entry tier values
@@ -110,7 +110,7 @@ compatibility with the existing `intervalMs` option.
     - Custom `IntervalPolicy` tiers are applied correctly
     - _Requirements: 1.2, 1.3, 3.1, 3.2, 4.2_
 
-  - [ ]* 6.3 Test `validateIntervalPolicy` error paths
+  - [ ] 6.3 Test `validateIntervalPolicy` error paths
     - Policy with `criticalIntervalMs: 9999` → throws with message containing `criticalIntervalMs` and `10,000`
     - Policy with `dayIntervalMs: 9999` → throws
     - Policy with `minIntervalMs: 70_000` and `criticalIntervalMs: 60_000` → throws (minInterval > tier)
@@ -119,7 +119,7 @@ compatibility with the existing `intervalMs` option.
     - _Requirements: 3.4, 3.5_
 
 - [ ] 7. Write property-based tests — `tests/daemon/interval.property.test.ts`
-  - [ ]* 7.1 Property 1: Tier mapping correctness
+  - [ ] 7.1 Property 1: Tier mapping correctness
     - Tag: `// Feature: adaptive-polling-intervals, Property 1: Tier mapping correctness`
     - Generate TTL values in each of the four tier ranges using `fc.integer` with appropriate bounds
     - Assert each individual TTL is classified into the expected tier interval
@@ -127,20 +127,20 @@ compatibility with the existing `intervalMs` option.
     - Configure `{ numRuns: 100 }` minimum
     - _Requirements: 1.1, 1.2, 3.2_
 
-  - [ ]* 7.2 Property 2: Range invariant
+  - [ ] 7.2 Property 2: Range invariant
     - Tag: `// Feature: adaptive-polling-intervals, Property 2: Range invariant`
     - Generate arbitrary TTL arrays including empty, negative values: `fc.array(fc.integer({ min: -1000, max: 500_000 }))`
     - Assert `result >= DEFAULT_MIN_INTERVAL_MS && result <= DEFAULT_MAX_INTERVAL_MS` for all inputs
     - Configure `{ numRuns: 100 }` minimum
     - _Requirements: 1.3, 1.4, 1.5, 4.2, 4.3_
 
-  - [ ]* 7.3 Property 3: Purity and determinism
+  - [ ] 7.3 Property 3: Purity and determinism
     - Tag: `// Feature: adaptive-polling-intervals, Property 3: Purity and determinism`
     - Generate `fc.array(fc.nat())`; call `computeEffectiveInterval(ttls)` twice; assert strict equality (`===`)
     - Configure `{ numRuns: 100 }` minimum
     - _Requirements: 4.4_
 
-  - [ ]* 7.4 Property 4: Uniform-array invariant
+  - [ ] 7.4 Property 4: Uniform-array invariant
     - Tag: `// Feature: adaptive-polling-intervals, Property 4: Uniform-array invariant`
     - Generate `fc.nat()` for value and `fc.integer({ min: 1, max: 50 })` for length
     - Assert `computeEffectiveInterval(Array(n).fill(v))` returns the same value for all `n ≥ 1`
@@ -148,32 +148,32 @@ compatibility with the existing `intervalMs` option.
     - _Requirements: 4.5_
 
 - [ ] 8. Write integration tests — `tests/daemon/loop.adaptive.test.ts`
-  - [ ]* 8.1 Successful cycle uses computed interval for next `setTimeout`
+  - [ ] 8.1 Successful cycle uses computed interval for next `setTimeout`
     - Mock `runMonitorCycle` to return a result with specific `remainingTTLs`
     - Assert the delay passed to the next `setTimeout` equals `computeEffectiveInterval(remainingTTLs)`
     - _Requirements: 2.1_
 
-  - [ ]* 8.2 Error cycle retains previous effective interval
+  - [ ] 8.2 Error cycle retains previous effective interval
     - Mock `runMonitorCycle` first call succeeds (sets `currentEffectiveMs`), second call returns non-empty `errors`
     - Assert next `setTimeout` delay equals the interval from the first successful cycle
     - _Requirements: 2.2_
 
-  - [ ]* 8.3 `intervalMs` override disables adaptive behaviour
+  - [ ] 8.3 `intervalMs` override disables adaptive behaviour
     - Start daemon with `{ intervalMs: 15_000 }`; mock cycle with low TTL data
     - Assert every `setTimeout` delay is exactly 15,000 ms
     - _Requirements: 3.1_
 
-  - [ ]* 8.4 Custom `intervalPolicy` tiers are applied
+  - [ ] 8.4 Custom `intervalPolicy` tiers are applied
     - Supply a custom policy with a distinct `safeIntervalMs`; mock cycle with high TTL values
     - Assert the resulting delay matches the custom policy's `safeIntervalMs`
     - _Requirements: 3.2_
 
-  - [ ]* 8.5 Interval-change log entry emitted
+  - [ ] 8.5 Interval-change log entry emitted
     - Spy on logger; drive two consecutive cycles where the computed interval changes
     - Assert the `info` log contains both previous and new interval values
     - _Requirements: 5.2_
 
-  - [ ]* 8.6 Empty watch list logs at debug level
+  - [ ] 8.6 Empty watch list logs at debug level
     - Mock `runMonitorCycle` to return `{ remainingTTLs: [] }` (empty watch list)
     - Assert a `debug` log entry containing `maxInterval` is emitted
     - _Requirements: 5.3_
@@ -185,7 +185,6 @@ compatibility with the existing `intervalMs` option.
 
 ## Notes
 
-- Tasks marked with `*` are optional and can be skipped for faster MVP
 - Each task references specific requirements for traceability
 - The `setInterval` → `setTimeout` chain change requires updating any existing timer tests in `loop.test.ts` that call `vi.advanceTimersByTimeAsync` — Vitest handles chained `setTimeout` identically
 - `fast-check` must be installed (task 1) before property tests can be written (task 7)
