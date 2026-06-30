@@ -357,11 +357,22 @@ describe("StellarRpcClient", () => {
             expect(result.txHash).toBe("mock-tx-hash");
         });
 
-        it("submitExtension handles simulation error", async () => {
-            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail.com");
-            const result = await simFailClient.submitExtension([dummyKey], 1000, secretKey);
-            expect(result.success).toBe(false);
-            expect(result.error).toBe("Simulation failed");
+        it("submitExtension handles simulation error (expired sequence number)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-seq.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "txBadSeq" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Expired sequence number");
+        });
+
+        it("submitExtension handles simulation error (insufficient balance)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-bal.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "txInsufficientBalance" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Insufficient wallet balance");
+        });
+
+        it("submitExtension handles simulation error (invalid footprint)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-key.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "invalid footprint" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Invalid footprint key");
         });
 
         it("submitExtension handles send error", async () => {

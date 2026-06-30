@@ -105,14 +105,16 @@ export async function simulateExtension(
 
     const client = new StellarRpcClient(contract.network, rpcUrl);
 
-    const sim = await client.simulateExtension(entryKeyXdrs, extendToLedgers, sourcePublicKey);
-
-    if (!sim.success) {
+    let sim;
+    try {
+        sim = await client.simulateExtension(entryKeyXdrs, extendToLedgers, sourcePublicKey);
+    } catch (err: any) {
+        logger.warn(`Simulation warning for ${contractId}: ${err.message}`);
         return {
             success: false,
             contractId,
             entriesExtended: 0,
-            error: sim.error,
+            error: err.message,
         };
     }
 
@@ -151,7 +153,18 @@ export async function extendEntries(
         `Extending ${entryKeyXdrs.length} entries for ${contractId} to ${extendToLedgers} ledgers`,
     );
 
-    const txResult = await client.submitExtension(entryKeyXdrs, extendToLedgers, secretKey);
+    let txResult;
+    try {
+        txResult = await client.submitExtension(entryKeyXdrs, extendToLedgers, secretKey);
+    } catch (err: any) {
+        logger.warn(`Simulation warning for ${contractId}: ${err.message}`);
+        return {
+            success: false,
+            contractId,
+            entriesExtended: 0,
+            error: err.message,
+        };
+    }
 
     if (!txResult.success) {
         logger.error(`Extension failed for ${contractId}: ${txResult.error}`);
@@ -396,7 +409,18 @@ export async function restoreEntries(
 
     logger.info(`Restoring ${entryKeyXdrs.length} entries for ${contractId}`);
 
-    const txResult = await client.submitRestore(entryKeyXdrs, secretKey);
+    let txResult;
+    try {
+        txResult = await client.submitRestore(entryKeyXdrs, secretKey);
+    } catch (err: any) {
+        logger.warn(`Simulation warning for ${contractId}: ${err.message}`);
+        return {
+            success: false,
+            contractId,
+            entriesRestored: 0,
+            error: err.message,
+        };
+    }
 
     if (!txResult.success) {
         logger.error(`Restore failed for ${contractId}: ${txResult.error}`);

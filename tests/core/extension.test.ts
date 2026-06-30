@@ -178,7 +178,7 @@ describe("Core Extension Logic", () => {
                 success: false,
                 txHash: "failed-tx",
                 ledger: 0,
-                error: "Insufficient funds",
+                error: "Transaction send error: Insufficient funds",
             });
 
             const result = await extendEntries(
@@ -190,7 +190,7 @@ describe("Core Extension Logic", () => {
             );
 
             expect(result.success).toBe(false);
-            expect(result.error).toBe("Insufficient funds");
+            expect(result.error).toBe("Transaction send error: Insufficient funds");
 
             // No history should be recorded
             const history = getExtensionHistory(db, contractId);
@@ -256,11 +256,7 @@ describe("Core Extension Logic", () => {
         it("returns error on simulation failure", async () => {
             const contractId = seedContract(db);
 
-            mockSimulateExtension.mockResolvedValue({
-                success: false,
-                minResourceFee: 0,
-                error: "Entry is archived",
-            });
+            mockSimulateExtension.mockRejectedValue(new Error("Entry is archived"));
 
             const result = await simulateExtension(
                 db, contractId, ["instance-key-xdr"], 100000, "GPUBLICKEY",
