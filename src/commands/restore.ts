@@ -75,8 +75,12 @@ export function registerRestoreCommand(program: Command): void {
 
                 if (result.success) {
                     spinner.succeed(chalk.green(`Restored ${result.entriesRestored} entries for ${displayName}`));
-                    console.log(`  Tx hash: ${result.txHash}`);
-                    console.log(`  Ledger:  ${result.ledger}`);
+                    console.log(`  Tx hash:     ${result.txHash}`);
+                    console.log(`  Ledger:      ${result.ledger}`);
+                    if (result.feeCharged !== undefined) {
+                        const feeXlm = (result.feeCharged / 10_000_000).toFixed(7);
+                        console.log(`  Fee spent:   ${feeXlm} XLM (${result.feeCharged} stroops)`);
+                    }
                     console.log(chalk.dim(`\n  Run 'sorokeep status ${formatContractID(contractId)}' to verify.`));
                 } else {
                     spinner.fail(chalk.red(`Restore failed: ${result.error}`));

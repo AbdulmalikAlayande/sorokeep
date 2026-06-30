@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "VaultResolver" });
