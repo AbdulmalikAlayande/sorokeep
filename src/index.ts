@@ -11,6 +11,7 @@ import { registerCostsCommand } from "./commands/costs.js";
 import { registerResourcesCommand } from "./commands/resources.js";
 import { registerRestoreCommand } from "./commands/restore.js";
 import { registerChannelsCommand } from "./commands/channels.js";
+import { registerMcpCommand } from "./commands/mcp.js";
 
 import { registerInspectCommand } from "./commands/inspect.js";
 
@@ -39,6 +40,7 @@ registerCostsCommand(program);
 registerResourcesCommand(program);
 registerRestoreCommand(program);
 registerChannelsCommand(program);
+registerMcpCommand(program);
 
 registerInspectCommand(program);
 registerBudgetCommand(program);
