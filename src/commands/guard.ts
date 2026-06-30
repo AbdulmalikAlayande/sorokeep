@@ -130,17 +130,20 @@ export function registerGuardCommand(program: Command): void {
                          kp.publicKey(),
                      );
 
-                     if (result.success) {
+                     if (result?.success) {
                          spinner.succeed(chalk.green("Simulation successful"));
-                         console.log("DEBUG: result.success is true, calling spinner.succeed");
-                         logger.info("Simulation successful in guard.ts");
-                          console.log(`  Entries:       ${result.entriesExtended}`);
-                          console.log(`  Estimated fee: ${(result.estimatedFee! / 10_000_000).toFixed(7)} XLM`);
-                          console.log(`  CPU:          ${formatCpuInsns(result.cpuInsns!)}`);
-                          console.log(`  Memory:       ${formatBytes(result.memBytes!)}`);
-                          console.log(`  Read size:    ${formatBytes(result.readBytes!)}`);
-                          console.log(`  Write size:   ${formatBytes(result.writeBytes!)}`);
-                      } else {
+                        logger.info("Simulation successful in guard.ts");
+                        console.log(`  Entries:       ${result.entriesExtended}`);
+                        console.log(`  Estimated fee: ${(result.estimatedFee! / 10_000_000).toFixed(7)} XLM`);
+                        console.log(`  CPU:          ${formatCpuInsns(result.cpuInsns!)}`);
+                        console.log(`  Memory:       ${formatBytes(result.memBytes!)}`);
+                        if (result.readBytes !== undefined) {
+                            console.log(`  Read size:    ${formatBytes(result.readBytes)}`);
+                        }
+                        if (result.writeBytes !== undefined) {
+                            console.log(`  Write size:   ${formatBytes(result.writeBytes)}`);
+                        }
+                    } else {
                          spinner.fail(chalk.red(`Simulation failed: ${result.error}`));
                      }
                      return;

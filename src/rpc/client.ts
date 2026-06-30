@@ -384,8 +384,8 @@ export class StellarRpcClient {
         return {
             success: true,
             minResourceFee: Number(successSim.minResourceFee ?? 0),
-            cpuInstructions: Number((successSim as any).cost?.cpuInstructions ?? 0),
-            memoryBytes: Number((successSim as any).cost?.memoryBytes ?? 0),
+            cpuInstructions: Number((successSim as any).cost?.cpuInsns ?? 0),
+            memoryBytes: Number((successSim as any).cost?.memBytes ?? 0),
             readBytes: Number((successSim as any).cost?.readBytes ?? 0),
             writeBytes: Number((successSim as any).cost?.writeBytes ?? 0),
         };

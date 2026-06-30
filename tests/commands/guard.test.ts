@@ -49,7 +49,7 @@ describe("Guard Command CLI", () => {
     });
 
     afterEach(() => {
-        vi.restoreAllMocks();
+        vi.clearAllMocks();
     });
 
     it("exits with code 1 if contract is not found in DB", async () => {
@@ -176,23 +176,27 @@ describe("Guard Command CLI", () => {
         vi.mocked(repos.getEntriesForContract).mockImplementation((db, id) => {
             return [{ entry_key_xdr: "AAAA" }];
         });
-        vi.mocked(extensionLib.simulateExtension).mockResolvedValue({
+        vi.mocked(extensionLib.simulateExtension).mockImplementation(async () => ({
             success: true,
             entriesExtended: 1,
             estimatedFee: 100_000_000, // 10 XLM
             cpuInsns: 500,
-            memBytes: 1024
-        } as any);
+            memBytes: 1024,
+            readBytes: 2048,
+            writeBytes: 3072
+        } as any));
 
         // Use a valid looking secret key to avoid Keypair.fromSecret throwing
         const { Keypair } = await import("@stellar/stellar-sdk");
-        const validSecret = Keypair.random().secret;
+        const validSecret = Keypair.random().secret();
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", dryRun: true, keypair: validSecret });
         
         expect(mockSpinner.succeed).toHaveBeenCalled();
         expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Entries:       1"));
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Estimated fee: 0.0100000 XLM"));
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("CPU instructions: 500"));
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Memory usage: 1,024 bytes"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Estimated fee: 10.0000000 XLM"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("CPU:          500"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Memory:       1 KB"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Read size:    2 KB"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Write size:   3 KB"));
     });
 });
