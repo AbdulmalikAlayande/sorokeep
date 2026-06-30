@@ -284,17 +284,17 @@ export function hasUnresolvedAlert(db: Database.Database, alertConfigId: number,
   return row !== undefined;
 }
 
-export function resolveAlerts(db: Database.Database, entryId: number): number[] {
+export function resolveAlerts(db: Database.Database, entryId: number, alertConfigId: number): number[] {
   const rows = db.prepare(`
     SELECT alert_config_id FROM alerts_fired
-    WHERE contract_entry_id = ? AND resolved = 0
-  `).all(entryId) as { alert_config_id: number }[];
+    WHERE contract_entry_id = ? AND alert_config_id = ? AND resolved = 0
+  `).all(entryId, alertConfigId) as { alert_config_id: number }[];
 
   if (rows.length > 0) {
     db.prepare(`
       UPDATE alerts_fired SET resolved = 1, resolved_at = datetime('now')
-      WHERE contract_entry_id = ? AND resolved = 0
-    `).run(entryId);
+      WHERE contract_entry_id = ? AND alert_config_id = ? AND resolved = 0
+    `).run(entryId, alertConfigId);
   }
 
   return rows.map(r => r.alert_config_id);
