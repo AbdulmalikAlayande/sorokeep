@@ -26,6 +26,11 @@ export interface SorokeepConfig {
     pollingIntervalSeconds: number;
     /** Slack bot token for Slack alert delivery. */
     slackToken?: string;
+    /** Telegram bot token. */
+    telegramBotToken?: string;
+    /** Directory containing custom Handlebars templates. */
+    templatesPath?: string;
+
     /** HashiCorp Vault configuration for secret key retrieval */
     vault?: VaultConfig;
 }
@@ -77,7 +82,12 @@ export function loadConfig(customPath?: string): SorokeepConfig {
                 ? parsed.pollingIntervalSeconds
                 : DEFAULT_CONFIG.pollingIntervalSeconds,
             slackToken: parsed.slackToken,
+
+            telegramBotToken: parsed.telegramBotToken,
+            templatesPath: parsed.templatesPath,
+
             vault,
+
         };
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);

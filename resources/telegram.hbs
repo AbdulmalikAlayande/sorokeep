@@ -1,0 +1,14 @@
+{{severityEmoji}} *{{#if isResourceAlert}}Resource {{severityLevel}}{{else if isResolved}}Alert Resolved{{else}}TTL {{severityLevel}}{{/if}}* — {{escapeMarkdown contractDisplay}}
+
+{{#if isResourceAlert}}
+*Resource:* {{resourceLabel}}
+*Network:* {{escapeMarkdown network}}
+*Usage:* {{resource.usagePercent}}% \({{currentUsageFormatted}} / {{limitFormatted}}\)
+{{else}}
+*Entry:* {{escapeMarkdown entryLabel}}
+*Network:* {{escapeMarkdown network}}
+*Remaining TTL:* {{currentRemainingLedgersFormatted}} ledgers \({{escapeMarkdown threshold.approximateTimeRemaining}}\)
+*Threshold:* {{configuredLedgersFormatted}} ledgers
+{{/if}}
+
+_Severity: {{escapeMarkdown severity}} \| Contract: {{escapeMarkdown contractId}}_

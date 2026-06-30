@@ -1,0 +1,88 @@
+# docker-compose.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Base compose template for sorokeep + a local Stellar Quickstart devnet.
+#
+# Quick start:
+#   docker compose up                   # uses defaults from this file
+#   docker compose --env-file .env up   # load custom overrides from .env
+#
+# For a dedicated devnet sandbox (faster polling, verbose logs, isolated vols):
+#   docker compose -f docker-compose.yaml -f docker-compose.devnet.yaml up
+#
+# Copy .env.example → .env and adjust values for your target environment.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Stellar Quickstart (local devnet / mock RPC environment) ─────────────────
+  stellar:
+    image: stellar/quickstart:latest
+    container_name: stellar-quickstart
+    ports:
+      - "${STELLAR_PORT:-8000}:8000"   # Horizon + Soroban RPC
+      - "${STELLAR_ADMIN_PORT:-8001}:8001" # Admin / fee-bump endpoint
+    command:
+      - "--local"
+      - "--enable-soroban-rpc"
+    volumes:
+      - stellar-data:/opt/stellar
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - sorokeep-network
+
+  # ── Sorokeep daemon ───────────────────────────────────────────────────────────
+  sorokeep:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sorokeep-daemon
+    depends_on:
+      stellar:
+        condition: service_healthy
+    environment:
+      - SOROKEEP_NETWORK=${SOROKEEP_NETWORK:-standalone}
+      - SOROKEEP_RPC_URL=${SOROKEEP_RPC_URL:-http://stellar:8000/soroban/rpc}
+      - SOROKEEP_POLLING_INTERVAL=${SOROKEEP_POLLING_INTERVAL:-300000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NODE_ENV=${NODE_ENV:-production}
+    command:
+      - "daemon"
+      - "--network"
+      - "${SOROKEEP_NETWORK:-standalone}"
+      - "--rpc-url"
+      - "${SOROKEEP_RPC_URL:-http://stellar:8000/soroban/rpc}"
+      - "--interval"
+      - "${SOROKEEP_POLLING_INTERVAL:-300000}"
+    volumes:
+      - sorokeep-data:/home/sorokeep/.sorokeep
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    networks:
+      - sorokeep-network
+
+# ── Networks ────────────────────────────────────────────────────────────────────
+networks:
+  sorokeep-network:
+    driver: bridge
+
+# ── Named volumes (persist data across container restarts) ──────────────────────
+volumes:
+  stellar-data:
+    driver: local
+  sorokeep-data:
+    driver: local
