@@ -446,7 +446,17 @@ export class StellarRpcClient {
 
         const sim = await this.server.simulateTransaction(tx);
 
-        assertSimulationSuccess(sim);
+        try {
+            assertSimulationSuccess(sim);
+        } catch (error: any) {
+            return {
+                success: false,
+                minResourceFee: 0,
+                error: error.message.replace("Simulation failed: ", "") === "unknown error"
+                    ? "Simulation failed"
+                    : error.message.replace("Simulation failed: ", ""),
+            };
+        }
 
         const successSim = sim;
         return {
