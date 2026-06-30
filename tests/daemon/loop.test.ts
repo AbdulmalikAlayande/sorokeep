@@ -60,6 +60,8 @@ function makeCycleResult(overrides: Partial<MonitorCycleResult> = {}): MonitorCy
         entriesUpdated: 0,
         thresholdsCrossed: 0,
         alertsResolved: 0,
+        extensionsTriggered: 0,
+        extensionErrors: [],
         errors: [],
         cycleStartedAt: new Date(),
         cycleFinishedAt: new Date(),

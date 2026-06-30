@@ -2,7 +2,6 @@ import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
 import { runIntrospectionRescan } from "../core/introspection.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
-import { runAutoExtensions } from "../core/extension.js";
 import { vacuumDatabase } from "../db/database.js";
 import { aggregateDailyCostSnapshots } from "../db/repositories.js";
 import { getLogger } from "../logging/index.js";
@@ -121,6 +120,7 @@ async function executeCycle(
             `updated: ${result.entriesUpdated}, ` +
             `crossed: ${result.thresholdsCrossed}, ` +
             `resolved: ${result.alertsResolved}, ` +
+            `extended: ${result.extensionsTriggered}, ` +
             `errors: ${result.errors.length}`,
         );
 
@@ -152,26 +152,6 @@ async function executeCycle(
             }
         } catch (introErr: unknown) {
             logger().error("runIntrospectionRescan threw unexpectedly", introErr);
-        }
-
-        // Step 4: run auto-extensions for contracts with enabled policies.
-        try {
-            const extensions = await runAutoExtensions(db, network, rpcUrl);
-            if (extensions.contractsChecked > 0) {
-                logger().info(
-                    `Auto-extensions — checked: ${extensions.contractsChecked}, ` +
-                    `extended: ${extensions.contractsExtended}, ` +
-                    `entries: ${extensions.entriesExtended}, ` +
-                    `errors: ${extensions.errors.length}`,
-                );
-            }
-            for (const ext of extensions.extensions) {
-                if (ext.isAnomaly) {
-                    logger().warn(`Cost anomaly detected for contract ${ext.contractId}: ${ext.anomalyDetails}`);
-                }
-            }
-        } catch (extensionErr: unknown) {
-            logger().error("runAutoExtensions threw unexpectedly", extensionErr);
         }
 
         // Step 4: aggregate daily cost snapshots for past extension history.
