@@ -80,6 +80,18 @@ describe("Costs Command CLI", () => {
                 recentExtensions: [],
             },
         } as any);
+        vi.mocked(costsLib.getMultiPeriodCosts).mockReturnValue({
+            success: true,
+            data: {
+                contract: { id: "VALID_ID", name: "MyContract", network: "testnet" },
+                periods: [
+                    { days: 7, totalExtensions: 1, totalCostXlm: 0.01 },
+                    { days: 30, totalExtensions: 5, totalCostXlm: 0.05 },
+                    { days: 90, totalExtensions: 5, totalCostXlm: 0.05 },
+                ],
+                projection: { baseProjectedCostXlm: 0.05, adjustedProjectedCostXlm: 0.05, baseFeeMultiplier: 1, surgePricingMultiplier: 1 },
+            },
+        } as any);
         vi.mocked(costsLib.calculateFeeAdjustedProjection).mockReturnValue({
             adjustedProjectedCostXlm: 0.05,
             surgePricingMultiplier: 1.0,
@@ -102,6 +114,18 @@ describe("Costs Command CLI", () => {
                 recentExtensions: [],
             },
         } as any);
+        vi.mocked(costsLib.getMultiPeriodCosts).mockReturnValue({
+            success: true,
+            data: {
+                contract: { id: "VALID_ID", name: "MyContract", network: "testnet" },
+                periods: [
+                    { days: 7, totalExtensions: 0, totalCostXlm: 0 },
+                    { days: 30, totalExtensions: 0, totalCostXlm: 0 },
+                    { days: 90, totalExtensions: 0, totalCostXlm: 0 },
+                ],
+                projection: { baseProjectedCostXlm: 0, adjustedProjectedCostXlm: 0, baseFeeMultiplier: 1, surgePricingMultiplier: 1 },
+            },
+        } as any);
 
         await actionFn("VALID_ID", { period: "30" });
         expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("No extensions found"));
@@ -117,6 +141,18 @@ describe("Costs Command CLI", () => {
                 summary: { totalExtensions: 0, totalCostXlm: 0 },
                 byEntryType: {},
                 recentExtensions: [],
+            },
+        } as any);
+        vi.mocked(costsLib.getMultiPeriodCosts).mockReturnValue({
+            success: true,
+            data: {
+                contract: { id: "VALID_ID", name: "Test", network: "testnet" },
+                periods: [
+                    { days: 7, totalExtensions: 0, totalCostXlm: 0 },
+                    { days: 30, totalExtensions: 0, totalCostXlm: 0 },
+                    { days: 90, totalExtensions: 0, totalCostXlm: 0 },
+                ],
+                projection: { baseProjectedCostXlm: 0, adjustedProjectedCostXlm: 0, baseFeeMultiplier: 1, surgePricingMultiplier: 1 },
             },
         } as any);
 
@@ -136,5 +172,86 @@ describe("Costs Command CLI", () => {
         await actionFn("VALID_ID", { period: "30" });
         expect(mockExit).toHaveBeenCalledWith(1);
         expect(mockError).toHaveBeenCalledWith(expect.stringContaining("DB connection lost"));
+    });
+
+    it("displays multi-period historical costs table by default (no --period)", async () => {
+        vi.mocked(costsLib.getExtensionCosts).mockReturnValue({
+            success: true,
+            data: {
+                contract: { name: "MyContract", network: "testnet" },
+                period: { label: "last 30 days" },
+                message: null,
+                summary: { totalExtensions: 5, totalCostXlm: 0.05 },
+                byEntryType: {},
+                recentExtensions: [],
+            },
+        } as any);
+        vi.mocked(costsLib.calculateFeeAdjustedProjection).mockReturnValue({
+            adjustedProjectedCostXlm: 0.05,
+            surgePricingMultiplier: 1.0,
+        } as any);
+        vi.mocked(costsLib.getMultiPeriodCosts).mockReturnValue({
+            success: true,
+            data: {
+                contract: { id: "VALID_ID", name: "MyContract", network: "testnet" },
+                periods: [
+                    { days: 7, totalExtensions: 2, totalCostXlm: 0.01 },
+                    { days: 30, totalExtensions: 5, totalCostXlm: 0.05 },
+                    { days: 90, totalExtensions: 12, totalCostXlm: 0.12 },
+                ],
+                projection: {
+                    baseProjectedCostXlm: 0.05,
+                    adjustedProjectedCostXlm: 0.05,
+                    baseFeeMultiplier: 1,
+                    surgePricingMultiplier: 1,
+                },
+            },
+        } as any);
+
+        await actionFn("VALID_ID", { period: "30" });
+        expect(costsLib.getMultiPeriodCosts).toHaveBeenCalled();
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("MyContract"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("7 days"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("30 days"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("90 days"));
+    });
+
+    it("displays 30-day projection estimate in the table", async () => {
+        vi.mocked(costsLib.getExtensionCosts).mockReturnValue({
+            success: true,
+            data: {
+                contract: { name: "MyContract", network: "testnet" },
+                period: { label: "last 30 days" },
+                message: null,
+                summary: { totalExtensions: 3, totalCostXlm: 0.03 },
+                byEntryType: {},
+                recentExtensions: [],
+            },
+        } as any);
+        vi.mocked(costsLib.calculateFeeAdjustedProjection).mockReturnValue({
+            adjustedProjectedCostXlm: 0.045,
+            surgePricingMultiplier: 1.5,
+        } as any);
+        vi.mocked(costsLib.getMultiPeriodCosts).mockReturnValue({
+            success: true,
+            data: {
+                contract: { id: "VALID_ID", name: "MyContract", network: "testnet" },
+                periods: [
+                    { days: 7, totalExtensions: 1, totalCostXlm: 0.01 },
+                    { days: 30, totalExtensions: 3, totalCostXlm: 0.03 },
+                    { days: 90, totalExtensions: 8, totalCostXlm: 0.08 },
+                ],
+                projection: {
+                    baseProjectedCostXlm: 0.03,
+                    adjustedProjectedCostXlm: 0.045,
+                    baseFeeMultiplier: 1,
+                    surgePricingMultiplier: 1.5,
+                },
+            },
+        } as any);
+
+        await actionFn("VALID_ID", { period: "30" });
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Projection"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("0.0450000"));
     });
 });
