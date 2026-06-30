@@ -41,7 +41,8 @@ vi.mock('../../src/rpc/client', () => {
 });
 
 // We need to mock resolveSecretKey indirectly if we want it to work without environment variables, but since it's an internal function in extension.ts we can just provide a raw secret key.
-const DUMMY_SECRET = 'SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+import { Keypair } from '@stellar/stellar-sdk';
+const DUMMY_SECRET = Keypair.random().secret();
 
 describe('Budget Enforcement', () => {
     let db: Database.Database;
@@ -71,7 +72,7 @@ describe('Budget Enforcement', () => {
 
     it('Extensions are skipped when budget limit is crossed', async () => {
         // Set limit to 1.0 XLM. Simulation costs 1.5 XLM.
-        const currentCycle = new Date().toISOString().slice(0, 7);
+        const currentCycle = "2026-06";
         upsertBudget(db, {
             contract_id: 'contract_1',
             limit_xlm: 1.0,
@@ -91,7 +92,7 @@ describe('Budget Enforcement', () => {
 
     it('Database records spend history correctly when within budget', async () => {
         // Set limit to 2.0 XLM. Simulation costs 1.5 XLM.
-        const currentCycle = new Date().toISOString().slice(0, 7);
+        const currentCycle = "2026-06";
         upsertBudget(db, {
             contract_id: 'contract_1',
             limit_xlm: 2.0,
