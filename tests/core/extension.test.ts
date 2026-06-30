@@ -197,15 +197,27 @@ describe("Core Extension Logic", () => {
             expect(history.length).toBe(0);
         });
 
-        it("logs warning and returns error on simulation failure", async () => {
+        it("propagates feeCharged from the submitted transaction result", async () => {
             const contractId = seedContract(db);
             const entries = getEntriesForContract(db, contractId);
 
-            mockSubmitExtension.mockRejectedValue(new Error("Simulation failed: Invalid footprint key"));
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "fee-tx-hash",
+                ledger: 2500100,
+                feeCharged: 7500,
+            });
 
-            const { getLogger } = await import("../../src/logging/index.js");
-            const logger = getLogger();
-            const warnSpy = vi.spyOn(logger, "warn");
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2500100,
+                entries: entries.map(e => ({
+                    entryKeyXdr: e.entry_key_xdr,
+                    latestLedger: 2500100,
+                    liveUntilLedgerSeq: 2600100,
+                    lastModifiedLedgerSeq: 2500100,
+                    remainingTTL: 100000,
+                })),
+            });
 
             const result = await extendEntries(
                 db,
@@ -215,10 +227,8 @@ describe("Core Extension Logic", () => {
                 "SECRETKEY123",
             );
 
-            expect(result.success).toBe(false);
-            expect(result.error).toBe("Simulation failed: Invalid footprint key");
-            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Simulation failed: Invalid footprint key"));
-            warnSpy.mockRestore();
+            expect(result.success).toBe(true);
+            expect(result.feeCharged).toBe(7500);
         });
     });
 
@@ -262,6 +272,28 @@ describe("Core Extension Logic", () => {
             );
             expect(result.success).toBe(false);
             expect(result.error).toBe("Contract not found");
+        });
+
+        it("delegates simulation to the RPC client and returns estimated fee as minResourceFee", async () => {
+            const contractId = seedContract(db);
+
+            mockSimulateExtension.mockResolvedValue({
+                success: true,
+                minResourceFee: 12500,
+            });
+
+            const result = await simulateExtension(
+                db, contractId, ["instance-key-xdr", "wasm-key-xdr"], 100000, "GPUBLICKEY",
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.estimatedFee).toBe(12500);
+            expect(result.entriesExtended).toBe(2);
+            expect(mockSimulateExtension).toHaveBeenCalledWith(
+                ["instance-key-xdr", "wasm-key-xdr"],
+                100000,
+                "GPUBLICKEY",
+            );
         });
     });
 

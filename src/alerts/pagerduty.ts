@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import type { AlertEvent } from "./types.js";
 import { getLogger } from "../logging/index.js";
 

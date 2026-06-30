@@ -280,7 +280,7 @@ export function hasUnresolvedAlert(db: Database.Database, alertConfigId: number,
     SELECT 1 FROM alerts_fired
     WHERE alert_config_id = ? AND contract_entry_id = ? AND resolved = 0
     LIMIT 1
-  `).get(alertConfigId, entryId);
+  `).get(alertConfigId, entryId) as { 1: number } | undefined;
   return row !== undefined;
 }
 
@@ -1024,7 +1024,7 @@ export function hasUnresolvedResourceAlert(
       SELECT 1 FROM resource_alerts_fired
       WHERE resource_alert_config_id = ? AND resource_type = ? AND resolved = 0
       LIMIT 1
-    `).get(configId, resourceType);
+    `).get(configId, resourceType) as { 1: number } | undefined;
     return !!result;
   }
 
@@ -1041,4 +1041,152 @@ export function hasUnresolvedResourceAlert(
 
   if (!row || typeof row.usage_percent === "undefined") return false;
   return row.usage_percent >= currentUsagePercent;
+}
+
+// ─── Resource Usage Logs (issue #164) ────────────────────────────────────────
+
+/**
+ * A single resource-usage snapshot captured per Soroban transaction.
+ * All fee columns are nullable because not every RPC response includes the
+ * full fee breakdown.
+ */
+export interface ResourceUsageLog {
+    id: number;
+    contract_id: string;
+    cpu_insns: number;
+    mem_bytes: number;
+    fee_instructions: number | null;
+    fee_read_ledger_entries: number | null;
+    fee_write_ledger_entries: number | null;
+    fee_read_bytes: number | null;
+    fee_write_bytes: number | null;
+    fee_transaction_size: number | null;
+    fee_historical_ledger: number | null;
+    fee_rent_ledger: number | null;
+    fee_refundable: number | null;
+    recorded_at: string;
+}
+
+/**
+ * Insert a new resource-usage log entry.
+ *
+ * @returns The auto-assigned row id of the inserted entry.
+ */
+export function insertResourceUsageLog(
+    db: Database.Database,
+    log: {
+        contract_id: string;
+        cpu_insns: number;
+        mem_bytes: number;
+        fee_instructions?: number | null;
+        fee_read_ledger_entries?: number | null;
+        fee_write_ledger_entries?: number | null;
+        fee_read_bytes?: number | null;
+        fee_write_bytes?: number | null;
+        fee_transaction_size?: number | null;
+        fee_historical_ledger?: number | null;
+        fee_rent_ledger?: number | null;
+        fee_refundable?: number | null;
+        /** Optional ISO-8601 timestamp; defaults to CURRENT_TIMESTAMP when omitted. */
+        recorded_at?: string;
+    },
+): number {
+    const result = db.prepare(`
+        INSERT INTO resource_usage_logs (
+            contract_id,
+            cpu_insns,
+            mem_bytes,
+            fee_instructions,
+            fee_read_ledger_entries,
+            fee_write_ledger_entries,
+            fee_read_bytes,
+            fee_write_bytes,
+            fee_transaction_size,
+            fee_historical_ledger,
+            fee_rent_ledger,
+            fee_refundable,
+            recorded_at
+        ) VALUES (
+            @contract_id,
+            @cpu_insns,
+            @mem_bytes,
+            @fee_instructions,
+            @fee_read_ledger_entries,
+            @fee_write_ledger_entries,
+            @fee_read_bytes,
+            @fee_write_bytes,
+            @fee_transaction_size,
+            @fee_historical_ledger,
+            @fee_rent_ledger,
+            @fee_refundable,
+            COALESCE(@recorded_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    `).run({
+        contract_id: log.contract_id,
+        cpu_insns: log.cpu_insns,
+        mem_bytes: log.mem_bytes,
+        fee_instructions: log.fee_instructions ?? null,
+        fee_read_ledger_entries: log.fee_read_ledger_entries ?? null,
+        fee_write_ledger_entries: log.fee_write_ledger_entries ?? null,
+        fee_read_bytes: log.fee_read_bytes ?? null,
+        fee_write_bytes: log.fee_write_bytes ?? null,
+        fee_transaction_size: log.fee_transaction_size ?? null,
+        fee_historical_ledger: log.fee_historical_ledger ?? null,
+        fee_rent_ledger: log.fee_rent_ledger ?? null,
+        fee_refundable: log.fee_refundable ?? null,
+        recorded_at: log.recorded_at ?? null,
+    });
+
+    return result.lastInsertRowid as number;
+}
+
+/**
+ * Return resource-usage logs for a contract, newest first.
+ *
+ * @param options.limit   Maximum number of rows to return (must be ≥ 0).
+ * @param options.since   ISO-8601 lower-bound for recorded_at (inclusive).
+ */
+export function getResourceUsageLogs(
+    db: Database.Database,
+    contractId: string,
+    options: { limit?: number; since?: string } = {},
+): ResourceUsageLog[] {
+    const { limit, since } = options;
+
+    if (limit !== undefined && limit < 0) {
+        throw new Error("limit must be non-negative");
+    }
+
+    const conditions: string[] = ["contract_id = @contractId"];
+    if (since !== undefined) {
+        conditions.push("recorded_at >= @since");
+    }
+
+    const where = conditions.join(" AND ");
+    const limitClause = limit !== undefined ? `LIMIT ${limit}` : "";
+
+    return db.prepare(`
+        SELECT *
+        FROM resource_usage_logs
+        WHERE ${where}
+        ORDER BY recorded_at DESC, id DESC
+        ${limitClause}
+    `).all({ contractId, since: since ?? null }) as ResourceUsageLog[];
+}
+
+/**
+ * Return the single most-recent resource-usage log for a contract,
+ * or `undefined` if none exist.
+ */
+export function getLatestResourceUsageLog(
+    db: Database.Database,
+    contractId: string,
+): ResourceUsageLog | undefined {
+    return db.prepare(`
+        SELECT *
+        FROM resource_usage_logs
+        WHERE contract_id = ?
+        ORDER BY recorded_at DESC, id DESC
+        LIMIT 1
+    `).get(contractId) as ResourceUsageLog | undefined;
 }

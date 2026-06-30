@@ -7,7 +7,22 @@ import * as extensionLib from "../../src/core/extension";
 
 vi.mock("../../src/db/database");
 vi.mock("../../src/db/repositories");
-vi.mock("../../src/core/extension");
+vi.mock("../../src/core/extension", async (importOriginal) => {
+    const actual = await importOriginal() as any;
+    return {
+        ...actual,
+        simulateExtension: vi.fn(),
+        extendEntries: vi.fn(),
+        resolveSecretKey: vi.fn(async (source: string) => {
+            // For tests: if source looks like env: or vault:, return a fake valid key
+            // Otherwise assume it's a direct secret key and return it
+            if (source.startsWith("env:") || source.startsWith("vault:")) {
+                return "SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ";
+            }
+            return source;
+        }),
+    };
+});
 
 describe("Guard Command CLI", () => {
     let program: Command;
@@ -84,7 +99,7 @@ describe("Guard Command CLI", () => {
 
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", autoExtend: true, keypair: "SKEY" });
         expect(mockExit).toHaveBeenCalledWith(1);
-        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("--auto-extend requires --keypair-env"));
+        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("--auto-extend requires --keypair-env or --keypair-vault"));
     });
 
     it("shows no-policy message when no keypair or flags provided", async () => {
@@ -128,7 +143,7 @@ describe("Guard Command CLI", () => {
 
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", dryRun: true });
         expect(mockExit).toHaveBeenCalledWith(1);
-        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("--keypair or --keypair-env required"));
+        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("--keypair, --keypair-env, or --keypair-vault required"));
     });
 
     it("shows 'No entries to extend' for dry-run on contract with no entries", async () => {
