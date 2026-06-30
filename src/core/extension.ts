@@ -10,6 +10,7 @@ import {
     upsertEntry,
     updateLastCheckedLedger,
     getAverageResourceUsage,
+    countExtensionsInLastHour,
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
@@ -17,6 +18,34 @@ import { VaultResolver } from "./vault.js";
 import { loadConfig } from "../utils/config.js";
 
 const logger = getLogger().child({ component: "Extension" });
+
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
+
+/**
+ * Maximum number of auto-extension transactions allowed per contract per hour.
+ * Prevents runaway fee submissions under extreme network load (issue #142).
+ */
+export const HOURLY_RATE_LIMIT = 5;
+
+/**
+ * Check whether the given contract has reached its hourly auto-extension rate limit.
+ *
+ * Queries `extension_history` for records within the last 60 minutes and
+ * compares the count against `limit` (default: HOURLY_RATE_LIMIT).
+ *
+ * @param db - The SQLite database connection.
+ * @param contractId - The contract to check.
+ * @param limit - Maximum allowed extensions per hour (defaults to HOURLY_RATE_LIMIT).
+ * @returns `true` when the contract is rate-limited; `false` otherwise.
+ */
+export function isRateLimited(
+    db: import("better-sqlite3").Database,
+    contractId: string,
+    limit = HOURLY_RATE_LIMIT,
+): boolean {
+    const count = countExtensionsInLastHour(db, contractId);
+    return count >= limit;
+}
 
 // ─── Public contract ──────────────────────────────────────────────────────────
 
@@ -301,6 +330,17 @@ export async function runAutoExtensions(
             });
 
             if (needsExtension.length === 0) return;
+
+            // ── Rate limit check (issue #142) ────────────────────────────────
+            // Block auto-extension if the contract has already hit the maximum
+            // number of extension transactions allowed per hour.
+            if (isRateLimited(db, contract.id)) {
+                const count = countExtensionsInLastHour(db, contract.id);
+                const msg = `Contract ${contract.id}: rate limit reached — ${count}/${HOURLY_RATE_LIMIT} extensions in the last hour. Skipping.`;
+                logger.warn(msg);
+                result.errors.push(msg);
+                return;
+            }
 
             // Resolve secret key: prefer channel pool, fall back to policy keypair
             let secretKey: string | null = null;

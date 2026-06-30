@@ -81,6 +81,76 @@ export interface SimulateExtensionResult {
     error?: string;
 }
 
+/**
+ * Structured resource usage estimate extracted from a simulateTransaction response.
+ * Used for budget safety checks before executing auto-extensions (issue #133).
+ */
+export interface ResourceEstimate {
+    /** CPU instructions estimated for the transaction. */
+    cpuInstructions: number;
+    /** Memory bytes estimated for the transaction. */
+    memoryBytes: number;
+    /** Minimum resource fee in stroops estimated by the RPC node. */
+    minResourceFee: number;
+}
+
+/**
+ * Parse a simulateTransaction RPC response into a structured ResourceEstimate.
+ *
+ * Extracts `cpuInstructions` from `response.cost.cpuInsns`,
+ * `memoryBytes` from `response.cost.memBytes`, and
+ * `minResourceFee` from `response.minResourceFee`.
+ *
+ * Returns `null` when:
+ *   - The input is null, undefined, or not a plain object.
+ *   - The response contains an `error` field (simulation failed).
+ *   - Neither `cost` nor `minResourceFee` fields are present.
+ *
+ * Missing numeric fields default to `0` rather than `NaN`.
+ *
+ * @param response - The raw simulation response object (or null/undefined).
+ * @returns A ResourceEstimate on success, or null on failure.
+ */
+export function parseResourceEstimate(response: unknown): ResourceEstimate | null {
+    if (response === null || response === undefined) return null;
+    if (typeof response !== "object" || Array.isArray(response)) return null;
+
+    const sim = response as Record<string, unknown>;
+
+    // Simulation error responses have an `error` field — always return null.
+    if (typeof sim["error"] === "string" && sim["error"].length > 0) return null;
+
+    // Need at least one useful field to return a meaningful estimate.
+    const hasCost = sim["cost"] !== undefined && sim["cost"] !== null;
+    const hasFee = sim["minResourceFee"] !== undefined && sim["minResourceFee"] !== null;
+    if (!hasCost && !hasFee) return null;
+
+    // Parse minResourceFee (may be a string or number in the Soroban RPC response)
+    const rawFee = sim["minResourceFee"];
+    const minResourceFee = rawFee !== undefined && rawFee !== null
+        ? safeParseNumber(rawFee)
+        : 0;
+
+    // Parse cost fields
+    let cpuInstructions = 0;
+    let memoryBytes = 0;
+
+    if (hasCost && typeof sim["cost"] === "object" && !Array.isArray(sim["cost"])) {
+        const cost = sim["cost"] as Record<string, unknown>;
+        cpuInstructions = safeParseNumber(cost["cpuInsns"]);
+        memoryBytes = safeParseNumber(cost["memBytes"]);
+    }
+
+    return { cpuInstructions, memoryBytes, minResourceFee };
+}
+
+/** Parse a value to a non-NaN number, defaulting to 0. */
+function safeParseNumber(value: unknown): number {
+    if (value === undefined || value === null) return 0;
+    const n = typeof value === "number" ? value : Number(value);
+    return Number.isNaN(n) ? 0 : n;
+}
+
 export interface FeeStatsResult {
     latestLedger?: number;
     baseFeeStroops: number;
