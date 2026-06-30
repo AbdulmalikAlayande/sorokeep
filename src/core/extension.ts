@@ -33,8 +33,10 @@ export interface ExtensionResult {
     ledger?: number;
     /** Error message if failed. */
     error?: string;
-    /** Estimated fee in stroops (from simulation). */
+    /** Estimated fee in stroops (from simulation, before submission). */
     estimatedFee?: number;
+    /** Actual fee charged in stroops (from submitted transaction result). */
+    feeCharged?: number;
     /** CPU instructions consumed by the transaction. */
     cpuInsns?: number;
     /** Memory bytes consumed by the transaction. */
@@ -232,6 +234,7 @@ export async function extendEntries(
         entriesExtended: entryKeyXdrs.length,
         txHash: txResult.txHash,
         ledger: txResult.ledger,
+        feeCharged: txResult.feeCharged,
         cpuInsns: txResult.cpuInsns,
         memBytes: txResult.memBytes,
         isAnomaly,

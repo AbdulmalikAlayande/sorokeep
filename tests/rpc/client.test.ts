@@ -107,7 +107,7 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
         async getTransaction(hash: string) {
             if (hash === "missing") return { status: "NOT_FOUND" };
             if (hash === "failed") return { status: "FAILED", resultXdr: "mock-failed-xdr" };
-            return { status: "SUCCESS", resultMetaXdr: "mock-result-meta-xdr" };
+            return { status: "SUCCESS", resultMetaXdr: "mock-result-meta-xdr", feeCharged: 1234 };
         }
 
         async getAccount(publicKey: string) {
@@ -388,6 +388,78 @@ describe("StellarRpcClient", () => {
             const result = await mockClient["pollTransaction"]("missing", 2, 10);
             expect(result.success).toBe(false);
             expect(result.error).toContain("Transaction polling timed out after 2 attempts");
+        });
+    });
+
+    describe("ExtendFootprintTTLOp — Simulation and Fee Parsing", () => {
+        const dummyKey = xdr.LedgerKey.contractData(new xdr.LedgerKeyContractData({
+            contract: new xdr.ScAddress.scAddressTypeContract(Buffer.from("a".repeat(32))),
+            key: xdr.ScVal.scvLedgerKeyContractInstance(),
+            durability: xdr.ContractDataDurability.persistent()
+        })).toXDR("base64");
+
+        const secretKey = Keypair.random().secret();
+
+        it("simulateExtension returns minResourceFee from footprint simulation", async () => {
+            const publicKey = Keypair.fromSecret(secretKey).publicKey();
+            const result = await client.simulateExtension([dummyKey], 100000, publicKey);
+            expect(result.success).toBe(true);
+            expect(result.minResourceFee).toBe(100);
+        });
+
+        it("simulateExtension propagates error when RPC simulation fails", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail.com");
+            const publicKey = Keypair.fromSecret(secretKey).publicKey();
+            const result = await simFailClient.simulateExtension([dummyKey], 100000, publicKey);
+            expect(result.success).toBe(false);
+            expect(result.error).toBe("Simulation failed");
+        });
+
+        it("submitExtension simulates the footprint before assembling and sending", async () => {
+            const simulateSpy = vi.spyOn(client["server"] as any, "simulateTransaction");
+            const sendSpy = vi.spyOn(client["server"] as any, "sendTransaction");
+
+            await client.submitExtension([dummyKey], 100000, secretKey);
+
+            // simulateTransaction must be called before sendTransaction
+            expect(simulateSpy).toHaveBeenCalledTimes(1);
+            expect(sendSpy).toHaveBeenCalledTimes(1);
+            expect(simulateSpy.mock.invocationCallOrder[0])
+                .toBeLessThan(sendSpy.mock.invocationCallOrder[0]!);
+        });
+
+        it("submitExtension parses feeCharged from the transaction result", async () => {
+            const result = await client.submitExtension([dummyKey], 100000, secretKey);
+            expect(result.success).toBe(true);
+            expect(result.feeCharged).toBe(1234);
+        });
+
+        it("submitExtension returns feeCharged as undefined when not present in result", async () => {
+            // Override getTransaction to omit feeCharged
+            const mockClient = new StellarRpcClient("testnet", "https://testnet.stellar.org");
+            mockClient["server"].getTransaction = vi.fn().mockResolvedValue({
+                status: "SUCCESS",
+                resultMetaXdr: "mock-result-meta-xdr",
+                // no feeCharged field
+            });
+            mockClient["server"].getAccount = vi.fn().mockResolvedValue(
+                new (await import("@stellar/stellar-sdk")).Account(
+                    Keypair.fromSecret(secretKey).publicKey(), "1"
+                )
+            );
+            mockClient["server"].simulateTransaction = vi.fn().mockResolvedValue({
+                cost: { cpuInsns: "1000", memBytes: "100" },
+                transactionData: new (await import("@stellar/stellar-sdk")).SorobanDataBuilder().build(),
+                minResourceFee: "100",
+            });
+            mockClient["server"].sendTransaction = vi.fn().mockResolvedValue({
+                status: "PENDING",
+                hash: "tx-no-fee",
+            });
+
+            const result = await mockClient.submitExtension([dummyKey], 100000, secretKey);
+            expect(result.success).toBe(true);
+            expect(result.feeCharged).toBeUndefined();
         });
     });
 

@@ -103,6 +103,8 @@ export interface SubmitTransactionResult {
     error?: string;
     cpuInstructions?: number;
     memoryBytes?: number;
+    /** Actual fee charged in stroops, parsed from the transaction result. */
+    feeCharged?: number;
 }
 
 export function extractResourceCosts(resultMetaXdrBase64: string): { cpuInstructions: number, memoryBytes: number } | null {
@@ -694,7 +696,7 @@ export class StellarRpcClient {
                     if (costs) {
                         cpuInstructions = costs.cpuInstructions;
                         memoryBytes = costs.memoryBytes;
-                        
+
                         logger.info(
                             "Extracted transaction resource costs successfully",
                             { txHash, cpuInstructions, memoryBytes }
@@ -702,12 +704,16 @@ export class StellarRpcClient {
                     }
                 }
 
+                const rawFee = (txResponse as any).feeCharged;
+                const feeCharged = rawFee !== undefined ? Number(rawFee) : undefined;
+
                 return {
                     success: true,
                     txHash,
                     ledger: (txResponse as any).ledger ?? txResponse.latestLedger,
                     cpuInstructions,
-                    memoryBytes
+                    memoryBytes,
+                    feeCharged,
                 };
             }
 
