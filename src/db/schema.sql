@@ -1,127 +1,4 @@
-CREATE TABLE IF NOT EXISTS contracts (
-    id TEXT PRIMARY KEY,
-    name TEXT,
-    network TEXT NOT NULL DEFAULT 'testnet',
-    wasm_hash TEXT,
-    tags TEXT,
-    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_checked_ledger INTEGER,
-    last_introspected_at DATETIME
-);
-
-CREATE TABLE IF NOT EXISTS contract_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    entry_key_xdr TEXT NOT NULL,
-    entry_type TEXT NOT NULL CHECK(entry_type IN ('instance', 'wasm', 'persistent', 'temporary')),
-    label TEXT,
-    live_until_ledger INTEGER,
-    last_modified_ledger INTEGER,
-    discovery_source TEXT NOT NULL DEFAULT 'deterministic' CHECK(discovery_source IN ('deterministic', 'manual', 'instance_scan', 'footprint', 'introspection')),
-    first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_checked_at DATETIME,
-    UNIQUE(contract_id, entry_key_xdr)
-);
-
-CREATE TABLE IF NOT EXISTS extension_policies (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    enabled BOOLEAN NOT NULL DEFAULT 0,
-    target_ttl_ledgers INTEGER NOT NULL,
-    extend_when_below_ledgers INTEGER NOT NULL,
-    keypair_public TEXT,
-    keypair_source TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(contract_id)
-);
-
-CREATE TABLE IF NOT EXISTS alert_configs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty')),
-    channel_target TEXT NOT NULL,
-    threshold_ledgers INTEGER NOT NULL,
-    webhook_secret TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS alerts_fired (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    alert_config_id INTEGER NOT NULL REFERENCES alert_configs(id) ON DELETE CASCADE,
-    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
-    fired_at_ledger INTEGER NOT NULL,
-    fired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    ttl_at_fire INTEGER NOT NULL,
-    resolved BOOLEAN NOT NULL DEFAULT 0,
-    resolved_at TEXT,
-    delivered INTEGER NOT NULL DEFAULT 0,
-    delivered_at TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS channel_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    public_key TEXT NOT NULL UNIQUE,
-    keypair_source TEXT,
-    label TEXT,
-    network TEXT NOT NULL DEFAULT 'testnet',
-    funded BOOLEAN NOT NULL DEFAULT 0,
-    balance_xlm REAL,
-    balance_checked_at TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS extension_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
-    old_ttl_ledgers INTEGER NOT NULL,
-    new_ttl_ledgers INTEGER NOT NULL,
-    tx_hash TEXT NOT NULL,
-    cost_xlm REAL,
-    cpu_insns INTEGER,
-    mem_bytes INTEGER,
-    is_anomaly INTEGER NOT NULL DEFAULT 0,
-    executed_at_ledger INTEGER NOT NULL,
-    executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-
-CREATE TABLE IF NOT EXISTS state_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
-    snapshot_ledger INTEGER NOT NULL,
-    value_hash TEXT NOT NULL,
-    value_xdr TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_state_snapshots_entry_ledger
-    ON state_snapshots(contract_entry_id, snapshot_ledger DESC);
-
-CREATE TABLE IF NOT EXISTS state_changes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
-    old_snapshot_id INTEGER REFERENCES state_snapshots(id) ON DELETE SET NULL,
-    new_snapshot_id INTEGER REFERENCES state_snapshots(id) ON DELETE SET NULL,
-    diff_type TEXT NOT NULL CHECK(diff_type IN ('created', 'updated', 'deleted')),
-    diff_json TEXT NOT NULL,
-    detected_at_ledger INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_state_changes_entry_detected_ledger
-    ON state_changes(contract_entry_id, detected_at_ledger DESC);
-CREATE TABLE IF NOT EXISTS resource_alert_configs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook')),
-    channel_target TEXT NOT NULL,
-    cpu_limit INTEGER NOT NULL,
-    mem_limit INTEGER NOT NULL,
-    webhook_secret TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(contract_id, channel_type, channel_target)
-);
-
+믯䎿䕒呁⁅䅔䱂⁅䙉丠呏䔠䥘呓⁓潣瑮慲瑣⁳ന †椠⁤䕔员倠䥒䅍奒䬠奅ബ †渠浡⁥䕔员ബ †渠瑥潷歲吠塅⁔低⁔啎䱌䐠䙅啁呌✠整瑳敮❴ബ †眠獡彭慨桳吠塅ⱔ਍††慴獧吠塅ⱔ਍††敲楧瑳牥摥慟⁴䅄䕔䥔䕍䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍ബ †氠獡彴档捥敫彤敬杤牥䤠呎䝅剅ബ †氠獡彴湩牴獯数瑣摥慟⁴䅄䕔䥔䕍਍㬩਍਍剃䅅䕔吠䉁䕌䤠⁆低⁔塅卉協挠湯牴捡彴湥牴敩⁳ന †椠⁤义䕔䕇⁒剐䵉剁⁙䕋⁙啁佔义剃䵅久ⱔ਍††潣瑮慲瑣楟⁤䕔员丠呏丠䱕⁌䕒䕆䕒䍎卅挠湯牴捡獴椨⥤传⁎䕄䕌䕔䌠十䅃䕄ബ †攠瑮祲歟祥硟牤吠塅⁔低⁔啎䱌ബ †攠瑮祲瑟灹⁥䕔员丠呏丠䱕⁌䡃䍅⡋湥牴役祴数䤠⁎✨湩瑳湡散Ⱗ✠慷浳Ⱗ✠数獲獩整瑮Ⱗ✠整灭牯牡❹⤩ബ †氠扡汥吠塅ⱔ਍††楬敶畟瑮汩江摥敧⁲义䕔䕇ⱒ਍††慬瑳浟摯晩敩彤敬杤牥䤠呎䝅剅ബ †搠獩潣敶祲獟畯捲⁥䕔员丠呏丠䱕⁌䕄䅆䱕⁔搧瑥牥業楮瑳捩‧䡃䍅⡋楤捳癯牥役潳牵散䤠⁎✨敤整浲湩獩楴❣‬洧湡慵❬‬椧獮慴据彥捳湡Ⱗ✠潦瑯牰湩❴‬椧瑮潲灳捥楴湯⤧Ⱙ਍††楦獲彴敳湥慟⁴䅄䕔䥔䕍丠呏丠䱕⁌䕄䅆䱕⁔啃剒久彔䥔䕍呓䵁ⱐ਍††慬瑳损敨正摥慟⁴䅄䕔䥔䕍ബ †唠䥎啑⡅潣瑮慲瑣楟Ɽ攠瑮祲歟祥硟牤ഩ⤊഻ഊ䌊䕒呁⁅䅔䱂⁅䙉丠呏䔠䥘呓⁓硥整獮潩彮潰楬楣獥⠠਍††摩䤠呎䝅剅倠䥒䅍奒䬠奅䄠呕䥏䍎䕒䕍呎ബ †挠湯牴捡彴摩吠塅⁔低⁔啎䱌删䙅剅久䕃⁓潣瑮慲瑣⡳摩 乏䐠䱅呅⁅䅃䍓䑁ⱅ਍††湥扡敬⁤佂䱏䅅⁎低⁔啎䱌䐠䙅啁呌〠ബ †琠牡敧彴瑴彬敬杤牥⁳义䕔䕇⁒低⁔啎䱌ബ †攠瑸湥彤桷湥扟汥睯江摥敧獲䤠呎䝅剅丠呏丠䱕ⱌ਍††敫灹楡彲異汢捩吠塅ⱔ਍††敫灹楡彲潳牵散吠塅ⱔ਍††牣慥整彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍ബ †唠䥎啑⡅潣瑮慲瑣楟⥤਍㬩਍਍剃䅅䕔吠䉁䕌䤠⁆低⁔塅卉協愠敬瑲损湯楦獧⠠਍††摩䤠呎䝅剅倠䥒䅍奒䬠奅䄠呕䥏䍎䕒䕍呎ബ †挠湯牴捡彴摩吠塅⁔低⁔啎䱌删䙅剅久䕃⁓潣瑮慲瑣⡳摩 乏䐠䱅呅⁅䅃䍓䑁ⱅ਍††档湡敮彬祴数吠塅⁔低⁔啎䱌䌠䕈䭃挨慨湮汥瑟灹⁥义⠠猧慬正Ⱗ✠敷桢潯❫‬瀧条牥畤祴⤧Ⱙ਍††档湡敮彬慴杲瑥吠塅⁔低⁔啎䱌ബ †琠牨獥潨摬江摥敧獲䤠呎䝅剅丠呏丠䱕ⱌ਍††敷桢潯彫敳牣瑥吠塅ⱔ਍††牣慥整彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍਍㬩਍਍剃䅅䕔吠䉁䕌䤠⁆低⁔塅卉協愠敬瑲彳楦敲⁤ന †椠⁤义䕔䕇⁒剐䵉剁⁙䕋⁙啁佔义剃䵅久ⱔ਍††污牥彴潣普杩楟⁤义䕔䕇⁒低⁔啎䱌删䙅剅久䕃⁓污牥彴潣普杩⡳摩 乏䐠䱅呅⁅䅃䍓䑁ⱅ਍††潣瑮慲瑣敟瑮祲楟⁤义䕔䕇⁒低⁔啎䱌删䙅剅久䕃⁓潣瑮慲瑣敟瑮楲獥椨⥤传⁎䕄䕌䕔䌠十䅃䕄ബ †映物摥慟彴敬杤牥䤠呎䝅剅丠呏丠䱕ⱌ਍††楦敲彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍ബ †琠汴慟彴楦敲䤠呎䝅剅丠呏丠䱕ⱌ਍††敲潳癬摥䈠住䕌乁丠呏丠䱕⁌䕄䅆䱕⁔ⰰ਍††敲潳癬摥慟⁴䕔员ബ †搠汥癩牥摥䤠呎䝅剅丠呏丠䱕⁌䕄䅆䱕⁔ⰰ਍††敤楬敶敲彤瑡吠塅ⱔ਍††敲牴役潣湵⁴义䕔䕇⁒低⁔啎䱌䐠䙅啁呌〠਍㬩਍਍剃䅅䕔吠䉁䕌䤠⁆低⁔塅卉協挠慨湮汥慟捣畯瑮⁳ന †椠⁤义䕔䕇⁒剐䵉剁⁙䕋⁙啁佔义剃䵅久ⱔ਍††異汢捩歟祥吠塅⁔低⁔啎䱌唠䥎啑ⱅ਍††敫灹楡彲潳牵散吠塅ⱔ਍††慬敢⁬䕔员ബ †渠瑥潷歲吠塅⁔低⁔啎䱌䐠䙅啁呌✠整瑳敮❴ബ †映湵敤⁤佂䱏䅅⁎低⁔啎䱌䐠䙅啁呌〠ബ †戠污湡散硟浬删䅅ⱌ਍††慢慬据彥档捥敫彤瑡吠塅ⱔ਍††牣慥整彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍਍㬩਍਍剃䅅䕔吠䉁䕌䤠⁆低⁔塅卉協攠瑸湥楳湯桟獩潴祲⠠਍††摩䤠呎䝅剅倠䥒䅍奒䬠奅䄠呕䥏䍎䕒䕍呎ബ †挠湯牴捡彴摩吠塅⁔低⁔啎䱌删䙅剅久䕃⁓潣瑮慲瑣⡳摩 乏䐠䱅呅⁅䅃䍓䑁ⱅ਍††潣瑮慲瑣敟瑮祲楟⁤义䕔䕇⁒低⁔啎䱌删䙅剅久䕃⁓潣瑮慲瑣敟瑮楲獥椨⥤传⁎䕄䕌䕔䌠十䅃䕄ബ †漠摬瑟汴江摥敧獲䤠呎䝅剅丠呏丠䱕ⱌ਍††敮彷瑴彬敬杤牥⁳义䕔䕇⁒低⁔啎䱌ബ †琠彸慨桳吠塅⁔低⁔啎䱌ബ †挠獯彴汸⁭䕒䱁ബ †挠異楟獮獮䤠呎䝅剅ബ †洠浥扟瑹獥䤠呎䝅剅ബ †椠彳湡浯污⁹义䕔䕇⁒低⁔啎䱌䐠䙅啁呌〠ബ †攠數畣整彤瑡江摥敧⁲义䕔䕇⁒低⁔啎䱌ബ †攠數畣整彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍਍㬩਍਍剃䅅䕔吠䉁䕌䤠⁆低⁔塅卉協挠獯彴慤汩役湳灡桳瑯⁳ന †椠⁤义䕔䕇⁒剐䵉剁⁙䕋⁙啁佔义剃䵅久ⱔ਍††潣瑮慲瑣楟⁤䕔员丠呏丠䱕⁌䕒䕆䕒䍎卅挠湯牴捡獴椨⥤传⁎䕄䕌䕔䌠十䅃䕄ബ †猠慮獰潨彴慤整䐠呁⁅低⁔啎䱌ബ †琠瑯污敟瑸湥楳湯⁳义䕔䕇⁒低⁔啎䱌䐠䙅啁呌〠ബ †琠瑯污损獯彴汸⁭䕒䱁丠呏丠䱕⁌䕄䅆䱕⁔ⰰ਍††湩瑳湡散敟瑸湥楳湯⁳义䕔䕇⁒低⁔啎䱌䐠䙅啁呌〠ബ †椠獮慴据彥潣瑳硟浬删䅅⁌低⁔啎䱌䐠䙅啁呌〠ബ †眠獡彭硥整獮潩獮䤠呎䝅剅丠呏丠䱕⁌䕄䅆䱕⁔ⰰ਍††慷浳损獯彴汸⁭䕒䱁丠呏丠䱕⁌䕄䅆䱕⁔ⰰ਍††数獲獩整瑮敟瑸湥楳湯⁳义䕔䕇⁒低⁔啎䱌䐠䙅啁呌〠ബ †瀠牥楳瑳湥彴潣瑳硟浬删䅅⁌低⁔啎䱌䐠䙅啁呌〠ബ †琠浥潰慲祲敟瑸湥楳湯⁳义䕔䕇⁒低⁔啎䱌䐠䙅啁呌〠ബ †琠浥潰慲祲损獯彴汸⁭䕒䱁丠呏丠䱕⁌䕄䅆䱕⁔ⰰ਍††牣慥整彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍ബ †唠䥎啑⡅潣瑮慲瑣楟Ɽ猠慮獰潨彴慤整ഩ⤊഻ഊ䌊䕒呁⁅䅔䱂⁅䙉丠呏䔠䥘呓⁓瑳瑡彥湳灡桳瑯⁳ന †椠⁤义䕔䕇⁒剐䵉剁⁙䕋⁙啁佔义剃䵅久ⱔ਍††潣瑮慲瑣敟瑮祲楟⁤义䕔䕇⁒低⁔啎䱌删䙅剅久䕃⁓潣瑮慲瑣敟瑮楲獥椨⥤传⁎䕄䕌䕔䌠十䅃䕄ബ †猠慮獰潨彴敬杤牥䤠呎䝅剅丠呏丠䱕ⱌ਍††慶畬彥慨桳吠塅⁔低⁔啎䱌ബ †瘠污敵硟牤吠塅⁔低⁔啎䱌ബ †挠敲瑡摥慟⁴䕔员丠呏丠䱕⁌䕄䅆䱕⁔啃剒久彔䥔䕍呓䵁൐⤊഻䌊䕒呁⁅义䕄⁘䙉丠呏䔠䥘呓⁓摩彸瑳瑡彥湳灡桳瑯彳湥牴役敬杤牥਍††乏猠慴整獟慮獰潨獴挨湯牴捡彴湥牴役摩‬湳灡桳瑯江摥敧⁲䕄䍓㬩਍਍剃䅅䕔吠䉁䕌䤠⁆低⁔塅卉協猠慴整损慨杮獥⠠਍††摩䤠呎䝅剅倠䥒䅍奒䬠奅䄠呕䥏䍎䕒䕍呎ബ †挠湯牴捡彴湥牴役摩䤠呎䝅剅丠呏丠䱕⁌䕒䕆䕒䍎卅挠湯牴捡彴湥牴敩⡳摩 乏䐠䱅呅⁅䅃䍓䑁ⱅ਍††汯彤湳灡桳瑯楟⁤义䕔䕇⁒䕒䕆䕒䍎卅猠慴整獟慮獰潨獴椨⥤传⁎䕄䕌䕔匠呅丠䱕ⱌ਍††敮彷湳灡桳瑯楟⁤义䕔䕇⁒䕒䕆䕒䍎卅猠慴整獟慮獰潨獴椨⥤传⁎䕄䕌䕔匠呅丠䱕ⱌ਍††楤晦瑟灹⁥䕔员丠呏丠䱕⁌䡃䍅⡋楤晦瑟灹⁥义⠠挧敲瑡摥Ⱗ✠灵慤整❤‬搧汥瑥摥⤧Ⱙ਍††楤晦機潳⁮䕔员丠呏丠䱕ⱌ਍††敤整瑣摥慟彴敬杤牥䤠呎䝅剅丠呏丠䱕ⱌ਍††牣慥整彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍਍㬩਍剃䅅䕔䤠䑎塅䤠⁆低⁔塅卉協椠硤獟慴整损慨杮獥敟瑮祲摟瑥捥整彤敬杤牥਍††乏猠慴整损慨杮獥挨湯牴捡彴湥牴役摩‬敤整瑣摥慟彴敬杤牥䐠卅⥃഻ഊ䌊䕒呁⁅䅔䱂⁅䙉丠呏䔠䥘呓⁓敲潳牵散慟敬瑲损湯楦獧⠠਍††摩䤠呎䝅剅倠䥒䅍奒䬠奅䄠呕䥏䍎䕒䕍呎ബ †挠湯牴捡彴摩吠塅⁔低⁔啎䱌删䙅剅久䕃⁓潣瑮慲瑣⡳摩 乏䐠䱅呅⁅䅃䍓䑁ⱅ਍††档湡敮彬祴数吠塅⁔低⁔啎䱌䌠䕈䭃挨慨湮汥瑟灹⁥义⠠猧慬正Ⱗ✠敷桢潯❫⤩ബ †挠慨湮汥瑟牡敧⁴䕔员丠呏丠䱕ⱌ਍††灣彵楬業⁴义䕔䕇⁒低⁔啎䱌ബ †洠浥江浩瑩䤠呎䝅剅丠呏丠䱕ⱌ਍††敷桢潯彫敳牣瑥吠塅ⱔ਍††牣慥整彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍ബ †唠䥎啑⡅潣瑮慲瑣楟Ɽ挠慨湮汥瑟灹ⱥ挠慨湮汥瑟牡敧⥴਍㬩਍਍剃䅅䕔吠䉁䕌䤠⁆低⁔塅卉協爠獥畯捲彥污牥獴晟物摥⠠਍††摩䤠呎䝅剅倠䥒䅍奒䬠奅䄠呕䥏䍎䕒䕍呎ബ †爠獥畯捲彥污牥彴潣普杩楟⁤义䕔䕇⁒低⁔啎䱌删䙅剅久䕃⁓敲潳牵散慟敬瑲损湯楦獧椨⥤传⁎䕄䕌䕔䌠十䅃䕄ബ †爠獥畯捲彥祴数吠塅⁔低⁔啎䱌䌠䕈䭃爨獥畯捲彥祴数䤠⁎✨灣❵‬洧浥牯❹⤩ബ †甠慳敧䤠呎䝅剅丠呏丠䱕ⱌ਍††氢浩瑩•义䕔䕇⁒低⁔啎䱌ബ †甠慳敧灟牥散瑮䤠呎䝅剅丠呏丠䱕ⱌ਍††楦敲彤瑡江摥敧⁲义䕔䕇ⱒ਍††楦敲彤瑡吠塅⁔低⁔啎䱌䐠䙅啁呌䌠剕䕒呎呟䵉卅䅔偍ബ †搠汥癩牥摥䤠呎䝅剅丠呏丠䱕⁌䕄䅆䱕⁔ⰰ਍††敤楬敶敲彤瑡吠塅ⱔ਍††敲牴役潣湵⁴义䕔䕇⁒低⁔啎䱌䐠䙅啁呌〠ബ †爠獥汯敶⁤佂䱏䅅⁎低⁔啎䱌䐠䙅啁呌〠ബ †爠獥汯敶彤瑡吠塅ൔ⤊഻ഊ
 CREATE TABLE IF NOT EXISTS resource_usage_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
@@ -143,18 +20,11 @@ CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_contract_id
 CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_recorded_at
     ON resource_usage_logs(recorded_at DESC);
 
-CREATE TABLE IF NOT EXISTS resource_alerts_fired (
+CREATE TABLE IF NOT EXISTS contract_budgets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    resource_alert_config_id INTEGER NOT NULL REFERENCES resource_alert_configs(id) ON DELETE CASCADE,
-    resource_type TEXT NOT NULL CHECK(resource_type IN ('cpu', 'memory')),
-    usage INTEGER NOT NULL,
-    "limit" INTEGER NOT NULL,
-    usage_percent INTEGER NOT NULL,
-    fired_at_ledger INTEGER,
-    fired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    delivered INTEGER NOT NULL DEFAULT 0,
-    delivered_at TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0,
-    resolved BOOLEAN NOT NULL DEFAULT 0,
-    resolved_at TEXT
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    monthly_limit_xlm REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id)
 );

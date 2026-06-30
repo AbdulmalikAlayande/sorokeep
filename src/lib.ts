@@ -14,3 +14,11 @@ export type { WatchOptions, WatchResult } from "./core/watch.js";
 
 export { runMonitorCycle } from "./core/monitor.js";
 export type { MonitorCycleResult } from "./core/monitor.js";
+
+
+export { inspectContract, parseSacBalance, buildSacBalanceKeyXdr, formatTokenBalance } from "./core/inspect.js";
+export type { InspectOptions, InspectResult, InspectEntryInfo } from "./core/inspect.js";
+
+export { AWSSecretsResolver } from "./core/aws_secrets.js";
+export type { AWSSecretsResolverConfig } from "./core/aws_secrets.js";
+

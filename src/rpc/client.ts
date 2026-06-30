@@ -12,6 +12,34 @@ import {
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
 
+/**
+ * Executes an RPC action with exponential backoff on network timeouts or 429/5xx errors.
+ * Starts at 1 second, doubling up to 3 retries (max 4 attempts).
+ */
+export async function executeWithRetry<T>(action: () => Promise<T>): Promise<T> {
+    const MAX_RETRIES = 3;
+    let delayMs = 1000;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            return await action();
+        } catch (error: any) {
+            const isTimeout = error?.code === "ETIMEDOUT" || error?.code === "ECONNRESET" || error?.message?.includes("timeout");
+            const status = error?.response?.status;
+            const isRetryableHttp = status === 429 || (status >= 500 && status < 600);
+
+            if ((isTimeout || isRetryableHttp) && attempt < MAX_RETRIES) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+                delayMs *= 2;
+                continue;
+            }
+
+            throw error;
+        }
+    }
+    throw new Error("Unreachable");
+}
+
 const logger = getLogger().child({ component: "StellarRpcClient" });
 
 const RPC_URLS: Record<string, string> = {
@@ -38,6 +66,10 @@ export interface ContractInstanceResult extends SorokeepLedgerEntryResult {
 export interface EntryTTLsResult {
     latestLedger: number;
     entries: SorokeepLedgerEntryResult[];
+}
+
+export interface ContractStorageEntryResult extends SorokeepLedgerEntryResult {
+    valXdr?: string;
 }
 
 export interface SimulateExtensionResult {
@@ -69,6 +101,32 @@ export interface SubmitTransactionResult {
     memBytes?: number;
     /** Error message if the transaction failed. */
     error?: string;
+    cpuInstructions?: number;
+    memoryBytes?: number;
+}
+
+export function extractResourceCosts(resultMetaXdrBase64: string): { cpuInstructions: number, memoryBytes: number } | null {
+    if (!resultMetaXdrBase64) return null;
+    try {
+        const meta = xdr.TransactionMeta.fromXDR(resultMetaXdrBase64, "base64");
+        const v3 = typeof meta.v3 === 'function' ? meta.v3() : undefined;
+        
+        if (v3) {
+            const sorobanMeta = typeof v3.sorobanMeta === 'function' ? v3.sorobanMeta() : undefined;
+            if (sorobanMeta) {
+                const anyMeta = sorobanMeta as any;
+                const cpuInstructions = typeof anyMeta.cpuInstructions === 'function' ? Number(anyMeta.cpuInstructions()) : undefined;
+                const memoryBytes = typeof anyMeta.memoryBytes === 'function' ? Number(anyMeta.memoryBytes()) : undefined;
+
+                if (cpuInstructions !== undefined && memoryBytes !== undefined) {
+                    return { cpuInstructions, memoryBytes };
+                }
+            }
+        }
+    } catch (error) {
+        logger.debug("Failed to decode resultMetaXdr for resource costs", { error: String(error) });
+    }
+    return null;
 }
 
 const NETWORK_PASSPHRASES: Record<string, string> = {
@@ -233,6 +291,68 @@ export class StellarRpcClient {
         });
 
         return { latestLedger, entries };
+    }
+
+    async getContractStorageEntries(entryKeyXdrs: string[]): Promise<ContractStorageEntryResult[]> {
+        if (entryKeyXdrs.length === 0) return [];
+        const keys = entryKeyXdrs.map((xdrStr) =>
+            xdr.LedgerKey.fromXDR(xdrStr, "base64")
+        );
+
+        const response = await this.server.getLedgerEntries(...keys);
+        const latestLedger = response.latestLedger;
+
+        return (response.entries ?? []).map((entry) => {
+            const liveUntilLedgerSeq = entry.liveUntilLedgerSeq ?? 0;
+            const lastModifiedLedgerSeq = entry.lastModifiedLedgerSeq ?? 0;
+            let valXdr: string | undefined;
+            try {
+                if (entry.val && entry.val.switch().name === "contractData") {
+                    valXdr = entry.val.contractData().val().toXDR("base64");
+                }
+            } catch {
+                // ignore
+            }
+            return {
+                entryKeyXdr: entry.key.toXDR("base64"),
+                latestLedger,
+                liveUntilLedgerSeq,
+                lastModifiedLedgerSeq,
+                remainingTTL: liveUntilLedgerSeq - latestLedger,
+                valXdr,
+            };
+        });
+    }
+
+    async getSacDecimals(contractId: string): Promise<number> {
+        try {
+            const passphrase = await this.getNetworkPassphrase();
+            const contract = new Contract(contractId);
+            const op = contract.call("decimals");
+            const account = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0");
+
+            const tx = new TransactionBuilder(account, {
+                fee: "100",
+                networkPassphrase: passphrase,
+            })
+                .addOperation(op)
+                .setTimeout(30)
+                .build();
+
+            const sim = await this.server.simulateTransaction(tx);
+            if (!rpc.Api.isSimulationError(sim)) {
+                const successSim = sim as rpc.Api.SimulateTransactionSuccessResponse;
+                if (successSim.result?.retval) {
+                    const retval = successSim.result.retval;
+                    if (retval.switch().name === "scvU32") {
+                        return retval.u32();
+                    }
+                }
+            }
+        } catch {
+            // fallback below
+        }
+        return 7; // standard SAC / XLM asset decimals
     }
 
     /**
@@ -565,10 +685,29 @@ export class StellarRpcClient {
             const txResponse = await this.server.getTransaction(txHash);
 
             if (txResponse.status === "SUCCESS") {
+                const resultMetaXdr = (txResponse as any).resultMetaXdr;
+                let cpuInstructions: number | undefined = undefined;
+                let memoryBytes: number | undefined = undefined;
+
+                if (resultMetaXdr) {
+                    const costs = extractResourceCosts(resultMetaXdr);
+                    if (costs) {
+                        cpuInstructions = costs.cpuInstructions;
+                        memoryBytes = costs.memoryBytes;
+                        
+                        logger.info(
+                            "Extracted transaction resource costs successfully",
+                            { txHash, cpuInstructions, memoryBytes }
+                        );
+                    }
+                }
+
                 return {
                     success: true,
                     txHash,
                     ledger: (txResponse as any).ledger ?? txResponse.latestLedger,
+                    cpuInstructions,
+                    memoryBytes
                 };
             }
 
