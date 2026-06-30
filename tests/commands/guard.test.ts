@@ -4,10 +4,24 @@ import { Command } from "commander";
 import * as dbLib from "../../src/db/database";
 import * as repos from "../../src/db/repositories";
 import * as extensionLib from "../../src/core/extension";
+import ora from "ora";
+
+const { mockSpinner } = vi.hoisted(() => {
+    return {
+        mockSpinner: {
+            start: vi.fn().mockReturnThis(),
+            succeed: vi.fn().mockReturnThis(),
+            fail: vi.fn().mockReturnThis(),
+        },
+    };
+});
 
 vi.mock("../../src/db/database");
 vi.mock("../../src/db/repositories");
 vi.mock("../../src/core/extension");
+vi.mock("ora", () => ({
+    default: vi.fn(() => mockSpinner),
+}));
 
 describe("Guard Command CLI", () => {
     let program: Command;
@@ -28,7 +42,9 @@ describe("Guard Command CLI", () => {
 
         mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
         mockError = vi.spyOn(console, "error").mockImplementation(() => {});
-        mockLog = vi.spyOn(console, "log").mockImplementation(() => {});
+        mockLog = vi.spyOn(console, "log").mockImplementation((msg) => {
+            process.stdout.write(msg + "\n");
+        });
         vi.spyOn(dbLib, "getDatabase").mockReturnValue({} as any);
     });
 
@@ -153,5 +169,30 @@ describe("Guard Command CLI", () => {
 
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", keypair: "SCZZ" });
         expect(extensionLib.extendEntries).toHaveBeenCalled();
+    });
+
+    it("displays resource limits during dry-run simulation", async () => {
+        vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet" } as any);
+        vi.mocked(repos.getEntriesForContract).mockImplementation((db, id) => {
+            return [{ entry_key_xdr: "AAAA" }];
+        });
+        vi.mocked(extensionLib.simulateExtension).mockResolvedValue({
+            success: true,
+            entriesExtended: 1,
+            estimatedFee: 100_000_000, // 10 XLM
+            cpuInsns: 500,
+            memBytes: 1024
+        } as any);
+
+        // Use a valid looking secret key to avoid Keypair.fromSecret throwing
+        const { Keypair } = await import("@stellar/stellar-sdk");
+        const validSecret = Keypair.random().secret;
+        await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", dryRun: true, keypair: validSecret });
+        
+        expect(mockSpinner.succeed).toHaveBeenCalled();
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Entries:       1"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Estimated fee: 0.0100000 XLM"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("CPU instructions: 500"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Memory usage: 1,024 bytes"));
     });
 });

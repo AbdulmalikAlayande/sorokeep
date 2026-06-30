@@ -37,6 +37,10 @@ export interface ExtensionResult {
     cpuInsns?: number;
     /** Memory bytes consumed by the transaction. */
     memBytes?: number;
+    /** Read footprint size in bytes. */
+    readBytes?: number;
+    /** Write footprint size in bytes. */
+    writeBytes?: number;
     /** Whether resource usage spiked. */
     isAnomaly?: boolean;
     /** Details about the anomaly if present. */
@@ -115,6 +119,10 @@ export async function simulateExtension(
         contractId,
         entriesExtended: entryKeyXdrs.length,
         estimatedFee: sim.minResourceFee,
+        cpuInsns: sim.cpuInstructions,
+        memBytes: sim.memoryBytes,
+        readBytes: sim.readBytes,
+        writeBytes: sim.writeBytes,
     };
 }
 

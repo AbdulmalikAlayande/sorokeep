@@ -41,8 +41,21 @@ export function statusIndicator(status: TTLStatus): string {
   }
 }
 
+export function formatBytes(bytes: number): string {
+    if (bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+}
+
+export function formatCpuInsns(insns: number): string {
+    if (insns < 1000) return `${insns}`;
+    if (insns < 1000000) return `${(insns / 1000).toFixed(2)}k`;
+    return `${(insns / 1000000).toFixed(2)}m`;
+}
+
 export function formatContractID(contractID: string, maxLength: number = 16): string {
     if (contractID.length <= maxLength) return contractID;
     return `${contractID.slice(0, 8)}...${contractID.slice(-4)}`;
 }
-

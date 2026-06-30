@@ -75,6 +75,14 @@ export interface SimulateExtensionResult {
     success: boolean;
     /** Error message if simulation failed. */
     error?: string;
+    /** CPU instructions consumed by the transaction. */
+    cpuInstructions?: number;
+    /** Memory bytes consumed by the transaction. */
+    memoryBytes?: number;
+    /** Read footprint size in bytes. */
+    readBytes?: number;
+    /** Write footprint size in bytes. */
+    writeBytes?: number;
 }
 
 export interface FeeStatsResult {
@@ -376,6 +384,10 @@ export class StellarRpcClient {
         return {
             success: true,
             minResourceFee: Number(successSim.minResourceFee ?? 0),
+            cpuInstructions: Number((successSim as any).cost?.cpuInstructions ?? 0),
+            memoryBytes: Number((successSim as any).cost?.memoryBytes ?? 0),
+            readBytes: Number((successSim as any).cost?.readBytes ?? 0),
+            writeBytes: Number((successSim as any).cost?.writeBytes ?? 0),
         };
     }
 
