@@ -13,6 +13,8 @@ import {
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
+import { VaultResolver } from "./vault.js";
+import { loadConfig } from "../utils/config.js";
 
 const logger = getLogger().child({ component: "Extension" });
 
@@ -31,8 +33,10 @@ export interface ExtensionResult {
     ledger?: number;
     /** Error message if failed. */
     error?: string;
-    /** Estimated fee in stroops (from simulation). */
+    /** Estimated fee in stroops (from simulation, before submission). */
     estimatedFee?: number;
+    /** Actual fee charged in stroops (from submitted transaction result). */
+    feeCharged?: number;
     /** CPU instructions consumed by the transaction. */
     cpuInsns?: number;
     /** Memory bytes consumed by the transaction. */
@@ -232,6 +236,7 @@ export async function extendEntries(
         entriesExtended: entryKeyXdrs.length,
         txHash: txResult.txHash,
         ledger: txResult.ledger,
+        feeCharged: txResult.feeCharged,
         cpuInsns: txResult.cpuInsns,
         memBytes: txResult.memBytes,
         isAnomaly,
@@ -303,7 +308,7 @@ export async function runAutoExtensions(
 
             if (pool) {
                 slot = await pool.acquire();
-                secretKey = resolveSecretKey(slot.keypairSource);
+                secretKey = await resolveSecretKey(slot.keypairSource);
                 if (!secretKey) {
                     pool.release(slot.publicKey);
                     slot = null;
@@ -311,7 +316,7 @@ export async function runAutoExtensions(
             }
 
             if (!secretKey) {
-                secretKey = resolveSecretKey(policy.keypair_source);
+                secretKey = await resolveSecretKey(policy.keypair_source);
             }
 
             if (!secretKey) {
@@ -451,9 +456,10 @@ export async function restoreEntries(
  * Resolve a secret key from a keypair_source string.
  * Supports:
  *   - "env:VAR_NAME" — reads from environment variable
+ *   - "vault:<secret_path>" — reads from HashiCorp Vault (KV v1/v2)
  *   - Direct secret key string starting with "S" (56 chars)
  */
-function resolveSecretKey(source: string | null): string | null {
+export async function resolveSecretKey(source: string | null): Promise<string | null> {
     if (!source) return null;
 
     if (source.startsWith("env:")) {
@@ -464,6 +470,35 @@ function resolveSecretKey(source: string | null): string | null {
             return null;
         }
         return value;
+    }
+
+    if (source.startsWith("vault:")) {
+        const vaultPath = source.slice(6);
+        if (!vaultPath) {
+            logger.warn("Vault keypair_source is empty");
+            return null;
+        }
+
+        try {
+            const config = loadConfig();
+            if (!config.vault?.url || !config.vault?.token) {
+                logger.error("Vault resolver requested but vault configuration missing in config.yaml (vault.url / vault.token)");
+                return null;
+            }
+
+            const resolver = new VaultResolver({
+                url: config.vault.url,
+                token: config.vault.token,
+                namespace: config.vault.namespace,
+            });
+
+            const secret = await resolver.getSecret(vaultPath);
+            return secret;
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.error(`Failed to resolve secret from Vault path "${vaultPath}": ${message}`);
+            return null;
+        }
     }
 
     // Direct secret key
