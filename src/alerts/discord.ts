@@ -30,6 +30,7 @@ interface DiscordEmbed {
 
 function severityEmoji(event: AlertEvent): string {
     if (event.type === "alert_resolved") return "✅";
+    if (event.type === "state_changed") return "🔄";
     if (event.severity === "critical") return "🔴";
     return "⚠️";
 }
@@ -40,6 +41,11 @@ function buildTitle(event: AlertEvent): string {
 
     if (event.type === "alert_resolved") {
         return `${icon} Alert Resolved — ${contractDisplay}`;
+    }
+
+    if (event.type === "state_changed") {
+        const diffLabel = event.diff.diffType.charAt(0).toUpperCase() + event.diff.diffType.slice(1);
+        return `${icon} State ${diffLabel} — ${contractDisplay}`;
     }
 
     const level = event.severity === "critical" ? "CRITICAL" : "Warning";
@@ -78,6 +84,29 @@ function buildEmbed(event: AlertEvent): DiscordEmbed {
                 name: "Severity",
                 value: event.severity.toUpperCase(),
                 inline: true,
+            }
+        );
+    } else if (event.type === "state_changed") {
+        fields.push(
+            {
+                name: "Entry",
+                value: event.entry.label ?? event.entry.type,
+                inline: true,
+            },
+            {
+                name: "Change Type",
+                value: event.diff.diffType,
+                inline: true,
+            },
+            {
+                name: "Old Value",
+                value: `\`${event.diff.oldValueXdr ?? "(none)"}\``,
+                inline: false,
+            },
+            {
+                name: "New Value",
+                value: `\`${event.diff.newValueXdr ?? "(none)"}\``,
+                inline: false,
             }
         );
     } else {

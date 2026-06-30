@@ -8,6 +8,15 @@ const logger = getLogger().child({ component: "Config" });
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+export interface VaultConfig {
+    /** HashiCorp Vault server URL, e.g. https://vault.example.com */
+    url: string;
+    /** Vault authentication token */
+    token: string;
+    /** Optional Vault namespace (for Vault Enterprise) */
+    namespace?: string;
+}
+
 export interface SorokeepConfig {
     /** Default network to use. */
     network: string;
@@ -17,6 +26,8 @@ export interface SorokeepConfig {
     pollingIntervalSeconds: number;
     /** Slack bot token for Slack alert delivery. */
     slackToken?: string;
+    /** HashiCorp Vault configuration for secret key retrieval */
+    vault?: VaultConfig;
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
@@ -47,6 +58,18 @@ export function loadConfig(customPath?: string): SorokeepConfig {
         const raw = fs.readFileSync(configPath, "utf-8");
         const parsed = YAML.parse(raw) as Partial<SorokeepConfig>;
 
+        let vault: VaultConfig | undefined;
+        if (parsed.vault && typeof parsed.vault === "object") {
+            const v = parsed.vault as Partial<VaultConfig>;
+            if (v.url && v.token) {
+                vault = {
+                    url: v.url,
+                    token: v.token,
+                    namespace: v.namespace,
+                };
+            }
+        }
+
         return {
             network: parsed.network ?? DEFAULT_CONFIG.network,
             rpcUrl: parsed.rpcUrl,
@@ -54,6 +77,7 @@ export function loadConfig(customPath?: string): SorokeepConfig {
                 ? parsed.pollingIntervalSeconds
                 : DEFAULT_CONFIG.pollingIntervalSeconds,
             slackToken: parsed.slackToken,
+            vault,
         };
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
