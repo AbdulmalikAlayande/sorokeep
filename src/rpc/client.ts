@@ -144,11 +144,11 @@ export function parseResourceEstimate(response: unknown): ResourceEstimate | nul
     return { cpuInstructions, memoryBytes, minResourceFee };
 }
 
-/** Parse a value to a non-NaN number, defaulting to 0. */
+/** Parse a value to a non-negative finite integer, defaulting to 0. */
 function safeParseNumber(value: unknown): number {
     if (value === undefined || value === null) return 0;
     const n = typeof value === "number" ? value : Number(value);
-    return Number.isNaN(n) ? 0 : n;
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 }
 
 export interface FeeStatsResult {

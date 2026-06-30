@@ -142,15 +142,18 @@ describe("parseResourceEstimate", () => {
         expect(result!.minResourceFee).toBe(0);
     });
 
-    it("returns null when cost field is absent entirely", () => {
+    it("returns fee-only behavior when cost field is absent entirely", () => {
         const sim: Record<string, unknown> = {
             minResourceFee: "100",
             results: [{ xdr: "AAAAAA==" }],
             latestLedger: "100000",
         };
-        // Without cost, cpu/mem cannot be read — implementation may return null
-        // OR return with 0s. We accept either as long as it does not throw.
-        expect(() => parseResourceEstimate(sim)).not.toThrow();
+        const result = parseResourceEstimate(sim);
+        expect(result).toEqual({
+            cpuInstructions: 0,
+            memoryBytes: 0,
+            minResourceFee: 100
+        });
     });
 
     it("returns null when input is not an object (e.g. a string)", () => {
