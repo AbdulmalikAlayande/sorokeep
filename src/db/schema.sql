@@ -1,0 +1,190 @@
+CREATE TABLE IF NOT EXISTS contracts (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    network TEXT NOT NULL DEFAULT 'testnet',
+    wasm_hash TEXT,
+    tags TEXT,
+    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_checked_ledger INTEGER,
+    last_introspected_at DATETIME,
+    poll_interval_seconds INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS contract_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    entry_key_xdr TEXT NOT NULL,
+    entry_type TEXT NOT NULL CHECK(entry_type IN ('instance', 'wasm', 'persistent', 'temporary')),
+    label TEXT,
+    live_until_ledger INTEGER,
+    last_modified_ledger INTEGER,
+    discovery_source TEXT NOT NULL DEFAULT 'deterministic' CHECK(discovery_source IN ('deterministic', 'manual', 'instance_scan', 'footprint', 'introspection')),
+    first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_checked_at DATETIME,
+    UNIQUE(contract_id, entry_key_xdr)
+);
+
+CREATE TABLE IF NOT EXISTS extension_policies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT 0,
+    target_ttl_ledgers INTEGER NOT NULL,
+    extend_when_below_ledgers INTEGER NOT NULL,
+    keypair_public TEXT,
+    keypair_source TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id)
+);
+
+CREATE TABLE IF NOT EXISTS alert_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty')),
+    channel_target TEXT NOT NULL,
+    threshold_ledgers INTEGER NOT NULL,
+    webhook_secret TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS alerts_fired (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_config_id INTEGER NOT NULL REFERENCES alert_configs(id) ON DELETE CASCADE,
+    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
+    fired_at_ledger INTEGER NOT NULL,
+    fired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ttl_at_fire INTEGER NOT NULL,
+    resolved BOOLEAN NOT NULL DEFAULT 0,
+    resolved_at TEXT,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    delivered_at TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS channel_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    public_key TEXT NOT NULL UNIQUE,
+    keypair_source TEXT,
+    label TEXT,
+    network TEXT NOT NULL DEFAULT 'testnet',
+    funded BOOLEAN NOT NULL DEFAULT 0,
+    balance_xlm REAL,
+    balance_checked_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS extension_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
+    old_ttl_ledgers INTEGER NOT NULL,
+    new_ttl_ledgers INTEGER NOT NULL,
+    tx_hash TEXT NOT NULL,
+    cost_xlm REAL,
+    cpu_insns INTEGER,
+    mem_bytes INTEGER,
+    is_anomaly INTEGER NOT NULL DEFAULT 0,
+    executed_at_ledger INTEGER NOT NULL,
+    executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cost_daily_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    snapshot_date DATE NOT NULL,
+    total_extensions INTEGER NOT NULL DEFAULT 0,
+    total_cost_xlm REAL NOT NULL DEFAULT 0,
+    instance_extensions INTEGER NOT NULL DEFAULT 0,
+    instance_cost_xlm REAL NOT NULL DEFAULT 0,
+    wasm_extensions INTEGER NOT NULL DEFAULT 0,
+    wasm_cost_xlm REAL NOT NULL DEFAULT 0,
+    persistent_extensions INTEGER NOT NULL DEFAULT 0,
+    persistent_cost_xlm REAL NOT NULL DEFAULT 0,
+    temporary_extensions INTEGER NOT NULL DEFAULT 0,
+    temporary_cost_xlm REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id, snapshot_date)
+);
+
+CREATE TABLE IF NOT EXISTS state_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
+    snapshot_ledger INTEGER NOT NULL,
+    value_hash TEXT NOT NULL,
+    value_xdr TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_state_snapshots_entry_ledger
+    ON state_snapshots(contract_entry_id, snapshot_ledger DESC);
+
+CREATE TABLE IF NOT EXISTS state_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
+    old_snapshot_id INTEGER REFERENCES state_snapshots(id) ON DELETE SET NULL,
+    new_snapshot_id INTEGER REFERENCES state_snapshots(id) ON DELETE SET NULL,
+    diff_type TEXT NOT NULL CHECK(diff_type IN ('created', 'updated', 'deleted')),
+    diff_json TEXT NOT NULL,
+    detected_at_ledger INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_state_changes_entry_detected_ledger
+    ON state_changes(contract_entry_id, detected_at_ledger DESC);
+
+CREATE TABLE IF NOT EXISTS resource_alert_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook')),
+    channel_target TEXT NOT NULL,
+    cpu_limit INTEGER NOT NULL,
+    mem_limit INTEGER NOT NULL,
+    webhook_secret TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id, channel_type, channel_target)
+);
+
+CREATE TABLE IF NOT EXISTS resource_alerts_fired (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_alert_config_id INTEGER NOT NULL REFERENCES resource_alert_configs(id) ON DELETE CASCADE,
+    resource_type TEXT NOT NULL CHECK(resource_type IN ('cpu', 'memory')),
+    usage INTEGER NOT NULL,
+    "limit" INTEGER NOT NULL,
+    usage_percent INTEGER NOT NULL,
+    fired_at_ledger INTEGER,
+    fired_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    delivered_at TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    resolved BOOLEAN NOT NULL DEFAULT 0,
+    resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS contract_budgets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    monthly_limit_xlm REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id)
+);
+
+
+
+CREATE TABLE IF NOT EXISTS resource_usage_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    cpu_insns INTEGER NOT NULL,
+    mem_bytes INTEGER NOT NULL,
+    fee_instructions INTEGER,
+    fee_read_ledger_entries INTEGER,
+    fee_write_ledger_entries INTEGER,
+    fee_read_bytes INTEGER,
+    fee_write_bytes INTEGER,
+    fee_transaction_size INTEGER,
+    fee_historical_ledger INTEGER,
+    fee_rent_ledger INTEGER,
+    fee_refundable INTEGER,
+    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_contract_id
+    ON resource_usage_logs(contract_id);
+CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_recorded_at
+    ON resource_usage_logs(recorded_at DESC);
