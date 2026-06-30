@@ -31,7 +31,12 @@ export function registerStatusCommand(program: Command): void {
                         console.log(chalk.red(`Contract ${formatContractID(contractId)} is not registered.`));
                         console.log(chalk.dim("Run 'sorokeep watch <contractId>' first."));
                     }
+            } catch (error: any) {
+                if (error instanceof ContractNotFoundError || error?.name === "ContractNotFoundError") {
+                    console.log(chalk.red(`Contract ${formatContractID(contractId)} is not registered.`));
+                    console.log(chalk.dim("Run 'sorokeep watch <contractId>' first."));
                     process.exit(1);
+                    return;
                 }
                 throw error;
             }

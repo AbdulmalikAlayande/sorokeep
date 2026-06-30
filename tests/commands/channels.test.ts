@@ -25,14 +25,13 @@ describe("channels command", () => {
     const MASTER_KEY = "SCZANGBA5AKIA5OSBZPZU5KA5BWNNASCTLZ5I3XUGP7ZXFJEFZ4MFLN";
     let consoleLogSpy: ReturnType<typeof vi.spyOn>;
     let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
-    let exitSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
         mockDb = getDatabaseForTesting();
         vi.clearAllMocks();
         consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
         consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-        exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+        vi.spyOn(process, "exit").mockImplementation((() => {
             throw new Error("process.exit called");
         }) as any);
     });
