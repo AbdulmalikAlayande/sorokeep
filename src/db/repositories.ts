@@ -6,6 +6,7 @@ export interface Contract {
     network: string;
     wasm_hash: string | null;
     tags: string | null;
+    poll_interval_seconds?: number | null;
     registered_at: Date;
     last_checked_ledger?: number | null;
     /** ISO-8601 timestamp of the last successful introspection (instance/WASM key discovery). NULL if never introspected. */
@@ -93,21 +94,23 @@ export interface StateChange {
 }
 
 // ---------------------------- Database Access Functions For Schema: Contract ----------------------------
-export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string;}): void {
+export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string; poll_interval_seconds?: number | null;}): void {
     db.prepare(`
-        INSERT INTO contracts (id, name, network, wasm_hash, tags)
-        VALUES (@id, @name, @network, @wasm_hash, @tags)
+        INSERT INTO contracts (id, name, network, wasm_hash, tags, poll_interval_seconds)
+        VALUES (@id, @name, @network, @wasm_hash, @tags, @poll_interval_seconds)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             network = excluded.network,
             wasm_hash = excluded.wasm_hash,
-            tags = excluded.tags
+            tags = excluded.tags,
+            poll_interval_seconds = COALESCE(excluded.poll_interval_seconds, contracts.poll_interval_seconds)
     `).run({
       id: contract.id,
       name: contract.name ?? null,
       network: contract.network,
       wasm_hash: contract.wasm_hash ?? null,
       tags: contract.tags ?? null,
+      poll_interval_seconds: contract.poll_interval_seconds ?? null,
     });
 }
 
@@ -125,6 +128,22 @@ export function updateLastCheckedLedger(db: Database.Database, contractId: strin
 
 export function deleteContract(db: Database.Database, id: string): void {
   db.prepare("DELETE FROM contracts WHERE id = ?").run(id);
+}
+
+export function updateContractPollInterval(
+  db: Database.Database,
+  contractId: string,
+  pollIntervalSeconds: number | null,
+): void {
+  db.prepare("UPDATE contracts SET poll_interval_seconds = ? WHERE id = ?").run(pollIntervalSeconds, contractId);
+}
+
+export function getContractPollInterval(
+  db: Database.Database,
+  contractId: string,
+): number | null {
+  const row = db.prepare("SELECT poll_interval_seconds FROM contracts WHERE id = ?").get(contractId) as { poll_interval_seconds: number | null } | undefined;
+  return row?.poll_interval_seconds ?? null;
 }
 
 /**

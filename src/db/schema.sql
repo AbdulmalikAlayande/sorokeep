@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS contracts (
     tags TEXT,
     registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_checked_ledger INTEGER,
-    last_introspected_at DATETIME
+    last_introspected_at DATETIME,
+    poll_interval_seconds INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS contract_entries (
