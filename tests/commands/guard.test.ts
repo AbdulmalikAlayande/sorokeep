@@ -31,21 +31,22 @@ describe("Guard Command CLI", () => {
     let mockLog: any;
     let actionFn: (contractId: string, options: any) => Promise<void>;
 
-    beforeEach(() => {
-        program = new Command();
+     beforeEach(() => {
+         program = new Command();
+ 
+         vi.spyOn(Command.prototype, "action").mockImplementation(function (this: any, fn: any) {
+             actionFn = fn;
+             return this;
+         });
+ 
+         registerGuardCommand(program);
+ 
+         mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
+         mockError = vi.spyOn(console, "error");
+         mockLog = vi.spyOn(console, "log");
+         vi.spyOn(dbLib, "getDatabase").mockReturnValue({} as any);
+     });
 
-        vi.spyOn(Command.prototype, "action").mockImplementation(function (this: any, fn: any) {
-            actionFn = fn;
-            return this;
-        });
-
-        registerGuardCommand(program);
-
-        mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
-        mockError = vi.spyOn(console, "error").mockImplementation(() => {});
-        mockLog = vi.spyOn(console, "log").mockImplementation(() => {});
-        vi.spyOn(dbLib, "getDatabase").mockReturnValue({} as any);
-    });
 
     afterEach(() => {
         vi.restoreAllMocks();
@@ -168,5 +169,27 @@ describe("Guard Command CLI", () => {
 
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", keypair: "SCZZ" });
         expect(extensionLib.extendEntries).toHaveBeenCalled();
+    });
+
+    it("performs successful dry-run simulation and shows results", async () => {
+        vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet" } as any);
+        vi.mocked(repos.getEntriesForContract).mockReturnValue([
+            { entry_key_xdr: "AAAA" } as any,
+        ]);
+        vi.mocked(extensionLib.simulateExtension).mockResolvedValue({
+            success: true,
+            contractId: "X",
+            entriesExtended: 1,
+            estimatedFee: 100_000_000,
+        } as any);
+
+        console.log("Checking if simulateExtension is a mock:", typeof extensionLib.simulateExtension, extensionLib.simulateExtension);
+
+        await actionFn("X", { targetTtl: "100000", threshold: "20000", dryRun: true, keypair: "SXXXXXXXXX" });
+        
+        expect(extensionLib.simulateExtension).toHaveBeenCalled();
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Entries:       1"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Estimated fee: 1.0000000 XLM"));
+        expect(extensionLib.extendEntries).not.toHaveBeenCalled();
     });
 });
