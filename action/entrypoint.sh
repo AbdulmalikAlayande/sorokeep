@@ -18,7 +18,7 @@ echo "::group::Sorokeep TTL check — contract ${CONTRACT_ID} on ${NETWORK} (thr
 
 # Run check; capture output and exit code without aborting on failure.
 set +e
-CHECK_JSON=$(node "${ACTION_PATH}/dist/index.js" check "${ARGS[@]}" 2>&1)
+CHECK_JSON=$(node "${ACTION_PATH}/dist/index.js" check "${ARGS[@]}")
 CHECK_EXIT=$?
 set -e
 

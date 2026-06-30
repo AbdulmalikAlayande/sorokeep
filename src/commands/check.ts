@@ -15,11 +15,12 @@ export const registerCheckCommand = (program: Command): void => {
         .option("-r, --rpc-url <url>", "Custom RPC endpoint URL")
         .option("--json", "Output result as JSON (useful for CI integrations)")
         .action(async (contractId: string, options) => {
-            const threshold = parseInt(options.threshold, 10);
+            const threshold = Number(options.threshold);
 
-            if (isNaN(threshold) || threshold < 0) {
+            if (!Number.isInteger(threshold) || threshold < 0) {
                 console.error(chalk.red(`Invalid threshold: "${options.threshold}". Must be a non-negative integer.`));
-                process.exit(1);
+                process.exitCode = 1;
+                    return;
             }
 
             const spinner = options.json
@@ -45,13 +46,15 @@ export const registerCheckCommand = (program: Command): void => {
                         entries: result.entries,
                         error: result.error,
                     }));
-                    process.exit(result.passed ? 0 : 1);
+                    process.exitCode = result.passed ? 0 : 1;
+                    return;
                 }
 
                 if (result.error) {
                     spinner!.fail(chalk.red(`TTL check error: ${result.error}`));
                     logger.error("TTL check error", { error: result.error });
-                    process.exit(1);
+                    process.exitCode = 1;
+                    return;
                 }
 
                 const displayId = formatContractID(contractId);
@@ -83,7 +86,8 @@ export const registerCheckCommand = (program: Command): void => {
                     console.log(chalk.green(`\n  Minimum TTL (${result.minimumTTL.toLocaleString()}) meets threshold (${threshold.toLocaleString()}).`));
                 }
 
-                process.exit(result.passed ? 0 : 1);
+                process.exitCode = result.passed ? 0 : 1;
+                    return;
             } catch (error: unknown) {
                 const message = error instanceof Error ? error.message : String(error);
                 if (spinner) {
@@ -92,7 +96,8 @@ export const registerCheckCommand = (program: Command): void => {
                     console.error(chalk.red(`Failed to check TTL: ${message}`));
                 }
                 logger.error("Check command failed", { error: message });
-                process.exit(1);
+                process.exitCode = 1;
+                    return;
             }
         });
 };

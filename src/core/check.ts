@@ -69,6 +69,17 @@ export async function checkContractTTL(
                     liveUntilLedger: wasmEntry.liveUntilLedgerSeq,
                     remainingTTL: wasmEntry.remainingTTL,
                 });
+            } else {
+                return {
+                    contractId,
+                    network,
+                    threshold,
+                    latestLedger: instanceEntry.latestLedger,
+                    minimumTTL: 0,
+                    passed: false,
+                    entries,
+                    error: `WASM code entry (hash: ${instanceEntry.wasmHash.substring(0, 10)}...) not found`,
+                };
             }
         }
 

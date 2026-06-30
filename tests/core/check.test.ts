@@ -4,12 +4,15 @@ import { checkContractTTL, CheckResult } from "../../src/core/check.js";
 const mockGetContractInstanceEntry = vi.fn();
 const mockGetWasmCodeEntry = vi.fn();
 
-vi.mock("../../src/rpc/client.js", () => {
-    class MockStellarRpcClient {
-        getContractInstanceEntry = mockGetContractInstanceEntry;
-        getWasmCodeEntry = mockGetWasmCodeEntry;
-    }
-    return { StellarRpcClient: MockStellarRpcClient };
+export const mockStellarRpcClientConstructor = vi.fn();
+vi.mock('../../src/rpc/client.js', () => {
+    return {
+        StellarRpcClient: vi.fn().mockImplementation(function (this: any, ...args: any[]) {
+            mockStellarRpcClientConstructor(...args);
+            this.getContractInstanceEntry = mockGetContractInstanceEntry;
+            this.getWasmCodeEntry = mockGetWasmCodeEntry;
+        })
+    };
 });
 
 const VALID_CONTRACT_ID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
@@ -71,6 +74,12 @@ describe("checkContractTTL", () => {
             expect(result.contractId).toBe(VALID_CONTRACT_ID);
             expect(result.network).toBe("mainnet");
             expect(result.threshold).toBe(1000);
+        });
+
+        it("passes rpcUrl to StellarRpcClient", async () => {
+            mockInstance(5000, null);
+            await checkContractTTL(VALID_CONTRACT_ID, "testnet", 500, "https://custom.rpc");
+            expect(mockStellarRpcClientConstructor).toHaveBeenCalledWith("testnet", "https://custom.rpc");
         });
     });
 
@@ -192,14 +201,15 @@ describe("checkContractTTL", () => {
             expect(result.entries[0]!.entryType).toBe("instance");
         });
 
-        it("uses instance TTL only when WASM entry is not found on RPC", async () => {
+        it("fails closed when WASM entry is not found on RPC", async () => {
             mockInstance(5000);
             mockGetWasmCodeEntry.mockResolvedValue(null);
 
             const result = await checkContractTTL(VALID_CONTRACT_ID, "testnet", 500);
 
-            expect(result.entries).toHaveLength(1);
-            expect(result.minimumTTL).toBe(5000);
+            expect(result.passed).toBe(false);
+            expect(result.minimumTTL).toBe(0);
+            expect(result.error).toMatch(/WASM code entry.*not found/);
         });
     });
 
