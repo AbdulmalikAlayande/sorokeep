@@ -78,6 +78,7 @@ describe("e2e: monitoring daemon execution cycles", () => {
             contractsExtended: 0,
             entriesExtended: 0,
             errors: [],
+            extensions: [],
         });
     });
 
