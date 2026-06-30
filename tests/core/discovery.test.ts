@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { discoverStorageKeys, runBatchDiscovery } from "../../src/core/discovery";
 import * as dbRepo from "../../src/db/repositories";

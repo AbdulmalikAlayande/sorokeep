@@ -126,8 +126,6 @@ export interface RentProjectionResult {
 
 /** A single window result within a multi-window projection. */
 export type RentWindowProjection = RentProjectionResult;
-    // intentionally identical to RentProjectionResult for now;
-    // kept as a distinct type for future extensibility
 
 /** Result of a 30/60/90-day multi-window projection. */
 export interface RentWindowsResult {
