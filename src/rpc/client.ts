@@ -147,8 +147,9 @@ export class StellarRpcClient {
 
     constructor(network: string, customUrl?: string, options: StellarRpcClientOptions = {}) {
         this.network = network;
-        this.maxRequestsPerSecond = options.maxRequestsPerSecond ?? 5;
-        this.requestIntervalMs = this.maxRequestsPerSecond > 0 ? Math.ceil(1000 / this.maxRequestsPerSecond) : 1000;
+        const configured = options.maxRequestsPerSecond ?? 5;
+        this.maxRequestsPerSecond = configured > 0 ? configured : 5;
+        this.requestIntervalMs = Math.ceil(1000 / this.maxRequestsPerSecond);
         const url = customUrl ?? RPC_URLS[network];
         if (!url) {
             throw new Error(`Unknown network "${network}". Use "testnet", "mainnet", or provide a custom URL.`);
@@ -763,9 +764,9 @@ export class StellarRpcClient {
             return 0;
         }
 
-        // Wait until the oldest request in the window falls out
-        const oldestInWindow = this.recentRequestTimes[0]!;
-        const waitMs = oldestInWindow + 1000 - now;
+        // Wait until the slot-blocking request in the window falls out
+        const blockingRequest = this.recentRequestTimes[this.recentRequestTimes.length - this.maxRequestsPerSecond]!;
+        const waitMs = blockingRequest + 1000 - now;
         this.recentRequestTimes.push(now + waitMs);
         return waitMs;
     }

@@ -461,14 +461,14 @@ describe("StellarRpcClient", () => {
             const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
             (rateLimitedClient as any).server = server;
 
-            const requests = [1, 2, 3, 4].map(() => rateLimitedClient.checkHealth());
+            const requests = [1, 2, 3, 4, 5, 6].map(() => rateLimitedClient.checkHealth());
 
             await vi.runAllTimersAsync();
             await Promise.all(requests);
 
             // With 2 req/sec rate limit, at most 2 should have been in-flight simultaneously
             expect(maxInFlight).toBeLessThanOrEqual(2);
-            expect(server.getHealth).toHaveBeenCalledTimes(4);
+            expect(server.getHealth).toHaveBeenCalledTimes(6);
         });
 
         it("continues processing queued requests even if a preceding request fails", async () => {
@@ -486,21 +486,23 @@ describe("StellarRpcClient", () => {
                 }),
             };
 
-            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
+            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 1 });
             (rateLimitedClient as any).server = server;
 
-            const [first, second] = await Promise.allSettled([
-                rateLimitedClient.checkHealth(),
-                rateLimitedClient.checkHealth(),
-            ]);
+            const firstPromise = rateLimitedClient.checkHealth();
+            const secondPromise = rateLimitedClient.checkHealth();
 
             await vi.runAllTimersAsync();
+            const [first, second] = await Promise.allSettled([firstPromise, secondPromise]);
 
             // First should have rejected
             expect(first.status).toBe("rejected");
             // Second should have resolved despite the first failing
             expect(second.status).toBe("fulfilled");
             expect(server.getHealth).toHaveBeenCalledTimes(2);
+        });
+    });
+
     describe("executeWithRetry", () => {
         beforeEach(() => {
             vi.useFakeTimers();
