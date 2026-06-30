@@ -65,6 +65,23 @@ export function registerGuardCommand(program: Command): void {
                 let keypairSource: string | undefined;
                 let secretKey: string | undefined;
 
+                if (options.keypairEnv || options.keypair) {
+                    const { KeyChain, EnvResolver, RawResolver, parseKeypairSource } = await import("../core/keyring.js");
+                    const chain = new KeyChain();
+
+                    if (options.keypairEnv) {
+                        keypairSource = `env:${options.keypairEnv}`;
+                        chain.addResolver(new EnvResolver(options.keypairEnv));
+                    } else if (options.keypair) {
+                        keypairSource = options.keypair;
+                        const resolver = parseKeypairSource(keypairSource) || new RawResolver(options.keypair);
+                        chain.addResolver(resolver);
+                    }
+
+                    secretKey = await chain.resolve();
+
+                    if (!secretKey) {
+                        console.error(chalk.red(`Failed to resolve a valid secret key from the provided source`));
                 if (options.keypairEnv) {
                     keypairSource = `env:${options.keypairEnv}`;
                 } else if (options.keypairVault) {

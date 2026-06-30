@@ -30,14 +30,18 @@ export function registerRestoreCommand(program: Command): void {
                 // Resolve secret key
                 let secretKey: string | undefined;
 
-                if (options.keypairEnv) {
-                    secretKey = process.env[options.keypairEnv];
-                    if (!secretKey) {
-                        console.error(chalk.red(`Environment variable ${options.keypairEnv} is not set`));
-                        process.exit(1);
+                if (options.keypairEnv || options.keypair) {
+                    const { KeyChain, EnvResolver, RawResolver, parseKeypairSource } = await import("../core/keyring.js");
+                    const chain = new KeyChain();
+
+                    if (options.keypairEnv) {
+                        chain.addResolver(new EnvResolver(options.keypairEnv));
+                    } else if (options.keypair) {
+                        const resolver = parseKeypairSource(options.keypair) || new RawResolver(options.keypair);
+                        chain.addResolver(resolver);
                     }
-                } else if (options.keypair) {
-                    secretKey = options.keypair;
+
+                    secretKey = await chain.resolve();
                 }
 
                 if (!secretKey) {
