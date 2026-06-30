@@ -11,6 +11,22 @@ import {
     Asset,
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
+import { CostSummary } from "../core/costs.js";
+
+export function assertSimulationSuccess(sim: rpc.Api.SimulateTransactionResponse): asserts sim is rpc.Api.SimulateTransactionSuccessResponse {
+    if (rpc.Api.isSimulationError(sim)) {
+        if (sim.error?.includes("txBadSeq")) {
+            throw new Error("Simulation failed: Expired sequence number");
+        }
+        if (sim.error?.includes("txInsufficientBalance")) {
+            throw new Error("Simulation failed: Insufficient wallet balance");
+        }
+        if (sim.error?.includes("invalid footprint")) {
+            throw new Error("Simulation failed: Invalid footprint key");
+        }
+        throw new Error(`Simulation failed: ${sim.error ?? "unknown error"}`);
+    }
+}
 
 /**
  * Executes an RPC action with exponential backoff on network timeouts or 429/5xx errors.

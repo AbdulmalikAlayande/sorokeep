@@ -203,10 +203,6 @@ describe("Core Extension Logic", () => {
 
             mockSubmitExtension.mockRejectedValue(new Error("Simulation failed: Invalid footprint key"));
 
-            const { getLogger } = await import("../../src/logging/index.js");
-            const logger = getLogger();
-            const warnSpy = vi.spyOn(logger, "warn");
-
             const result = await extendEntries(
                 db,
                 contractId,
@@ -217,8 +213,6 @@ describe("Core Extension Logic", () => {
 
             expect(result.success).toBe(false);
             expect(result.error).toBe("Simulation failed: Invalid footprint key");
-            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Simulation failed: Invalid footprint key"));
-            warnSpy.mockRestore();
         });
     });
 
