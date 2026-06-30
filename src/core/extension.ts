@@ -154,12 +154,22 @@ export async function extendEntries(
     `Extending ${entryKeyXdrs.length} entries for ${contractId} to ${extendToLedgers} ledgers`,
   );
 
-  const txResult = sponsorSecret
+  const resolvedSponsorSecret = sponsorSecret ? resolveSecretKey(sponsorSecret) : undefined;
+  if (sponsorSecret && !resolvedSponsorSecret) {
+    return {
+      success: false,
+      contractId,
+      entriesExtended: 0,
+      error: `Failed to resolve sponsor secret key from environment variable: ${sponsorSecret}`,
+    };
+  }
+
+  const txResult = resolvedSponsorSecret
     ? await client.submitExtensionWithFeeBump(
         entryKeyXdrs,
         extendToLedgers,
         secretKey,
-        sponsorSecret,
+        resolvedSponsorSecret,
       )
     : await client.submitExtension(entryKeyXdrs, extendToLedgers, secretKey);
 

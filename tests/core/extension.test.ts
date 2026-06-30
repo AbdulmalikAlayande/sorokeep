@@ -613,7 +613,7 @@ describe("Core Extension Logic", () => {
         100000,
         "SECRETKEY123",
         undefined,
-        "SPONSOR_SECRET_KEY",
+        "SA2XY6G32TKTNEMCIGFXYIINWKV2N4JDFUWWQ54QOPO7625W2YVJW34W",
       );
 
       expect(result.success).toBe(true);
@@ -622,7 +622,7 @@ describe("Core Extension Logic", () => {
         expect.any(Array),
         100000,
         "SECRETKEY123",
-        "SPONSOR_SECRET_KEY",
+        "SA2XY6G32TKTNEMCIGFXYIINWKV2N4JDFUWWQ54QOPO7625W2YVJW34W",
       );
       expect(mockSubmitExtension).not.toHaveBeenCalled();
     });
@@ -692,7 +692,7 @@ describe("Core Extension Logic", () => {
         100000,
         "SECRETKEY123",
         undefined,
-        "SPONSOR_SECRET_KEY",
+        "SA2XY6G32TKTNEMCIGFXYIINWKV2N4JDFUWWQ54QOPO7625W2YVJW34W",
       );
 
       const history = getExtensionHistory(db, contractId);
@@ -777,7 +777,7 @@ describe("Core Extension Logic", () => {
         100000,
         "SECRETKEY123",
         undefined,
-        "SPONSOR_SECRET_KEY",
+        "SA2XY6G32TKTNEMCIGFXYIINWKV2N4JDFUWWQ54QOPO7625W2YVJW34W",
       );
 
       expect(result.success).toBe(false);
@@ -823,7 +823,7 @@ describe("Core Extension Logic", () => {
       
       expect(feeBumpSpy).toHaveBeenCalledWith(
         expect.anything(),
-        "10100", // (inner base fee 100 + 10000)
+        "10000", // base fee directly
         expect.anything(),
         expect.anything()
       );

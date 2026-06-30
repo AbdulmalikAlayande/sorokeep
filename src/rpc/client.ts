@@ -378,7 +378,7 @@ export class StellarRpcClient {
     // Wrap in a fee-bump transaction — sponsor pays the base fee
     const feeBump = TransactionBuilder.buildFeeBumpTransaction(
       sponsorKeypair,
-      (parseInt(assembledInner.fee, 10) + 10000).toString(),
+      "10000",
       assembledInner,
       passphrase,
     );
