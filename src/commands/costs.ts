@@ -14,13 +14,22 @@ export function registerCostsCommand(program: Command): void {
         .description("Show rent costs and extension history for a contract")
         .option("--period <days>", "Show costs for the last N days", "30")
         .option("--all", "Show all extension history")
-        .action(async (contractId: string, options) => {
+        .option("--json", "Output machine-readable JSON")
+        .action(async (contractId: string, options: { period?: string; all?: boolean; json?: boolean }) => {
             try {
                 const db = getDatabase();
-                const days = options.all ? undefined : parseInt(options.period, 10);
+                const days = options.all ? undefined : parseInt(options.period ?? "30", 10);
 
                 if (days !== undefined && (!Number.isInteger(days) || days <= 0)) {
-                    console.error(chalk.red("--period must be a positive integer number of days"));
+                    if (options.json) {
+                        console.log(JSON.stringify({
+                            success: false,
+                            error: "invalid_period",
+                            period: options.period,
+                        }));
+                    } else {
+                        console.error(chalk.red("--period must be a positive integer number of days"));
+                    }
                     process.exit(1);
                 }
 
@@ -31,7 +40,9 @@ export function registerCostsCommand(program: Command): void {
                 );
 
                 if (!result.success) {
-                    if (result.error === "contract_not_found") {
+                    if (options.json) {
+                        console.log(JSON.stringify(result));
+                    } else if (result.error === "contract_not_found") {
                         console.error(
                             chalk.red(
                                 `Contract ${formatContractID(contractId)} not found. Run 'sorokeep watch' first.`,
@@ -44,6 +55,12 @@ export function registerCostsCommand(program: Command): void {
                 }
 
                 const { data } = result;
+
+                if (options.json) {
+                    console.log(JSON.stringify(data, null, 2));
+                    return;
+                }
+
                 const displayName = data.contract.name ?? formatContractID(contractId);
 
                 console.log(

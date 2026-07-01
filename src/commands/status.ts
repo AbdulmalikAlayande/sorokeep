@@ -11,12 +11,26 @@ export function registerStatusCommand(program: Command): void {
     program
         .command("status <contractId>")
         .description("Show TTL and storage health for a watched contract")
-        .action((contractId: string) => {
+        .option("--json", "Output machine-readable JSON")
+        .action((contractId: string, options: { json?: boolean }) => {
             const db = getDatabase();
 
             let status;
             try {
                 status = getContractStatus(db, contractId);
+            } catch (error) {
+                if (error instanceof ContractNotFoundError) {
+                    if (options.json) {
+                        console.log(JSON.stringify({
+                            success: false,
+                            error: "contract_not_found",
+                            contractId,
+                            message: `Contract ${formatContractID(contractId)} is not registered.`,
+                        }));
+                    } else {
+                        console.log(chalk.red(`Contract ${formatContractID(contractId)} is not registered.`));
+                        console.log(chalk.dim("Run 'sorokeep watch <contractId>' first."));
+                    }
             } catch (error: any) {
                 if (error instanceof ContractNotFoundError || error?.name === "ContractNotFoundError") {
                     console.log(chalk.red(`Contract ${formatContractID(contractId)} is not registered.`));
@@ -25,6 +39,11 @@ export function registerStatusCommand(program: Command): void {
                     return;
                 }
                 throw error;
+            }
+
+            if (options.json) {
+                console.log(JSON.stringify(status, null, 2));
+                return;
             }
 
             const displayName = status.name ?? formatContractID(contractId);
