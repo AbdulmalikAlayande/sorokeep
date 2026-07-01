@@ -32,7 +32,7 @@ export function loadSchema(schemaPath: string): SchemaDictionary {
       parsed = JSON.parse(raw);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Schema configuration error: malformed JSON in schema file: ${msg}`);
+      throw new Error(`Schema configuration error: malformed JSON in schema file: ${msg}`, { cause: err });
     }
 
     return normalizeSchemaCandidate(parsed);
@@ -41,10 +41,11 @@ export function loadSchema(schemaPath: string): SchemaDictionary {
     if (nodeErr?.code === "ENOENT") {
       throw new Error(
         `Schema configuration error: schema file not found at '${schemaPath}'`,
+        { cause: nodeErr ?? err }
       );
     }
     const msg = nodeErr?.message ?? String(err);
-    throw new Error(`Schema configuration error: failed to load schema file: ${msg}`);
+    throw new Error(`Schema configuration error: failed to load schema file: ${msg}`, { cause: nodeErr ?? err });
   }
 }
 
