@@ -113,7 +113,7 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
             return new actualModule.Account(publicKey, "123");
         }
 
-        async simulateTransaction(_tx: any) {
+        async simulateTransaction() {
             if (this.serverUrl && this.serverUrl.includes("sim-fail")) return { error: "Simulation failed" };
             return {
                 cost: { cpuInsns: "1000", memBytes: "100" },
@@ -122,7 +122,7 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
             };
         }
 
-        async sendTransaction(_tx: any) {
+        async sendTransaction() {
             if (this.serverUrl && this.serverUrl.includes("send-error")) {
                 return { status: "ERROR", errorResult: "Something went wrong", hash: "error-hash" };
             }

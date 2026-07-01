@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { discoverStorageKeys, runBatchDiscovery } from "../../src/core/discovery";
 import * as dbRepo from "../../src/db/repositories";
-import { xdr, StrKey } from "@stellar/stellar-sdk";
+
 
 vi.mock("../../src/db/repositories");
 
@@ -20,7 +20,7 @@ vi.mock("@stellar/stellar-sdk", async () => {
             return { latestLedger: 10000 };
         }
 
-        async getEvents(_request: any) {
+        async getEvents() {
             if (this.url.includes("no-events")) return { events: [] };
             if (this.url.includes("throw-events")) throw new Error("RPC error fetching events");
 
@@ -94,11 +94,6 @@ vi.mock("@stellar/stellar-sdk", async () => {
             });
 
             // Build TransactionEnvelope
-            const txExt = actualModule.xdr.TransactionExt.1(
-                new actualModule.xdr.TransactionV1EnvelopeExt({
-                    sorobanData
-                }) // Actually, ext.v1() is SorobanTransactionData
-            );
             // wait, xdr.TransactionExt is a union? Yes. It might be simpler to just return a mock object that matches the structure.
             
             const mockEnvelope = {
@@ -121,7 +116,7 @@ vi.mock("@stellar/stellar-sdk", async () => {
             };
         }
 
-        async getLedgerEntries(_key: any) {
+        async getLedgerEntries() {
             if (this.url.includes("missing-entries")) return { entries: [] };
             
             return {
