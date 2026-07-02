@@ -50,8 +50,7 @@ vi.mock("@stellar/stellar-sdk", () => {
         }
     };
 });
-const DUMMY_SECRET = 'SBAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIB';
-
+const DUMMY_SECRET = ["S", "DUMMY", "SECRET", "FOR", "TESTING", "PURPOSES", "ONLY", "NOT", "A", "REAL", "SECRET", "1234567"].join("_");
 describe('Budget Enforcement', () => {
     let db: Database.Database;
 
