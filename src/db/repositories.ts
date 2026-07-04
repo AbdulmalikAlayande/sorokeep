@@ -548,7 +548,7 @@ export function countExtensionsInLastHour(db: Database.Database, contractId: str
         SELECT COUNT(*) AS cnt
         FROM extension_history
         WHERE contract_id = ?
-          AND executed_at >= datetime('now', '-1 hour')
+          AND datetime(executed_at) >= datetime('now', '-1 hour')
     `).get(contractId) as { cnt: number };
     return row?.cnt ?? 0;
 }
