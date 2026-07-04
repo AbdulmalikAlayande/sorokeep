@@ -565,7 +565,7 @@ sorokeep/
 │   │   └── repositories.ts      # All query functions
 │   ├── logging/                 # Structured logging (pino)
 │   └── utils/                   # Config loader, TTL formatting
-├── tests/                       # Mirrors src/ structure — 238 tests across 14 files
+├── tests/                       # Mirrors src/ structure — 942 tests across 70 files
 ├── .github/workflows/           # CI (test + type-check) and publish
 ├── package.json
 ├── tsconfig.json
@@ -610,7 +610,7 @@ npx vitest run tests/core/monitor.test.ts
 npx vitest
 ```
 
-**891 tests** across **66 test files** covering:
+**942 tests** across **70 test files** covering:
 
 - **Formatting** — TTL conversion, status classification, human-readable time
 - **Database** — CRUD, cascades, upserts, deduplication, alert delivery queues
