@@ -7,7 +7,7 @@
  * importable and are functions.
  */
 import { describe, it, expect } from "vitest";
-import { watchContract, runMonitorCycle } from "../src/lib.js";
+import { watchContract, runMonitorCycle, inspectContract, parseSacBalance, buildSacBalanceKeyXdr, formatTokenBalance } from "../src/lib.js";
 
 describe("sorokeep library entry point", () => {
     it("exports watchContract as a function", () => {
@@ -16,5 +16,12 @@ describe("sorokeep library entry point", () => {
 
     it("exports runMonitorCycle as a function", () => {
         expect(typeof runMonitorCycle).toBe("function");
+    });
+
+    it("exports inspectContract and helpers as functions", () => {
+        expect(typeof inspectContract).toBe("function");
+        expect(typeof parseSacBalance).toBe("function");
+        expect(typeof buildSacBalanceKeyXdr).toBe("function");
+        expect(typeof formatTokenBalance).toBe("function");
     });
 });

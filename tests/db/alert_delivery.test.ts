@@ -9,6 +9,8 @@ import {
     resolveAlerts,
     getUndeliveredAlerts,
     markAlertDelivered,
+    countUndeliveredAlerts,
+    incrementRetryCount,
 } from "../../src/db/repositories";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -241,7 +243,7 @@ describe("getUndeliveredAlerts", () => {
 
         it("does not exclude resolved alerts — resolved != delivered", () => {
             const { entryId } = seedFull(db, { contractId: "CA", network: "testnet" });
-            resolveAlerts(db, entryId);
+            resolveAlerts(db, entryId, 1);
 
             // resolved = 1, but delivered = 0 — still needs to be sent
             const result = getUndeliveredAlerts(db, "testnet");
@@ -298,6 +300,99 @@ describe("getUndeliveredAlerts", () => {
             const channelTypes = result.map((r) => r.channelType).sort();
             expect(channelTypes).toEqual(["slack", "webhook"]);
         });
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("countUndeliveredAlerts", () => {
+    let db: Database.Database;
+
+    beforeEach(() => {
+        db = getDatabaseForTesting();
+    });
+
+    it("returns 0 when there are no alerts", () => {
+        const count = countUndeliveredAlerts(db, "testnet");
+        expect(count).toBe(0);
+    });
+
+    it("returns 1 when there is one undelivered alert", () => {
+        seedFull(db, { contractId: "CA", network: "testnet" });
+        const count = countUndeliveredAlerts(db, "testnet");
+        expect(count).toBe(1);
+    });
+
+    it("returns the correct count for multiple undelivered alerts", () => {
+        seedFull(db, { contractId: "CA", network: "testnet", entryKeyXdr: "key-a" });
+        seedFull(db, { contractId: "CB", network: "testnet", entryKeyXdr: "key-b" });
+        seedFull(db, { contractId: "CC", network: "testnet", entryKeyXdr: "key-c" });
+        
+        const count = countUndeliveredAlerts(db, "testnet");
+        expect(count).toBe(3);
+    });
+
+    it("excludes delivered alerts from the count", () => {
+        const { alertFiredId: id1 } = seedFull(db, {
+            contractId: "CA",
+            network: "testnet",
+            entryKeyXdr: "key-a",
+        });
+        seedFull(db, {
+            contractId: "CB",
+            network: "testnet",
+            entryKeyXdr: "key-b",
+        });
+
+        markAlertDelivered(db, id1);
+
+        const count = countUndeliveredAlerts(db, "testnet");
+        expect(count).toBe(1);
+    });
+
+    it("only counts alerts for the specified network", () => {
+        seedFull(db, { contractId: "TESTNET_A", network: "testnet" });
+        seedFull(db, { contractId: "TESTNET_B", network: "testnet" });
+        seedFull(db, { contractId: "MAINNET_A", network: "mainnet" });
+
+        const testnetCount = countUndeliveredAlerts(db, "testnet");
+        const mainnetCount = countUndeliveredAlerts(db, "mainnet");
+
+        expect(testnetCount).toBe(2);
+        expect(mainnetCount).toBe(1);
+    });
+
+    it("excludes alerts that have exceeded MAX_RETRY_COUNT", () => {
+        const { alertFiredId } = seedFull(db, { contractId: "CA", network: "testnet" });
+
+        // Increment retry count to MAX_RETRY_COUNT (5)
+        for (let i = 0; i < 5; i++) {
+            incrementRetryCount(db, alertFiredId);
+        }
+
+        const count = countUndeliveredAlerts(db, "testnet");
+        expect(count).toBe(0);
+    });
+
+    it("includes alerts with retry_count less than MAX_RETRY_COUNT", () => {
+        const { alertFiredId } = seedFull(db, { contractId: "CA", network: "testnet" });
+
+        // Increment retry count to 4 (less than MAX_RETRY_COUNT of 5)
+        for (let i = 0; i < 4; i++) {
+            incrementRetryCount(db, alertFiredId);
+        }
+
+        const count = countUndeliveredAlerts(db, "testnet");
+        expect(count).toBe(1);
+    });
+
+    it("includes resolved but undelivered alerts", () => {
+        const { entryId, alertConfigId } = seedFull(db, { contractId: "CA", network: "testnet" });
+        resolveAlerts(db, entryId, alertConfigId);
+
+        // resolved = 1, but delivered = 0 — still needs to be counted
+        const count = countUndeliveredAlerts(db, "testnet");
+        expect(count).toBe(1);
     });
 });
 

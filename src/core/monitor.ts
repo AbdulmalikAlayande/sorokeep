@@ -66,6 +66,7 @@ export async function runMonitorCycle(
     db: Database.Database,
     network: string,
     rpcUrl?: string,
+    feeSponsorSecret?: string,
 ): Promise<MonitorCycleResult> {
     const cycleStartedAt = new Date();
 
@@ -106,7 +107,7 @@ export async function runMonitorCycle(
     // Auto-extension phase: check extension_policies and submit transactions for
     // entries whose TTL fell below the configured threshold.
     try {
-        const ext = await runAutoExtensions(db, network, rpcUrl);
+        const ext = await runAutoExtensions(db, network, rpcUrl, feeSponsorSecret);
         result.extensionsTriggered = ext.entriesExtended;
         result.extensionErrors = ext.errors;
         if (ext.entriesExtended > 0) {
@@ -231,7 +232,7 @@ async function processContract(
             } else {
                 // 5. TTL is at or above threshold — resolve any open alert.
                 if (hasUnresolvedAlert(db, alertConfig.id, entry.id)) {
-                    const resolvedConfigIds = resolveAlerts(db, entry.id);
+                    const resolvedConfigIds = resolveAlerts(db, entry.id, alertConfig.id);
                     result.alertsResolved++;
 
                     logger.info(

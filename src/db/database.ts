@@ -50,6 +50,7 @@ export function getDatabase(customPath?: string): Database.Database {
         `ALTER TABLE alerts_fired ADD COLUMN delivered_at TEXT`,
         `ALTER TABLE alerts_fired ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
         `ALTER TABLE alert_configs ADD COLUMN webhook_secret TEXT`,
+        `ALTER TABLE contracts ADD COLUMN poll_interval_seconds INTEGER`,
         `CREATE TABLE IF NOT EXISTS channel_accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             public_key TEXT NOT NULL UNIQUE,
