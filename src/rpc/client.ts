@@ -529,7 +529,12 @@ export class StellarRpcClient {
 
         const sim = await this.server.simulateTransaction(tx);
 
-        assertSimulationSuccess(sim);
+        if (rpc.Api.isSimulationError(sim)) {
+            return {
+                success: false,
+                error: sim.error ?? "Simulation failed",
+            };
+        }
 
         const successSim = sim;
         return {
