@@ -7,10 +7,10 @@ import {
     insertAlertConfig,
     getAlertConfigsForContract,
     hasUnresolvedAlert,
+    upsertExtensionPolicy,
 } from "../../src/db/repositories.js";
 import {getDatabaseForTesting} from "../../src/db/database";
 import {MonitorCycleResult, runMonitorCycle} from "../../src/core/monitor";
-
 
 const mockGetEntryTTLs = vi.fn();
 const mockGetCurrentLedger = vi.fn();
@@ -25,6 +25,12 @@ vi.mock("../../src/rpc/client.js", () => {
         StellarRpcClient: MockStellarRpcClient,
     };
 });
+
+const mockRunAutoExtensions = vi.fn();
+
+vi.mock("../../src/core/extension.js", () => ({
+    runAutoExtensions: (...args: unknown[]) => mockRunAutoExtensions(...args),
+}));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -70,6 +76,13 @@ describe("runMonitorCycle", () => {
         db = getDatabaseForTesting();
         vi.clearAllMocks();
         mockGetCurrentLedger.mockResolvedValue(LEDGER);
+        mockRunAutoExtensions.mockResolvedValue({
+            contractsChecked: 0,
+            contractsExtended: 0,
+            entriesExtended: 0,
+            errors: [],
+            extensions: [],
+        });
     });
 
     // =========================================================================
@@ -83,10 +96,13 @@ describe("runMonitorCycle", () => {
             expect(result).toHaveProperty("entriesUpdated");
             expect(result).toHaveProperty("thresholdsCrossed");
             expect(result).toHaveProperty("alertsResolved");
+            expect(result).toHaveProperty("extensionsTriggered");
+            expect(result).toHaveProperty("extensionErrors");
             expect(result).toHaveProperty("errors");
             expect(result).toHaveProperty("cycleStartedAt");
             expect(result).toHaveProperty("cycleFinishedAt");
             expect(Array.isArray(result.errors)).toBe(true);
+            expect(Array.isArray(result.extensionErrors)).toBe(true);
             expect(result.cycleStartedAt).toBeInstanceOf(Date);
             expect(result.cycleFinishedAt).toBeInstanceOf(Date);
         });
@@ -462,7 +478,8 @@ describe("runMonitorCycle", () => {
             await runMonitorCycle(db, "testnet");
 
             const entries = getEntriesForContract(db, "CONTRACT_REFIRE");
-            resolveAlerts(db, entries[0]!.id);
+            const configs = getAlertConfigsForContract(db, "CONTRACT_REFIRE");
+            resolveAlerts(db, entries[0]!.id, configs[0]!.id);
 
             const result2 = await runMonitorCycle(db, "testnet");
             expect(result2.thresholdsCrossed).toBe(1);
@@ -499,6 +516,35 @@ describe("runMonitorCycle", () => {
 
             expect(result.alertsResolved).toBeGreaterThan(0);
             expect(hasUnresolvedAlert(db, configs[0]!.id, entries[0]!.id)).toBe(false);
+        });
+
+        it("resolves only the threshold that recovered while leaving other unresolved alerts intact", async () => {
+            seedContract(db, "CONTRACT_TIERED_RESOLUTION", "testnet", [
+                { keyXdr: "tier-resolution-key", type: "instance", liveUntil: LEDGER + 3000 },
+            ]);
+            addWebhookAlert(db, "CONTRACT_TIERED_RESOLUTION", 20000, "https://warning.example.com");
+            addWebhookAlert(db, "CONTRACT_TIERED_RESOLUTION", 5000,  "https://critical.example.com");
+
+            mockGetEntryTTLs.mockResolvedValueOnce({
+                latestLedger: LEDGER,
+                entries: [{ entryKeyXdr: "tier-resolution-key", liveUntilLedgerSeq: LEDGER + 3000, lastModifiedLedgerSeq: LEDGER, remainingTTL: 3000 }],
+            });
+            await runMonitorCycle(db, "testnet");
+
+            mockGetEntryTTLs.mockResolvedValueOnce({
+                latestLedger: LEDGER + 1,
+                entries: [{ entryKeyXdr: "tier-resolution-key", liveUntilLedgerSeq: LEDGER + 6000, lastModifiedLedgerSeq: LEDGER + 1, remainingTTL: 6000 }],
+            });
+            const result = await runMonitorCycle(db, "testnet");
+
+            const configs = getAlertConfigsForContract(db, "CONTRACT_TIERED_RESOLUTION");
+            const entries = getEntriesForContract(db, "CONTRACT_TIERED_RESOLUTION");
+            const warningConfig = configs.find(c => c.threshold_ledgers === 20000)!;
+            const criticalConfig = configs.find(c => c.threshold_ledgers === 5000)!;
+
+            expect(result.alertsResolved).toBe(1);
+            expect(hasUnresolvedAlert(db, warningConfig.id, entries[0]!.id)).toBe(true);
+            expect(hasUnresolvedAlert(db, criticalConfig.id, entries[0]!.id)).toBe(false);
         });
 
         it("does not resolve alerts when TTL recovers but is still below threshold", async () => {
@@ -857,6 +903,120 @@ describe("runMonitorCycle", () => {
             const entries = getEntriesForContract(db, "CONTRACT_PARTIAL");
             expect(entries.find(e => e.entry_key_xdr === "p-instance")!.live_until_ledger).toBe(LEDGER + 45000);
             expect(entries.find(e => e.entry_key_xdr === "p-wasm")!.live_until_ledger).toBe(LEDGER + 80000); // unchanged
+        });
+    });
+
+    // =========================================================================
+    // 12. AUTO-EXTENSION INTEGRATION
+    // =========================================================================
+    describe("Auto-extension integration", () => {
+        it("calls runAutoExtensions with the correct network", async () => {
+            await runMonitorCycle(db, "testnet");
+
+            expect(mockRunAutoExtensions).toHaveBeenCalledTimes(1);
+            expect(mockRunAutoExtensions).toHaveBeenCalledWith(db, "testnet", undefined, undefined);
+        });
+
+        it("passes the rpcUrl through to runAutoExtensions", async () => {
+            const rpcUrl = "https://rpc.example.com";
+            await runMonitorCycle(db, "testnet", rpcUrl);
+
+            expect(mockRunAutoExtensions).toHaveBeenCalledWith(db, "testnet", rpcUrl, undefined);
+        });
+
+        it("calls runAutoExtensions even when there are no contracts", async () => {
+            // Empty DB — no contracts registered
+            await runMonitorCycle(db, "testnet");
+
+            expect(mockRunAutoExtensions).toHaveBeenCalledTimes(1);
+        });
+
+        it("reflects extensionsTriggered from the extension result", async () => {
+            mockRunAutoExtensions.mockResolvedValue({
+                contractsChecked: 1,
+                contractsExtended: 1,
+                entriesExtended: 3,
+                errors: [],
+                extensions: [],
+            });
+
+            const result = await runMonitorCycle(db, "testnet");
+
+            expect(result.extensionsTriggered).toBe(3);
+        });
+
+        it("reflects extensionErrors from the extension result", async () => {
+            mockRunAutoExtensions.mockResolvedValue({
+                contractsChecked: 1,
+                contractsExtended: 0,
+                entriesExtended: 0,
+                errors: ["insufficient funds", "bad sequence number"],
+                extensions: [],
+            });
+
+            const result = await runMonitorCycle(db, "testnet");
+
+            expect(result.extensionErrors).toEqual(["insufficient funds", "bad sequence number"]);
+        });
+
+        it("extensionsTriggered is 0 and extensionErrors is empty when extension returns no results", async () => {
+            const result = await runMonitorCycle(db, "testnet");
+
+            expect(result.extensionsTriggered).toBe(0);
+            expect(result.extensionErrors).toHaveLength(0);
+        });
+
+        it("does not throw if runAutoExtensions throws — cycle still completes", async () => {
+            mockRunAutoExtensions.mockRejectedValue(new Error("unexpected crash in extension"));
+            await expect(runMonitorCycle(db, "testnet")).resolves.not.toThrow();
+        });
+
+        it("collects thrown extension error into extensionErrors", async () => {
+            mockRunAutoExtensions.mockRejectedValue(new Error("unexpected crash in extension"));
+
+            const result = await runMonitorCycle(db, "testnet");
+
+            expect(result.extensionErrors).toHaveLength(1);
+            expect(result.extensionErrors[0]).toContain("unexpected crash in extension");
+        });
+
+        it("still processes contracts normally even if extension phase throws", async () => {
+            seedContract(db, "CONTRACT_EXT", "testnet", [
+                { keyXdr: "ext-key", type: "instance", liveUntil: LEDGER + 100000 },
+            ]);
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: LEDGER,
+                entries: [
+                    { entryKeyXdr: "ext-key", liveUntilLedgerSeq: LEDGER + 95000, lastModifiedLedgerSeq: LEDGER, remainingTTL: 95000 },
+                ],
+            });
+            mockRunAutoExtensions.mockRejectedValue(new Error("extension crash"));
+
+            const result = await runMonitorCycle(db, "testnet");
+
+            expect(result.contractsChecked).toBe(1);
+            expect(result.entriesUpdated).toBe(1);
+        });
+
+        it("runs runAutoExtensions after processing all contracts", async () => {
+            const callOrder: string[] = [];
+
+            mockGetEntryTTLs.mockImplementation(async () => {
+                callOrder.push("rpc");
+                return { latestLedger: LEDGER, entries: [] };
+            });
+            mockRunAutoExtensions.mockImplementation(async () => {
+                callOrder.push("extension");
+                return { contractsChecked: 0, contractsExtended: 0, entriesExtended: 0, errors: [], extensions: [] };
+            });
+
+            seedContract(db, "CA", "testnet", [
+                { keyXdr: "ca-key", type: "instance", liveUntil: LEDGER + 10000 },
+            ]);
+
+            await runMonitorCycle(db, "testnet");
+
+            expect(callOrder).toEqual(["rpc", "extension"]);
         });
     });
 });
