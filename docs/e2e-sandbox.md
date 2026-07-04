@@ -6,7 +6,7 @@ This guide explains how to set up a local end-to-end testing environment for Sor
 
 - Node.js 22+
 - Docker (for running a local Stellar network)
-- A funded Stellar keypair for signing transactions
+  
 
 ## Option 1: Local Stellar Network (Recommended)
 

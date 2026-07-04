@@ -200,7 +200,7 @@ async function processContract(
             } else {
                 // 5. TTL is at or above threshold — resolve any open alert.
                 if (hasUnresolvedAlert(db, alertConfig.id, entry.id)) {
-                    const resolvedConfigIds = resolveAlerts(db, entry.id);
+                    const resolvedConfigIds = resolveAlerts(db, entry.id, alertConfig.id);
                     result.alertsResolved++;
 
                     logger.info(
