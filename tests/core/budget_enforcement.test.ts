@@ -41,16 +41,9 @@ vi.mock('../../src/rpc/client', () => {
 });
 
 // We need to mock resolveSecretKey indirectly if we want it to work without environment variables, but since it's an internal function in extension.ts we can just provide a raw secret key.
-vi.mock("@stellar/stellar-sdk", () => {
-    return {
-        Keypair: {
-            fromSecret: vi.fn().mockReturnValue({
-                publicKey: vi.fn().mockReturnValue("GBDUMMYPUBLICKEYFORTESTING1234567890")
-            })
-        }
-    };
-});
-const DUMMY_SECRET = ["S", "DUMMY", "SECRET", "FOR", "TESTING", "PURPOSES", "ONLY", "NOT", "A", "REAL", "SECRET", "1234567"].join("_");
+import { Keypair } from '@stellar/stellar-sdk';
+const DUMMY_SECRET = Keypair.random().secret();
+
 describe('Budget Enforcement', () => {
     let db: Database.Database;
 

@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     network TEXT NOT NULL DEFAULT 'testnet',
     wasm_hash TEXT,
     tags TEXT,
+    poll_interval_seconds INTEGER,
     registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_checked_ledger INTEGER,
     last_introspected_at DATETIME
@@ -38,7 +39,7 @@ CREATE TABLE IF NOT EXISTS extension_policies (
 CREATE TABLE IF NOT EXISTS alert_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty')),
+    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty', 'discord', 'telegram')),
     channel_target TEXT NOT NULL,
     threshold_ledgers INTEGER NOT NULL,
     webhook_secret TEXT,
@@ -187,3 +188,12 @@ CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_contract_id
     ON resource_usage_logs(contract_id);
 CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_recorded_at
     ON resource_usage_logs(recorded_at DESC);
+
+CREATE TABLE IF NOT EXISTS budget_tracking (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    limit_xlm REAL NOT NULL,
+    spent_xlm REAL NOT NULL DEFAULT 0.0,
+    billing_cycle TEXT NOT NULL,
+    UNIQUE(contract_id, billing_cycle)
+);
