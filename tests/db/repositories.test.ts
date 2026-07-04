@@ -195,7 +195,7 @@ describe("Database Repositories", () => {
 
             expect(repo.hasUnresolvedAlert(db, configId, entryId)).toBe(true);
 
-            repo.resolveAlerts(db, entryId);
+            repo.resolveAlerts(db, entryId, configId);
             expect(repo.hasUnresolvedAlert(db, configId, entryId)).toBe(false);
             
             const history = repo.getAlertHistory(db, "C1");

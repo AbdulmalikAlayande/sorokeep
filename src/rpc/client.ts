@@ -8,6 +8,7 @@ import {
     Operation,
     Keypair,
     SorobanDataBuilder,
+    FeeBumpTransaction,
     Asset,
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
@@ -81,6 +82,76 @@ export interface SimulateExtensionResult {
     error?: string;
 }
 
+/**
+ * Structured resource usage estimate extracted from a simulateTransaction response.
+ * Used for budget safety checks before executing auto-extensions (issue #133).
+ */
+export interface ResourceEstimate {
+    /** CPU instructions estimated for the transaction. */
+    cpuInstructions: number;
+    /** Memory bytes estimated for the transaction. */
+    memoryBytes: number;
+    /** Minimum resource fee in stroops estimated by the RPC node. */
+    minResourceFee: number;
+}
+
+/**
+ * Parse a simulateTransaction RPC response into a structured ResourceEstimate.
+ *
+ * Extracts `cpuInstructions` from `response.cost.cpuInsns`,
+ * `memoryBytes` from `response.cost.memBytes`, and
+ * `minResourceFee` from `response.minResourceFee`.
+ *
+ * Returns `null` when:
+ *   - The input is null, undefined, or not a plain object.
+ *   - The response contains an `error` field (simulation failed).
+ *   - Neither `cost` nor `minResourceFee` fields are present.
+ *
+ * Missing numeric fields default to `0` rather than `NaN`.
+ *
+ * @param response - The raw simulation response object (or null/undefined).
+ * @returns A ResourceEstimate on success, or null on failure.
+ */
+export function parseResourceEstimate(response: unknown): ResourceEstimate | null {
+    if (response === null || response === undefined) return null;
+    if (typeof response !== "object" || Array.isArray(response)) return null;
+
+    const sim = response as Record<string, unknown>;
+
+    // Simulation error responses have an `error` field — always return null.
+    if (typeof sim["error"] === "string" && sim["error"].length > 0) return null;
+
+    // Need at least one useful field to return a meaningful estimate.
+    const hasCost = sim["cost"] !== undefined && sim["cost"] !== null;
+    const hasFee = sim["minResourceFee"] !== undefined && sim["minResourceFee"] !== null;
+    if (!hasCost && !hasFee) return null;
+
+    // Parse minResourceFee (may be a string or number in the Soroban RPC response)
+    const rawFee = sim["minResourceFee"];
+    const minResourceFee = rawFee !== undefined && rawFee !== null
+        ? safeParseNumber(rawFee)
+        : 0;
+
+    // Parse cost fields
+    let cpuInstructions = 0;
+    let memoryBytes = 0;
+
+    if (hasCost && typeof sim["cost"] === "object" && !Array.isArray(sim["cost"])) {
+        const cost = sim["cost"] as Record<string, unknown>;
+        cpuInstructions = safeParseNumber(cost["cpuInsns"]);
+        memoryBytes = safeParseNumber(cost["memBytes"]);
+    }
+
+    return { cpuInstructions, memoryBytes, minResourceFee };
+}
+
+/** Parse a value to a non-negative finite integer, defaulting to 0. */
+function safeParseNumber(value: unknown): number {
+    if (value === undefined || value === null) return 0;
+    const n = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+}
+
 export interface FeeStatsResult {
     latestLedger?: number;
     baseFeeStroops: number;
@@ -103,6 +174,8 @@ export interface SubmitTransactionResult {
     error?: string;
     cpuInstructions?: number;
     memoryBytes?: number;
+    /** Actual fee charged in stroops, parsed from the transaction result. */
+    feeCharged?: number;
 }
 
 export function extractResourceCosts(resultMetaXdrBase64: string): { cpuInstructions: number, memoryBytes: number } | null {
@@ -460,6 +533,7 @@ export class StellarRpcClient {
     /**
      * Build, sign, and submit an ExtendFootprintTTLOp transaction.
      * Uses simulation to prepare the transaction with correct resource parameters.
+     * Recovers once from txBadSeq errors by refreshing the account sequence.
      */
     async submitExtension(
         entryKeyXdrs: string[],
@@ -469,106 +543,19 @@ export class StellarRpcClient {
         const passphrase = await this.getNetworkPassphrase();
         const keypair = Keypair.fromSecret(secretKey);
         const publicKey = keypair.publicKey();
-
-        // Fetch account sequence number
-        const accountResponse = await this.server.getAccount(publicKey);
-        const account = new Account(publicKey, accountResponse.sequenceNumber());
-
         const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
 
-        const tx = new TransactionBuilder(account, {
-            fee: "100",
-            networkPassphrase: passphrase,
-        })
-            .addOperation(
-                Operation.extendFootprintTtl({
-                    extendTo: extendToLedgers,
-                }),
-            )
-            .setTimeout(30)
-            .setSorobanData(
-                new SorobanDataBuilder()
-                    .setReadOnly(keys)
-                    .build(),
-            )
-            .build();
+        const buildTx = async () => {
+            const accountResponse = await this.server.getAccount(publicKey);
+            const account = new Account(publicKey, accountResponse.sequenceNumber());
+            return new TransactionBuilder(account, { fee: "100", networkPassphrase: passphrase })
+                .addOperation(Operation.extendFootprintTtl({ extendTo: extendToLedgers }))
+                .setTimeout(30)
+                .setSorobanData(new SorobanDataBuilder().setReadOnly(keys).build())
+                .build();
+        };
 
-        // Simulate to prepare the transaction
-        const sim = await this.server.simulateTransaction(tx);
-
-        if (rpc.Api.isSimulationError(sim)) {
-            return {
-                success: false,
-                txHash: "",
-                ledger: 0,
-                error: sim.error ?? "Simulation failed",
-                cpuInsns: 0,
-                memBytes: 0,
-            };
-        }
-
-        // Assemble the transaction with simulation results
-        const prepared = rpc.assembleTransaction(tx, sim).build();
-        prepared.sign(keypair);
-
-        // Submit and poll for result
-        const sendResult = await this.server.sendTransaction(prepared);
-
-        if (sendResult.status === "ERROR") {
-            const diagnostics = (sendResult as any).errorResult
-                ?? (sendResult as any).diagnosticEventsXdr
-                ?? "";
-            return {
-                success: false,
-                txHash: sendResult.hash,
-                ledger: 0,
-                cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0),
-                memBytes: Number((sim as any).cost?.memBytes ?? 0),
-                error: `Transaction send error: ${diagnostics || sendResult.status}`,
-            };
-        }
-
-        // Poll for completion
-        const txResult = await this.pollTransaction(sendResult.hash);
-        return txResult;
-    } 
-
-    // Helper to add resource usage to a successful transaction result
-    private addResourcesToSuccess(result: SubmitTransactionResult, sim: rpc.Api.SimulateTransactionSuccessResponse): SubmitTransactionResult {
-        return { ...result, cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0), memBytes: Number((sim as any).cost?.memBytes ?? 0) };
-    } 
-
-    /**
-     * Build, sign, and submit a RestoreFootprintOp transaction to restore archived entries.
-     */
-    async submitRestore(
-        entryKeyXdrs: string[],
-        secretKey: string,
-    ): Promise<SubmitTransactionResult> {
-        const passphrase = await this.getNetworkPassphrase();
-        const keypair = Keypair.fromSecret(secretKey);
-        const publicKey = keypair.publicKey();
-
-        const accountResponse = await this.server.getAccount(publicKey);
-        const account = new Account(publicKey, accountResponse.sequenceNumber());
-
-        const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
-
-        const tx = new TransactionBuilder(account, {
-            fee: "100",
-            networkPassphrase: passphrase,
-        })
-            .addOperation(
-                Operation.restoreFootprint({}),
-            )
-            .setTimeout(30)
-            .setSorobanData(
-                new SorobanDataBuilder()
-                    .setReadWrite(keys)
-                    .build(),
-            )
-            .build();
-
+        const tx = await buildTx();
         const sim = await this.server.simulateTransaction(tx);
 
         if (rpc.Api.isSimulationError(sim)) {
@@ -584,13 +571,27 @@ export class StellarRpcClient {
 
         const prepared = rpc.assembleTransaction(tx, sim).build();
         prepared.sign(keypair);
-
         const sendResult = await this.server.sendTransaction(prepared);
 
         if (sendResult.status === "ERROR") {
-            const diagnostics = (sendResult as any).errorResult
-                ?? (sendResult as any).diagnosticEventsXdr
-                ?? "";
+            if (this.isBadSeqError(sendResult)) {
+                logger.warn("Sequence mismatch detected on ExtendFootprintTTL — refreshing account sequence and retrying");
+                const retryTx = await buildTx();
+                const retrySim = await this.server.simulateTransaction(retryTx);
+                if (rpc.Api.isSimulationError(retrySim)) {
+                    return { success: false, txHash: "", ledger: 0, cpuInsns: 0, memBytes: 0, error: retrySim.error ?? "Simulation failed on retry" };
+                }
+                const retryPrepared = rpc.assembleTransaction(retryTx, retrySim).build();
+                retryPrepared.sign(keypair);
+                const retrySendResult = await this.server.sendTransaction(retryPrepared);
+                if (retrySendResult.status === "ERROR") {
+                    const diagnostics = (retrySendResult as any).errorResult ?? (retrySendResult as any).diagnosticEventsXdr ?? "";
+                    return { success: false, txHash: retrySendResult.hash, ledger: 0, cpuInsns: Number((retrySim as any).cost?.cpuInsns ?? 0), memBytes: Number((retrySim as any).cost?.memBytes ?? 0), error: `Transaction send error: ${diagnostics || retrySendResult.status}` };
+                }
+                const txResult = await this.pollTransaction(retrySendResult.hash);
+                return txResult.success ? this.addResourcesToSuccess(txResult, retrySim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
+            }
+            const diagnostics = (sendResult as any).errorResult ?? (sendResult as any).diagnosticEventsXdr ?? "";
             return {
                 success: false,
                 txHash: sendResult.hash,
@@ -603,7 +604,166 @@ export class StellarRpcClient {
 
         const txResult = await this.pollTransaction(sendResult.hash);
         return txResult.success ? this.addResourcesToSuccess(txResult, sim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
-    } 
+    }
+
+    // Helper to add resource usage to a successful transaction result
+    private addResourcesToSuccess(result: SubmitTransactionResult, sim: rpc.Api.SimulateTransactionSuccessResponse): SubmitTransactionResult {
+        return { ...result, cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0), memBytes: Number((sim as any).cost?.memBytes ?? 0) };
+    }
+
+    /**
+     * Build an ExtendFootprintTTLOp transaction, wrap it in a FeeBumpTransaction
+     * signed by the sponsor keypair, and submit. The sponsor account pays all fees
+     * while the inner transaction's source account provides the sequence number.
+     */
+    async submitExtensionWithFeeBump(
+        entryKeyXdrs: string[],
+        extendToLedgers: number,
+        secretKey: string,
+        sponsorSecretKey: string,
+    ): Promise<SubmitTransactionResult> {
+        const passphrase = await this.getNetworkPassphrase();
+        const keypair = Keypair.fromSecret(secretKey);
+        const sponsorKeypair = Keypair.fromSecret(sponsorSecretKey);
+        const publicKey = keypair.publicKey();
+        const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
+
+        const buildTx = async () => {
+            const accountResponse = await this.server.getAccount(publicKey);
+            const account = new Account(publicKey, accountResponse.sequenceNumber());
+            return new TransactionBuilder(account, { fee: "100", networkPassphrase: passphrase })
+                .addOperation(Operation.extendFootprintTtl({ extendTo: extendToLedgers }))
+                .setTimeout(30)
+                .setSorobanData(new SorobanDataBuilder().setReadOnly(keys).build())
+                .build();
+        };
+
+        const tx = await buildTx();
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            return { success: false, txHash: "", ledger: 0, cpuInsns: 0, memBytes: 0, error: sim.error ?? "Simulation failed" };
+        }
+
+        const buildAndSignFeeBump = (innerTx: any, simResult: any) => {
+            const prepared = rpc.assembleTransaction(innerTx, simResult).build();
+            prepared.sign(keypair);
+            const feeBump = TransactionBuilder.buildFeeBumpTransaction(
+                sponsorKeypair,
+                (parseInt(prepared.fee, 10) + 10000).toString(),
+                prepared,
+                passphrase
+            );
+            feeBump.sign(sponsorKeypair);
+            return feeBump;
+        };
+
+        const feeBump = buildAndSignFeeBump(tx, sim);
+        const sendResult = await this.server.sendTransaction(feeBump);
+
+        if (sendResult.status === "ERROR") {
+            if (this.isBadSeqError(sendResult)) {
+                logger.warn("Sequence mismatch detected on feeBump ExtendFootprintTTL — refreshing account sequence and retrying");
+                const retryTx = await buildTx();
+                const retrySim = await this.server.simulateTransaction(retryTx);
+                if (rpc.Api.isSimulationError(retrySim)) {
+                    return { success: false, txHash: "", ledger: 0, cpuInsns: 0, memBytes: 0, error: retrySim.error ?? "Simulation failed on retry" };
+                }
+                const retryFeeBump = buildAndSignFeeBump(retryTx, retrySim);
+                const retrySendResult = await this.server.sendTransaction(retryFeeBump);
+                if (retrySendResult.status === "ERROR") {
+                    const diagnostics = (retrySendResult as any).errorResult ?? (retrySendResult as any).diagnosticEventsXdr ?? "";
+                    return { success: false, txHash: retrySendResult.hash, ledger: 0, cpuInsns: Number((retrySim as any).cost?.cpuInsns ?? 0), memBytes: Number((retrySim as any).cost?.memBytes ?? 0), error: `Transaction send error: ${diagnostics || retrySendResult.status}` };
+                }
+                const txResult = await this.pollTransaction(retrySendResult.hash);
+                return txResult.success ? this.addResourcesToSuccess(txResult, retrySim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
+            }
+            const diagnostics = (sendResult as any).errorResult ?? (sendResult as any).diagnosticEventsXdr ?? "";
+            return {
+                success: false,
+                txHash: sendResult.hash,
+                ledger: 0,
+                cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0),
+                memBytes: Number((sim as any).cost?.memBytes ?? 0),
+                error: `Transaction send error: ${diagnostics || sendResult.status}`,
+            };
+        }
+
+        const txResult = await this.pollTransaction(sendResult.hash);
+        return txResult.success ? this.addResourcesToSuccess(txResult, sim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
+    }
+
+    /**
+     * Build, sign, and submit a RestoreFootprintOp transaction to restore archived entries.
+     * Recovers once from txBadSeq errors by refreshing the account sequence.
+     */
+    async submitRestore(
+        entryKeyXdrs: string[],
+        secretKey: string,
+    ): Promise<SubmitTransactionResult> {
+        const passphrase = await this.getNetworkPassphrase();
+        const keypair = Keypair.fromSecret(secretKey);
+        const publicKey = keypair.publicKey();
+        const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
+
+        const buildTx = async () => {
+            const accountResponse = await this.server.getAccount(publicKey);
+            const account = new Account(publicKey, accountResponse.sequenceNumber());
+            return new TransactionBuilder(account, { fee: "100", networkPassphrase: passphrase })
+                .addOperation(Operation.restoreFootprint({}))
+                .setTimeout(30)
+                .setSorobanData(new SorobanDataBuilder().setReadWrite(keys).build())
+                .build();
+        };
+
+        const tx = await buildTx();
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            return {
+                success: false,
+                txHash: "",
+                ledger: 0,
+                cpuInsns: 0,
+                memBytes: 0,
+                error: sim.error ?? "Simulation failed",
+            };
+        }
+
+        const prepared = rpc.assembleTransaction(tx, sim).build();
+        prepared.sign(keypair);
+        const sendResult = await this.server.sendTransaction(prepared);        if (sendResult.status === "ERROR") {
+            if (this.isBadSeqError(sendResult)) {
+                logger.warn("Sequence mismatch detected on RestoreFootprint — refreshing account sequence and retrying");
+                const retryTx = await buildTx();
+                const retrySim = await this.server.simulateTransaction(retryTx);
+                if (rpc.Api.isSimulationError(retrySim)) {
+                    return { success: false, txHash: "", ledger: 0, cpuInsns: 0, memBytes: 0, error: retrySim.error ?? "Simulation failed on retry" };
+                }
+                const retryPrepared = rpc.assembleTransaction(retryTx, retrySim).build();
+                retryPrepared.sign(keypair);
+                const retrySendResult = await this.server.sendTransaction(retryPrepared);
+                if (retrySendResult.status === "ERROR") {
+                    const diagnostics = (retrySendResult as any).errorResult ?? (retrySendResult as any).diagnosticEventsXdr ?? "";
+                    return { success: false, txHash: retrySendResult.hash, ledger: 0, cpuInsns: Number((retrySim as any).cost?.cpuInsns ?? 0), memBytes: Number((retrySim as any).cost?.memBytes ?? 0), error: `Transaction send error: ${diagnostics || retrySendResult.status}` };
+                }
+                const txResult = await this.pollTransaction(retrySendResult.hash);
+                return txResult.success ? this.addResourcesToSuccess(txResult, retrySim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
+            }
+            const diagnostics = (sendResult as any).errorResult ?? (sendResult as any).diagnosticEventsXdr ?? "";
+            return {
+                success: false,
+                txHash: sendResult.hash,
+                ledger: 0,
+                cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0),
+                memBytes: Number((sim as any).cost?.memBytes ?? 0),
+                error: `Transaction send error: ${diagnostics || sendResult.status}`,
+            };
+        }
+
+        const txResult = await this.pollTransaction(sendResult.hash);
+        return txResult.success ? this.addResourcesToSuccess(txResult, sim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
+    }
 
     /**
      * Send XLM payments from a source keypair to multiple destination accounts.
@@ -659,6 +819,24 @@ export class StellarRpcClient {
 
     // ─── Private helpers ─────────────────────────────────────────────────────
 
+    /**
+     * Returns true if the sendTransaction ERROR response indicates a txBadSeq result code.
+     * The SDK parses errorResultXdr into `errorResult` as an xdr.TransactionResult.
+     */
+    private isBadSeqError(sendResult: any): boolean {
+        try {
+            const errorResult = sendResult.errorResult;
+            if (!errorResult) return false;
+            // errorResult may be a base64 string or a pre-parsed xdr.TransactionResult
+            const parsed = typeof errorResult === "string"
+                ? xdr.TransactionResult.fromXDR(errorResult, "base64")
+                : errorResult;
+            return parsed.result().switch().name === "txBadSeq";
+        } catch {
+            return false;
+        }
+    }
+
     private _cachedPassphrase: string | undefined;
 
     private async getNetworkPassphrase(): Promise<string> {
@@ -708,7 +886,7 @@ export class StellarRpcClient {
                     if (costs) {
                         cpuInstructions = costs.cpuInstructions;
                         memoryBytes = costs.memoryBytes;
-                        
+
                         logger.info(
                             "Extracted transaction resource costs successfully",
                             { txHash, cpuInstructions, memoryBytes }
@@ -716,12 +894,16 @@ export class StellarRpcClient {
                     }
                 }
 
+                const rawFee = (txResponse as any).feeCharged;
+                const feeCharged = rawFee !== undefined ? Number(rawFee) : undefined;
+
                 return {
                     success: true,
                     txHash,
                     ledger: (txResponse as any).ledger ?? txResponse.latestLedger,
                     cpuInstructions,
-                    memoryBytes
+                    memoryBytes,
+                    feeCharged,
                 };
             }
 
