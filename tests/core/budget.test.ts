@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { describe, it, expect, beforeEach } from "vitest";
 import Database from "better-sqlite3";
 import { setContractBudget, getContractBudget, getMonthlySpendProgress } from "../../src/core/budget";
