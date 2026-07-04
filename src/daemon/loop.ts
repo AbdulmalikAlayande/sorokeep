@@ -4,7 +4,7 @@ import { runIntrospectionRescan } from "../core/introspection.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
 import { runAutoExtensions } from "../core/extension.js";
 import { vacuumDatabase } from "../db/database.js";
-import { aggregateDailyCostSnapshots } from "../db/repositories.js";
+import { aggregateDailyCostSnapshots, getAllContracts } from "../db/repositories.js";
 import { getLogger } from "../logging/index.js";
 import type { Logger } from "../logging/types.js";
 
@@ -23,6 +23,8 @@ export interface DaemonOptions {
     intervalMs?: number;
     /** Optional RPC endpoint URL override. */
     rpcUrl?: string;
+    /** Optional sponsor secret key for auto-extensions */
+    feeSponsorSecret?: string;
     /** How frequently to run vacuum maintenance. Defaults to 24 hours. */
     vacuumIntervalMs?: number;
     /** Called after every cycle with the result (or null + error on failure). */
@@ -66,17 +68,18 @@ export async function startDaemon(
     vacuumIntervalMs = options?.vacuumIntervalMs ?? DEFAULT_VACUUM_INTERVAL_MS;
     const rpcUrl = options?.rpcUrl;
     const onCycle = options?.onCycle;
+    const effectiveIntervalMs = resolvePollIntervalMs(db, network, intervalMs);
 
     lastVacuumAt = Date.now();
     logger().info(`Daemon starting — network: ${network}, interval: ${intervalMs}ms`);
 
     // Run the initial cycle immediately.
-    await executeCycle(db, network, rpcUrl, onCycle);
+    await executeCycle(db, network, rpcUrl, options?.feeSponsorSecret, onCycle);
 
     // Schedule repeating cycles.
     intervalHandle = setInterval(() => {
-        void scheduledTick(db, network, rpcUrl, onCycle);
-    }, intervalMs);
+        void scheduledTick(db, network, rpcUrl, options?.feeSponsorSecret, onCycle);
+    }, effectiveIntervalMs);
 }
 
 /**
@@ -109,6 +112,7 @@ async function executeCycle(
     db: Database.Database,
     network: string,
     rpcUrl: string | undefined,
+    feeSponsorSecret: string | undefined,
     onCycle: DaemonOptions["onCycle"],
 ): Promise<void> {
     cycleInFlight = true;
@@ -156,7 +160,7 @@ async function executeCycle(
 
         // Step 4: run auto-extensions for contracts with enabled policies.
         try {
-            const extensions = await runAutoExtensions(db, network, rpcUrl);
+            const extensions = await runAutoExtensions(db, network, rpcUrl, feeSponsorSecret);
             if (extensions.contractsChecked > 0) {
                 logger().info(
                     `Auto-extensions — checked: ${extensions.contractsChecked}, ` +
@@ -195,6 +199,7 @@ async function scheduledTick(
     db: Database.Database,
     network: string,
     rpcUrl: string | undefined,
+    feeSponsorSecret: string | undefined,
     onCycle: DaemonOptions["onCycle"],
 ): Promise<void> {
     if (cycleInFlight) {
@@ -203,7 +208,7 @@ async function scheduledTick(
     }
 
     await runScheduledVacuum(db);
-    await executeCycle(db, network, rpcUrl, onCycle);
+    await executeCycle(db, network, rpcUrl, feeSponsorSecret, onCycle);
 }
 
 async function runScheduledVacuum(db: Database.Database): Promise<void> {
@@ -240,4 +245,17 @@ function safeOnCycle(
     } catch (cbErr) {
         logger().error("onCycle callback threw — ignoring", cbErr);
     }
+}
+
+function resolvePollIntervalMs(db: Database.Database, network: string, fallbackIntervalMs: number): number {
+    const contracts = getAllContracts(db).filter((contract) => contract.network === network);
+    const overrides = contracts
+        .map((contract) => contract.poll_interval_seconds)
+        .filter((value): value is number => typeof value === "number" && value > 0);
+
+    if (overrides.length === 0) {
+        return fallbackIntervalMs;
+    }
+
+    return Math.min(...overrides) * 1000;
 }

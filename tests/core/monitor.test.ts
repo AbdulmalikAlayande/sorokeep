@@ -462,7 +462,8 @@ describe("runMonitorCycle", () => {
             await runMonitorCycle(db, "testnet");
 
             const entries = getEntriesForContract(db, "CONTRACT_REFIRE");
-            resolveAlerts(db, entries[0]!.id);
+            const configs = getAlertConfigsForContract(db, "CONTRACT_REFIRE");
+            resolveAlerts(db, entries[0]!.id, configs[0]!.id);
 
             const result2 = await runMonitorCycle(db, "testnet");
             expect(result2.thresholdsCrossed).toBe(1);
@@ -499,6 +500,35 @@ describe("runMonitorCycle", () => {
 
             expect(result.alertsResolved).toBeGreaterThan(0);
             expect(hasUnresolvedAlert(db, configs[0]!.id, entries[0]!.id)).toBe(false);
+        });
+
+        it("resolves only the threshold that recovered while leaving other unresolved alerts intact", async () => {
+            seedContract(db, "CONTRACT_TIERED_RESOLUTION", "testnet", [
+                { keyXdr: "tier-resolution-key", type: "instance", liveUntil: LEDGER + 3000 },
+            ]);
+            addWebhookAlert(db, "CONTRACT_TIERED_RESOLUTION", 20000, "https://warning.example.com");
+            addWebhookAlert(db, "CONTRACT_TIERED_RESOLUTION", 5000,  "https://critical.example.com");
+
+            mockGetEntryTTLs.mockResolvedValueOnce({
+                latestLedger: LEDGER,
+                entries: [{ entryKeyXdr: "tier-resolution-key", liveUntilLedgerSeq: LEDGER + 3000, lastModifiedLedgerSeq: LEDGER, remainingTTL: 3000 }],
+            });
+            await runMonitorCycle(db, "testnet");
+
+            mockGetEntryTTLs.mockResolvedValueOnce({
+                latestLedger: LEDGER + 1,
+                entries: [{ entryKeyXdr: "tier-resolution-key", liveUntilLedgerSeq: LEDGER + 6000, lastModifiedLedgerSeq: LEDGER + 1, remainingTTL: 6000 }],
+            });
+            const result = await runMonitorCycle(db, "testnet");
+
+            const configs = getAlertConfigsForContract(db, "CONTRACT_TIERED_RESOLUTION");
+            const entries = getEntriesForContract(db, "CONTRACT_TIERED_RESOLUTION");
+            const warningConfig = configs.find(c => c.threshold_ledgers === 20000)!;
+            const criticalConfig = configs.find(c => c.threshold_ledgers === 5000)!;
+
+            expect(result.alertsResolved).toBe(1);
+            expect(hasUnresolvedAlert(db, warningConfig.id, entries[0]!.id)).toBe(true);
+            expect(hasUnresolvedAlert(db, criticalConfig.id, entries[0]!.id)).toBe(false);
         });
 
         it("does not resolve alerts when TTL recovers but is still below threshold", async () => {

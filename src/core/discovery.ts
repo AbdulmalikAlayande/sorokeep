@@ -119,62 +119,97 @@ export async function discoverStorageKeys(
             }
         }
 
-        if (allEvents.length === 0) {
-            logger.debug(`No events found for ${contractId} since ledger ${startLedger}`);
+        const txHashes = new Set<string>();
+        for (const event of allEvents) {
+            if (event.txHash) {
+                txHashes.add(event.txHash);
+            }
+        }
+
+        if (txHashes.size === 0) {
+            logger.debug(`No events/transactions found for ${contractId} since ledger ${startLedger}`);
             return result;
         }
 
-        result.transactionsScanned = allEvents.length;
+        result.transactionsScanned = txHashes.size;
 
-        // For each event, try to extract ledger keys from the event data.
-        // Contract storage events often encode the storage key in the topic.
-        for (const event of allEvents) {
+        const rawContract = Buffer.from(contractId, "hex").length === 32
+            ? Buffer.from(contractId, "hex")
+            : decodeContractId(contractId);
+
+        for (const txHash of txHashes) {
             try {
-                // Events have topic entries that may contain storage key references
-                if (event.topic && event.topic.length > 0) {
-                    for (const topicVal of event.topic) {
-                        // Try to interpret topic values as potential ledger keys
-                        // This is heuristic — not all topic values are storage keys
-                        try {
-                            const keyXdr = topicVal.toXDR("base64");
-                            if (!existingKeys.has(keyXdr) && keyXdr.length > 10) {
-                                // Construct a contract data ledger key from this
-                                const contractDataKey = buildContractDataKey(contractId, topicVal);
-                                if (contractDataKey) {
-                                    const contractDataKeyXdr = contractDataKey.toXDR("base64");
-                                    if (!existingKeys.has(contractDataKeyXdr)) {
-                                        // Verify the entry exists on-chain before adding
-                                        const entryResponse = await server.getLedgerEntries(contractDataKey);
-                                        if (entryResponse.entries && entryResponse.entries.length > 0) {
-                                            const entry = entryResponse.entries[0]!;
-                                            upsertEntry(db, {
-                                                contract_id: contractId,
-                                                entry_key_xdr: contractDataKeyXdr,
-                                                entry_type: "persistent",
-                                                label: `Discovered (event)`,
-                                                live_until_ledger: entry.liveUntilLedgerSeq ?? 0,
-                                                last_modified_ledger: entry.lastModifiedLedgerSeq ?? 0,
-                                                discovery_source: "footprint",
-                                            });
-                                            existingKeys.add(contractDataKeyXdr);
-                                            result.newKeysDiscovered++;
-                                        }
-                                    }
+                const txResponse = await server.getTransaction(txHash);
+                if (!txResponse.envelopeXdr) {
+                    continue; // Skip if no envelope
+                }
+
+                // Parse envelope
+                // For mock compatibility, handle if envelopeXdr is already an object or a base64 string
+                const env = typeof txResponse.envelopeXdr === 'string'
+                    ? xdr.TransactionEnvelope.fromXDR(txResponse.envelopeXdr as string, "base64")
+                    : txResponse.envelopeXdr as any;
+
+                let innerTx;
+                if (env.switch().name === 'envelopeTypeTx') {
+                    innerTx = env.v1().tx();
+                } else if (env.switch().name === 'envelopeTypeTxFeeBump') {
+                    innerTx = env.feeBump().tx().innerTx().v1().tx();
+                }
+
+                if (!innerTx) continue;
+
+                const ext = innerTx.ext();
+                if (ext.switch().value !== 1) continue;
+
+                const sorobanData = ext.v1().sorobanData();
+                const footprint = sorobanData.resources().footprint();
+
+                const keys = [...footprint.readOnly(), ...footprint.readWrite()];
+
+                for (const key of keys) {
+                    if (key.switch().name === 'contractData') {
+                        const contractData = key.contractData();
+                        const contractAddr = contractData.contract();
+                        
+                        // Check if key belongs to our contract
+                        if (contractAddr.switch().name === 'scAddressTypeContract') {
+                            const addrRaw = contractAddr.contractId();
+                            
+                            // Compare raw contract address
+                            if (Buffer.compare(Buffer.from(addrRaw), Buffer.from(rawContract)) === 0) {
+                                const keyXdr = key.toXDR("base64");
+                                
+                                if (!existingKeys.has(keyXdr)) {
+                                    existingKeys.add(keyXdr);
+                                    
+                                    // Identify type (persistent, temporary, instance)
+                                    let entryType = "persistent";
+                                    if (contractData.durability().name === "temporary") entryType = "temporary";
+                                    if (contractData.key().switch().name === "scvLedgerKeyContractInstance") entryType = "instance";
+                                    
+                                    upsertEntry(db, {
+                                        contract_id: contractId,
+                                        entry_key_xdr: keyXdr,
+                                        entry_type: entryType,
+                                        label: `Discovered (footprint)`,
+                                        live_until_ledger: 0, // We could fetch from getLedgerEntries if we want TTL, but we can do that in a sync pass
+                                        last_modified_ledger: 0,
+                                        discovery_source: "footprint",
+                                    });
+                                    result.newKeysDiscovered++;
                                 }
                             }
-                        } catch {
-                            // Not a valid key — skip
                         }
                     }
                 }
             } catch (err) {
-                // Individual event parsing failure — continue
-                logger.debug(`Failed to parse event for ${contractId}: ${err}`);
+                logger.debug(`Failed to parse transaction footprint for ${contractId} (tx: ${txHash}): ${err}`);
             }
         }
 
         logger.debug(
-            `Discovery for ${contractId}: scanned ${result.transactionsScanned} events, ` +
+            `Discovery for ${contractId}: scanned ${result.transactionsScanned} transactions, ` +
             `found ${result.newKeysDiscovered} new keys`,
         );
     } catch (err: unknown) {
