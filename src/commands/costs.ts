@@ -69,7 +69,6 @@ export function registerCostsCommand(program: Command): void {
         .option("--period <days>", "Show costs for the last N days", "30")
         .option("--all", "Show all extension history")
         .option("--json", "Output machine-readable JSON")
-        .action(async (contractId: string, options: { period?: string; all?: boolean; json?: boolean }) => {
         .option(
             "--monthly-budget <xlm>",
             "Monthly budget in XLM — highlight forecast windows that exceed this limit",
