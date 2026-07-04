@@ -92,8 +92,6 @@ export interface StateChange {
     created_at: string;
 }
 
-export { upsertBudget, getBudget, addBudgetSpent } from "./budget.js";
-
 // ---------------------------- Database Access Functions For Schema: Contract ----------------------------
 export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string;}): void {
     db.prepare(`

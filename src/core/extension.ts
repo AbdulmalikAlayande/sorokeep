@@ -10,8 +10,6 @@ import {
     upsertEntry,
     updateLastCheckedLedger,
     getAverageResourceUsage,
-    getBudget,
-    addBudgetSpent,
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
@@ -336,25 +334,6 @@ export async function runAutoExtensions(
             );
 
             try {
-                const billingCycle = new Date().toISOString().slice(0, 7);
-                const budget = getBudget(db, contract.id, billingCycle);
-                let estimatedFeeXlm = 0;
-
-                if (budget) {
-                    const { Keypair } = await import("@stellar/stellar-sdk");
-                    const pubKey = Keypair.fromSecret(secretKey).publicKey();
-                    const simResult = await simulateExtension(db, contract.id, entryKeys, policy.target_ttl_ledgers, pubKey, rpcUrl);
-                    
-                    if (!simResult.success) {
-                        throw new Error(`Simulation failed: ${simResult.error}`);
-                    }
-                    
-                    estimatedFeeXlm = (simResult.estimatedFee || 0) / 10000000;
-                    if (budget.spent_xlm + estimatedFeeXlm > budget.limit_xlm) {
-                        throw new Error(`budget limit exceeded. Estimated cost: ${estimatedFeeXlm} XLM, Remaining: ${budget.limit_xlm - budget.spent_xlm} XLM`);
-                    }
-                }
-
                 const extResult = await extendEntries(
                     db,
                     contract.id,
@@ -365,9 +344,6 @@ export async function runAutoExtensions(
                 );
 
                 if (extResult.success) {
-                    if (budget && estimatedFeeXlm > 0) {
-                        addBudgetSpent(db, contract.id, billingCycle, estimatedFeeXlm);
-                    }
                     result.contractsExtended++;
                     result.entriesExtended += extResult.entriesExtended;
                     result.extensions.push({

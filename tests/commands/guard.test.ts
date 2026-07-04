@@ -6,10 +6,10 @@ import * as extensionLib from "../../src/core/extension";
 import { getDatabaseForTesting } from "../../src/db/database";
 import { insertContract, getExtensionPolicy } from "../../src/db/repositories";
 
-// Array join bypasses GitGuardian's entropy scanners for simulated Stellar secret formats
-const VALID_TEST_SECRET = ["S", "DUMMY", "GUARD", "TEST", "SECRET", "FOR", "TESTING", "PURPOSES", "ONLY", "1234567890"].join("_");
-
+// A genuine Stellar secret key used across all tests (safe — only for testing)
+const VALID_TEST_SECRET = "SCG2IACKCYEUMINFHVGAOB3UFDVSVRACCZJH4K3R6WVC2OTRDQPK2GWG";
 const VALID_TEST_PUBKEY = "GA4YORXJVEPWAYDHC3AAFGUJRWCCO3GOP3T226ZFKWSLUCAYS7NKRLUU";
+
 // Shared DB reference — set in each beforeEach so both suites control it
 let sharedDb: ReturnType<typeof getDatabaseForTesting>;
 
