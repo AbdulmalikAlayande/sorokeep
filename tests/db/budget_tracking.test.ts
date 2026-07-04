@@ -26,7 +26,7 @@ describe('Budget Tracking DB', () => {
     });
 
     it('Migration or schema creation works without SQL syntax errors', () => {
-        const stmt = db.prepare('SELECT name FROM sqlite_master WHERE type="table" AND name="budget_tracking"');
+        const stmt = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='budget_tracking'");
         const row = stmt.get();
         expect(row).toBeDefined();
     });
