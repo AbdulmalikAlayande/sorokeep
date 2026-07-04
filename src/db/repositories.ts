@@ -1189,6 +1189,7 @@ export function addBudgetSpent(db: Database.Database, contractId: string, billin
         SET spent_xlm = spent_xlm + ?
         WHERE contract_id = ? AND billing_cycle = ?
     `).run(amountXlm, contractId, billingCycle);
+}
 // ─── Resource Usage Logs (issue #164) ────────────────────────────────────────
 
 /**
