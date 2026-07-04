@@ -36,12 +36,16 @@ Sorokeep is the unified operations layer that handles all of this.
 
 - **Watch** — Register contracts and automatically discover their instance, WASM, and storage entries
 - **Monitor** — Continuous TTL polling with configurable intervals via a long-running daemon
-- **Alert** — Webhook and Slack notifications with severity levels, HMAC signing, and retry logic
+- **Alert** — Extensive notifications (Webhook, Slack, Discord, Telegram, PagerDuty) for low TTLs, resource usage spikes, and state changes
 - **Auto-Extend** — Policy-based automatic TTL extension via `ExtendFootprintTTLOp` transactions
 - **Restore** — Recover archived entries via `RestoreFootprintOp` transactions
-- **Cost Tracking** — Per-contract extension history with XLM costs and 30-day projections
+- **Cost & Resource Tracking** — Track extension history, XLM costs, 30-day projections, resource usage logs, and set monthly contract budgets
+- **Inspect** — Inspect on-chain state, parse SAC token balances, and diff state changes easily
 - **Discovery** — Footprint-based storage key discovery from on-chain transaction activity
+- **Channels** — Manage funded channel accounts for concurrent transaction submissions
 - **Local-First** — All state stored in SQLite. No external services beyond a Stellar RPC endpoint.
+- **MCP Server** — Built-in Model Context Protocol server exposing tools for AI agents to interact with Sorokeep's data natively
+- **Advanced Security** — Integrates with AWS Secrets Manager & HashiCorp Vault for secure key resolution, plus robust RPC rate limiting.
 
 ## Install
 
@@ -306,6 +310,48 @@ sorokeep restore <contract-id> --keypair-env STELLAR_SECRET_KEY --entry <base64-
 # Restore all tracked entries
 sorokeep restore <contract-id> --keypair-env STELLAR_SECRET_KEY --all
 ```
+
+---
+
+### `sorokeep resources`
+
+View resource usage logs (CPU instructions, memory bytes, fee structures) for a contract to track execution efficiency over time.
+
+---
+
+### `sorokeep budget`
+
+Set and monitor a monthly XLM extension budget for a contract. Prevents runaway costs if a contract requires frequent extensions.
+
+---
+
+### `sorokeep channels`
+
+Manage funded channel accounts used to submit extension and restoration transactions concurrently, avoiding sequence number bottlenecks.
+
+---
+
+### `sorokeep inspect`
+
+Inspect on-chain state directly. Can parse Stellar Asset Contract (SAC) token balances, diff state changes, and decode XDR without manual intervention.
+
+---
+
+### `sorokeep check`
+
+Perform an ad-hoc, one-off execution of the monitoring cycle without starting the long-running daemon.
+
+---
+
+### `sorokeep db`
+
+Database management tasks, including migrations, backups, and introspection cache management.
+
+---
+
+### `sorokeep completion`
+
+Generate shell autocomplete scripts for bash/zsh to enable tab completion for all Sorokeep commands.
 
 ## Alerting
 
