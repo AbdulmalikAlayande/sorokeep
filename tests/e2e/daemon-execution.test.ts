@@ -458,7 +458,7 @@ describe("e2e: monitoring daemon execution cycles", () => {
             await startDaemon(db, "testnet", { intervalMs: 5000 });
 
             expect(mockRunAutoExtensions).toHaveBeenCalledTimes(1);
-            expect(mockRunAutoExtensions).toHaveBeenCalledWith(db, "testnet", undefined);
+            expect(mockRunAutoExtensions).toHaveBeenCalledWith(db, "testnet", undefined, undefined);
         });
 
         it("continues execution even if auto-extensions fails", async () => {
