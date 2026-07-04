@@ -1,12 +1,26 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { registerGuardCommand } from "../../src/commands/guard";
 import { Command } from "commander";
-import * as dbLib from "../../src/db/database";
 import * as repos from "../../src/db/repositories";
 import * as extensionLib from "../../src/core/extension";
+import { getDatabaseForTesting } from "../../src/db/database";
+import { insertContract, getExtensionPolicy } from "../../src/db/repositories";
 
-vi.mock("../../src/db/database");
-vi.mock("../../src/db/repositories");
+// A genuine Stellar secret key used across all tests (safe — only for testing)
+const VALID_TEST_SECRET = "SCG2IACKCYEUMINFHVGAOB3UFDVSVRACCZJH4K3R6WVC2OTRDQPK2GWG";
+const VALID_TEST_PUBKEY = "GA4YORXJVEPWAYDHC3AAFGUJRWCCO3GOP3T226ZFKWSLUCAYS7NKRLUU";
+
+// Shared DB reference — set in each beforeEach so both suites control it
+let sharedDb: ReturnType<typeof getDatabaseForTesting>;
+
+vi.mock("../../src/db/database", async (importOriginal) => {
+    const actual = await importOriginal() as any;
+    return {
+        ...actual,
+        getDatabase: () => sharedDb,
+    };
+});
+
 vi.mock("../../src/core/extension", async (importOriginal) => {
     const actual = await importOriginal() as any;
     return {
@@ -14,37 +28,40 @@ vi.mock("../../src/core/extension", async (importOriginal) => {
         simulateExtension: vi.fn(),
         extendEntries: vi.fn(),
         resolveSecretKey: vi.fn(async (source: string) => {
-            // For tests: if source looks like env: or vault:, return a fake valid key
-            // Otherwise assume it's a direct secret key and return it
             if (source.startsWith("env:") || source.startsWith("vault:")) {
-                return "SA7QYNF7SOWQ3GLR" + "2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ";
+                return VALID_TEST_SECRET;
             }
             return source;
         }),
     };
 });
 
+// ─── Unit tests ────────────────────────────────────────────────────────────
+
 describe("Guard Command CLI", () => {
-    let program: Command;
+    let actionFn: (contractId: string, options: any) => Promise<void>;
     let mockExit: any;
     let mockError: any;
     let mockLog: any;
-    let actionFn: (contractId: string, options: any) => Promise<void>;
 
     beforeEach(() => {
-        program = new Command();
+        sharedDb = getDatabaseForTesting();
 
+        const program = new Command();
         vi.spyOn(Command.prototype, "action").mockImplementation(function (this: any, fn: any) {
             actionFn = fn;
             return this;
         });
-
         registerGuardCommand(program);
 
         mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
         mockError = vi.spyOn(console, "error").mockImplementation(() => {});
         mockLog = vi.spyOn(console, "log").mockImplementation(() => {});
-        vi.spyOn(dbLib, "getDatabase").mockReturnValue({} as any);
+
+        vi.spyOn(repos, "getContract");
+        vi.spyOn(repos, "getEntriesForContract");
+        vi.spyOn(repos, "upsertExtensionPolicy");
+        vi.spyOn(repos, "getExtensionPolicy");
     });
 
     afterEach(() => {
@@ -85,6 +102,7 @@ describe("Guard Command CLI", () => {
 
     it("disables auto-extension when --disable is passed", async () => {
         vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet" } as any);
+        vi.mocked(repos.upsertExtensionPolicy).mockImplementation(() => {});
 
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", disable: true });
         expect(repos.upsertExtensionPolicy).toHaveBeenCalledWith(
@@ -126,13 +144,9 @@ describe("Guard Command CLI", () => {
 
     it("runs dry-run simulation when --dry-run is passed (handles Keypair import)", async () => {
         vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet" } as any);
-        vi.mocked(repos.getEntriesForContract).mockReturnValue([
-            { entry_key_xdr: "AAAA" } as any,
-        ]);
+        vi.mocked(repos.getEntriesForContract).mockReturnValue([{ entry_key_xdr: "AAAA" } as any]);
 
-        // Using an invalid Stellar secret key will cause Keypair.fromSecret to throw.
-        // The guard command catches this in its try/catch and exits with 1.
-        // This is a valid behavior test — invalid keys should not crash the CLI.
+        // Invalid key → Keypair.fromSecret throws → guard catches it and exits 1
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", dryRun: true, keypair: "INVALID_KEY" });
         expect(mockExit).toHaveBeenCalledWith(1);
         expect(mockError).toHaveBeenCalledWith(expect.stringContaining("Error:"));
@@ -156,17 +170,88 @@ describe("Guard Command CLI", () => {
 
     it("performs one-time manual extension when --keypair is provided without --dry-run or --auto-extend", async () => {
         vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet" } as any);
-        vi.mocked(repos.getEntriesForContract).mockReturnValue([
-            { entry_key_xdr: "AAAA" } as any,
-        ]);
+        vi.mocked(repos.getEntriesForContract).mockReturnValue([{ entry_key_xdr: "AAAA" } as any]);
         vi.mocked(extensionLib.extendEntries).mockResolvedValue({
-            success: true,
-            entriesExtended: 1,
-            txHash: "abcd1234",
-            ledger: 5000
+            success: true, entriesExtended: 1, txHash: "abcd1234", ledger: 5000
         } as any);
 
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", keypair: "SCZZ" });
         expect(extensionLib.extendEntries).toHaveBeenCalled();
+    });
+});
+
+// ─── Integration tests: acceptance criteria ────────────────────────────────
+// Use a real in-memory SQLite DB (not mocked repos) to verify what is
+// actually persisted when `--auto-extend` is used.
+
+const TEST_CONTRACT_ID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+describe("Guard Command --auto-extend integration", () => {
+    beforeEach(() => {
+        sharedDb = getDatabaseForTesting();
+        insertContract(sharedDb, {
+            id: TEST_CONTRACT_ID,
+            name: "Integration Test Contract",
+            network: "testnet",
+        });
+        vi.spyOn(console, "log").mockImplementation(() => {});
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it("--auto-extend registers the extension policy in the database", async () => {
+        process.env.STELLAR_TEST_KEY = VALID_TEST_SECRET;
+
+        const program = new Command();
+        registerGuardCommand(program);
+        await program.parseAsync([
+            "node", "sorokeep",
+            "guard", TEST_CONTRACT_ID,
+            "--keypair-env", "STELLAR_TEST_KEY",
+            "--auto-extend",
+            "--target-ttl", "100000",
+            "--threshold", "20000",
+        ]);
+
+        const policy = getExtensionPolicy(sharedDb, TEST_CONTRACT_ID);
+        expect(policy).toBeDefined();
+        expect(policy!.enabled).toBeTruthy(); // SQLite stores booleans as 1/0
+        expect(policy!.contract_id).toBe(TEST_CONTRACT_ID);
+        expect(policy!.target_ttl_ledgers).toBe(100000);
+        expect(policy!.extend_when_below_ledgers).toBe(20000);
+
+        delete process.env.STELLAR_TEST_KEY;
+    });
+
+    it("only the public key (not the secret) is stored in the database after --auto-extend", async () => {
+        process.env.STELLAR_TEST_KEY = VALID_TEST_SECRET;
+
+        const program = new Command();
+        registerGuardCommand(program);
+        await program.parseAsync([
+            "node", "sorokeep",
+            "guard", TEST_CONTRACT_ID,
+            "--keypair-env", "STELLAR_TEST_KEY",
+            "--auto-extend",
+        ]);
+
+        const policy = getExtensionPolicy(sharedDb, TEST_CONTRACT_ID);
+        expect(policy).toBeDefined();
+
+        // The public key is stored and matches the known public key for VALID_TEST_SECRET
+        expect(policy!.keypair_public).toBe(VALID_TEST_PUBKEY);
+
+        // The secret key itself must NOT appear anywhere in the stored row
+        expect(policy!.keypair_public).not.toBe(VALID_TEST_SECRET);
+        expect(policy!.keypair_source).not.toBe(VALID_TEST_SECRET);
+
+        // keypair_source stores the env var reference, not the resolved secret
+        expect(policy!.keypair_source).toBe("env:STELLAR_TEST_KEY");
+
+        delete process.env.STELLAR_TEST_KEY;
     });
 });

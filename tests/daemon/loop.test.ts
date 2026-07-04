@@ -61,6 +61,8 @@ function makeCycleResult(overrides: Partial<MonitorCycleResult> = {}): MonitorCy
         entriesUpdated: 0,
         thresholdsCrossed: 0,
         alertsResolved: 0,
+        extensionsTriggered: 0,
+        extensionErrors: [],
         errors: [],
         cycleStartedAt: new Date(),
         cycleFinishedAt: new Date(),
@@ -140,7 +142,7 @@ describe("daemon loop", () => {
             await startDaemon(db, "testnet", { intervalMs: 300000 });
 
             expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
-            expect(mockRunMonitorCycle).toHaveBeenCalledWith(db, "testnet", undefined);
+            expect(mockRunMonitorCycle).toHaveBeenCalledWith(db, "testnet", undefined, undefined);
         });
 
         it("passes the custom rpcUrl to runMonitorCycle when provided", async () => {
@@ -155,6 +157,7 @@ describe("daemon loop", () => {
                 db,
                 "mainnet",
                 "https://custom-rpc.example.com",
+                undefined,
             );
         });
 

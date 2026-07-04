@@ -2,7 +2,6 @@ import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
 import { runIntrospectionRescan } from "../core/introspection.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
-import { runAutoExtensions } from "../core/extension.js";
 import { vacuumDatabase } from "../db/database.js";
 import { aggregateDailyCostSnapshots, getAllContracts } from "../db/repositories.js";
 import { getLogger } from "../logging/index.js";
@@ -23,6 +22,8 @@ export interface DaemonOptions {
     intervalMs?: number;
     /** Optional RPC endpoint URL override. */
     rpcUrl?: string;
+    /** Optional sponsor secret key for auto-extensions */
+    feeSponsorSecret?: string;
     /** How frequently to run vacuum maintenance. Defaults to 24 hours. */
     vacuumIntervalMs?: number;
     /** Called after every cycle with the result (or null + error on failure). */
@@ -72,11 +73,11 @@ export async function startDaemon(
     logger().info(`Daemon starting — network: ${network}, interval: ${intervalMs}ms`);
 
     // Run the initial cycle immediately.
-    await executeCycle(db, network, rpcUrl, onCycle);
+    await executeCycle(db, network, rpcUrl, options?.feeSponsorSecret, onCycle);
 
     // Schedule repeating cycles.
     intervalHandle = setInterval(() => {
-        void scheduledTick(db, network, rpcUrl, onCycle);
+        void scheduledTick(db, network, rpcUrl, options?.feeSponsorSecret, onCycle);
     }, effectiveIntervalMs);
 }
 
@@ -110,18 +111,20 @@ async function executeCycle(
     db: Database.Database,
     network: string,
     rpcUrl: string | undefined,
+    feeSponsorSecret: string | undefined,
     onCycle: DaemonOptions["onCycle"],
 ): Promise<void> {
     cycleInFlight = true;
 
     try {
-        const result = await runMonitorCycle(db, network, rpcUrl);
+        const result = await runMonitorCycle(db, network, rpcUrl, feeSponsorSecret);
 
         logger().debug(
             `Cycle complete — checked: ${result.contractsChecked}, ` +
             `updated: ${result.entriesUpdated}, ` +
             `crossed: ${result.thresholdsCrossed}, ` +
             `resolved: ${result.alertsResolved}, ` +
+            `extended: ${result.extensionsTriggered}, ` +
             `errors: ${result.errors.length}`,
         );
 
@@ -155,26 +158,6 @@ async function executeCycle(
             logger().error("runIntrospectionRescan threw unexpectedly", introErr);
         }
 
-        // Step 4: run auto-extensions for contracts with enabled policies.
-        try {
-            const extensions = await runAutoExtensions(db, network, rpcUrl);
-            if (extensions.contractsChecked > 0) {
-                logger().info(
-                    `Auto-extensions — checked: ${extensions.contractsChecked}, ` +
-                    `extended: ${extensions.contractsExtended}, ` +
-                    `entries: ${extensions.entriesExtended}, ` +
-                    `errors: ${extensions.errors.length}`,
-                );
-            }
-            for (const ext of extensions.extensions) {
-                if (ext.isAnomaly) {
-                    logger().warn(`Cost anomaly detected for contract ${ext.contractId}: ${ext.anomalyDetails}`);
-                }
-            }
-        } catch (extensionErr: unknown) {
-            logger().error("runAutoExtensions threw unexpectedly", extensionErr);
-        }
-
         // Step 4: aggregate daily cost snapshots for past extension history.
         try {
             aggregateDailyCostSnapshots(db);
@@ -196,6 +179,7 @@ async function scheduledTick(
     db: Database.Database,
     network: string,
     rpcUrl: string | undefined,
+    feeSponsorSecret: string | undefined,
     onCycle: DaemonOptions["onCycle"],
 ): Promise<void> {
     if (cycleInFlight) {
@@ -204,7 +188,7 @@ async function scheduledTick(
     }
 
     await runScheduledVacuum(db);
-    await executeCycle(db, network, rpcUrl, onCycle);
+    await executeCycle(db, network, rpcUrl, feeSponsorSecret, onCycle);
 }
 
 async function runScheduledVacuum(db: Database.Database): Promise<void> {

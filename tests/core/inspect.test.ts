@@ -5,6 +5,7 @@ import {
     buildSacBalanceKeyXdr,
     formatTokenBalance,
     inspectContract,
+    decodeScVal,
 } from "../../src/core/inspect";
 import { StellarRpcClient } from "../../src/rpc/client";
 import * as dbLib from "../../src/db/database";
@@ -99,6 +100,102 @@ describe("SAC Decoder Core", () => {
         });
     });
 
+    describe("decodeScVal", () => {
+        it("decodes u32 ScVal to JSON-compatible structure", () => {
+            const scVal = xdr.ScVal.scvU32(42);
+            const result = decodeScVal(scVal.toXDR("base64"));
+            expect(result).toEqual({ type: "scvU32", value: 42 });
+        });
+
+        it("decodes i32 ScVal to JSON-compatible structure", () => {
+            const scVal = xdr.ScVal.scvI32(-10);
+            const result = decodeScVal(scVal.toXDR("base64"));
+            expect(result).toEqual({ type: "scvI32", value: -10 });
+        });
+
+        it("decodes boolean ScVal", () => {
+            const trueVal = xdr.ScVal.scvBool(true);
+            const falseVal = xdr.ScVal.scvBool(false);
+            expect(decodeScVal(trueVal.toXDR("base64"))).toEqual({ type: "scvBool", value: true });
+            expect(decodeScVal(falseVal.toXDR("base64"))).toEqual({ type: "scvBool", value: false });
+        });
+
+        it("decodes string ScVal", () => {
+            const scVal = xdr.ScVal.scvString("hello");
+            const result = decodeScVal(scVal.toXDR("base64"));
+            expect(result).toEqual({ type: "scvString", value: "hello" });
+        });
+
+        it("decodes symbol ScVal", () => {
+            const scVal = xdr.ScVal.scvSymbol("MySymbol");
+            const result = decodeScVal(scVal.toXDR("base64"));
+            expect(result).toEqual({ type: "scvSymbol", value: "MySymbol" });
+        });
+
+        it("decodes u64 ScVal", () => {
+            const scVal = xdr.ScVal.scvU64(new xdr.Uint64(999n));
+            const result = decodeScVal(scVal.toXDR("base64"));
+            expect(result).toEqual({ type: "scvU64", value: "999" });
+        });
+
+        it("decodes i128 ScVal", () => {
+            const scVal = xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: 0n, lo: 12345n }));
+            const result = decodeScVal(scVal.toXDR("base64"));
+            expect(result).toEqual({ type: "scvI128", value: "12345" });
+        });
+
+        it("decodes map ScVal", () => {
+            const map = xdr.ScVal.scvMap([
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol("name"),
+                    val: xdr.ScVal.scvString("Alice"),
+                }),
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol("age"),
+                    val: xdr.ScVal.scvU32(30),
+                }),
+            ]);
+            const result = decodeScVal(map.toXDR("base64"));
+            expect(result.type).toBe("scvMap");
+            expect(result.value).toHaveLength(2);
+            expect(result.value[0].key).toEqual({ type: "scvSymbol", value: "name" });
+            expect(result.value[0].value).toEqual({ type: "scvString", value: "Alice" });
+            expect(result.value[1].key).toEqual({ type: "scvSymbol", value: "age" });
+            expect(result.value[1].value).toEqual({ type: "scvU32", value: 30 });
+        });
+
+        it("decodes vec ScVal", () => {
+            const vec = xdr.ScVal.scvVec([
+                xdr.ScVal.scvU32(1),
+                xdr.ScVal.scvU32(2),
+                xdr.ScVal.scvU32(3),
+            ]);
+            const result = decodeScVal(vec.toXDR("base64"));
+            expect(result.type).toBe("scvVec");
+            expect(result.value).toHaveLength(3);
+            expect(result.value[0]).toEqual({ type: "scvU32", value: 1 });
+        });
+
+        it("decodes bytes ScVal", () => {
+            const scVal = xdr.ScVal.scvBytes(Buffer.from("deadbeef", "hex"));
+            const result = decodeScVal(scVal.toXDR("base64"));
+            expect(result.type).toBe("scvBytes");
+            expect(result.value).toBe("deadbeef");
+        });
+
+        it("decodes void ScVal", () => {
+            const scVal = xdr.ScVal.scvVoid();
+            const result = decodeScVal(scVal.toXDR("base64"));
+            expect(result).toEqual({ type: "scvVoid", value: null });
+        });
+
+        it("returns error structure for invalid XDR", () => {
+            const result = decodeScVal("not-valid-base64-xdr!!!");
+            expect(result.type).toBe("error");
+            expect(result.value).toContain("Failed to decode");
+        });
+    });
+
     describe("inspectContract", () => {
         beforeEach(() => {
             vi.spyOn(dbLib, "getDatabase").mockReturnValue({} as any);
@@ -139,7 +236,7 @@ describe("SAC Decoder Core", () => {
             });
 
             expect(result.success).toBe(false);
-            expect(result.error).toContain("Contract instance not found");
+            expect(result.error).toContain("not found on-chain");
         });
 
         it("correctly locates balance slots and decodes balance decimals on SAC contract", async () => {
@@ -211,6 +308,120 @@ describe("SAC Decoder Core", () => {
             expect(result.results).toHaveLength(1);
             expect(result.results![0]!.formattedBalance).toBe("1.05");
             expect(result.results![0]!.balance!.amount).toBe(10500000n);
+        });
+
+        it("fetches and prints valid JSON for raw entry on non-SAC contracts", async () => {
+            vi.spyOn(repoLib, "getContract").mockReturnValue({
+                id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                network: "testnet",
+                name: "MyContract",
+            });
+
+            vi.spyOn(StellarRpcClient.prototype, "getContractInstanceEntry").mockResolvedValue({
+                entryKeyXdr: "AAAA",
+                latestLedger: 100,
+                liveUntilLedgerSeq: 200,
+                lastModifiedLedgerSeq: 50,
+                remainingTTL: 100,
+                executableType: "contractExecutableWasm",
+                wasmHash: "abcd1234",
+            });
+
+            const valScVal = xdr.ScVal.scvMap([
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol("counter"),
+                    val: xdr.ScVal.scvU32(42),
+                }),
+            ]);
+
+            const fakeKeyXdr = "AAABBB";
+            vi.spyOn(StellarRpcClient.prototype as any, "getContractStorageEntries").mockResolvedValue([
+                {
+                    entryKeyXdr: fakeKeyXdr,
+                    latestLedger: 100,
+                    liveUntilLedgerSeq: 5000,
+                    lastModifiedLedgerSeq: 90,
+                    remainingTTL: 4900,
+                    valXdr: valScVal.toXDR("base64"),
+                },
+            ]);
+
+            const result = await inspectContract({} as any, "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", {
+                entries: [fakeKeyXdr],
+                network: "testnet",
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.isSac).toBe(false);
+            expect(result.results).toHaveLength(1);
+            const entry = result.results![0]!;
+            expect(entry.type).toBe("raw");
+            expect(entry.found).toBe(true);
+            expect(entry.decodedValue).toBeDefined();
+            expect(entry.decodedValue!.type).toBe("scvMap");
+            // Verify it's valid JSON-serializable
+            const jsonStr = JSON.stringify(entry.decodedValue);
+            expect(() => JSON.parse(jsonStr)).not.toThrow();
+        });
+
+        it("prints error if target key is not active on-chain", async () => {
+            vi.spyOn(repoLib, "getContract").mockReturnValue({
+                id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                network: "testnet",
+                name: "MyContract",
+            });
+
+            vi.spyOn(StellarRpcClient.prototype, "getContractInstanceEntry").mockResolvedValue({
+                entryKeyXdr: "AAAA",
+                latestLedger: 100,
+                liveUntilLedgerSeq: 200,
+                lastModifiedLedgerSeq: 50,
+                remainingTTL: 100,
+                executableType: "contractExecutableWasm",
+                wasmHash: "abcd1234",
+            });
+
+            // Return empty — key not found on-chain
+            vi.spyOn(StellarRpcClient.prototype as any, "getContractStorageEntries").mockResolvedValue([]);
+
+            const result = await inspectContract({} as any, "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", {
+                entries: ["NONEXISTENT_KEY_XDR"],
+                network: "testnet",
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.results).toHaveLength(1);
+            const entry = result.results![0]!;
+            expect(entry.found).toBe(false);
+            expect(entry.status).toBe("unknown");
+            expect(entry.decodedValue).toBeUndefined();
+        });
+
+        it("returns results with no entries when --entry is not specified on non-SAC contract", async () => {
+            vi.spyOn(repoLib, "getContract").mockReturnValue({
+                id: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                network: "testnet",
+                name: "MyContract",
+            });
+
+            vi.spyOn(StellarRpcClient.prototype, "getContractInstanceEntry").mockResolvedValue({
+                entryKeyXdr: "AAAA",
+                latestLedger: 100,
+                liveUntilLedgerSeq: 200,
+                lastModifiedLedgerSeq: 50,
+                remainingTTL: 100,
+                executableType: "contractExecutableWasm",
+                wasmHash: "abcd1234",
+            });
+
+            const result = await inspectContract({} as any, "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", {
+                entries: [],
+                network: "testnet",
+            });
+
+            expect(result.success).toBe(true);
+            expect(result.isSac).toBe(false);
+            expect(result.results).toHaveLength(0);
         });
     });
 });

@@ -303,17 +303,17 @@ export function hasUnresolvedAlert(db: Database.Database, alertConfigId: number,
   return row !== undefined;
 }
 
-export function resolveAlerts(db: Database.Database, entryId: number): number[] {
+export function resolveAlerts(db: Database.Database, entryId: number, alertConfigId: number): number[] {
   const rows = db.prepare(`
     SELECT alert_config_id FROM alerts_fired
-    WHERE contract_entry_id = ? AND resolved = 0
-  `).all(entryId) as { alert_config_id: number }[];
+    WHERE contract_entry_id = ? AND alert_config_id = ? AND resolved = 0
+  `).all(entryId, alertConfigId) as { alert_config_id: number }[];
 
   if (rows.length > 0) {
     db.prepare(`
       UPDATE alerts_fired SET resolved = 1, resolved_at = datetime('now')
-      WHERE contract_entry_id = ? AND resolved = 0
-    `).run(entryId);
+      WHERE contract_entry_id = ? AND alert_config_id = ? AND resolved = 0
+    `).run(entryId, alertConfigId);
   }
 
   return rows.map(r => r.alert_config_id);
@@ -492,6 +492,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
             FROM cost_daily_snapshots
             WHERE contract_id = ? AND snapshot_date >= date('now', ?)
         `).get(contractId, ...snapshotParams) as CostAggregateRow
+
         : db.prepare(`
             SELECT
                 COALESCE(SUM(total_extensions), 0) AS total_extensions,
@@ -507,6 +508,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
             FROM cost_daily_snapshots
             WHERE contract_id = ?
         `).get(contractId) as CostAggregateRow;
+
 
     const currentDayRow = db.prepare(`
         SELECT
@@ -525,6 +527,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
         WHERE eh.contract_id = ?
           AND date(eh.executed_at) = date('now')
     `).get(contractId) as CostAggregateRow;
+
 
     return {
         contract_id: contractId,
@@ -549,6 +552,27 @@ export function getContractCostSummary(db: Database.Database, contractId: string
             },
         },
     };
+}
+
+/**
+ * Count the number of auto-extension transactions that were executed for the
+ * given contract within the last hour.
+ *
+ * Used by the rate limiter to enforce a maximum of N extensions per hour
+ * per contract (issue #142).
+ *
+ * @param db - The SQLite database connection.
+ * @param contractId - The contract to check.
+ * @returns The number of extensions recorded in the last 60 minutes.
+ */
+export function countExtensionsInLastHour(db: Database.Database, contractId: string): number {
+    const row = db.prepare(`
+        SELECT COUNT(*) AS cnt
+        FROM extension_history
+        WHERE contract_id = ?
+          AND datetime(executed_at) >= datetime('now', '-1 hour')
+    `).get(contractId) as { cnt: number };
+    return row?.cnt ?? 0;
 }
 
 export function getAverageResourceUsage(db: Database.Database, contractId: string, limit?: number): { avg_cpu_insns: number, avg_mem_bytes: number, count: number } | null {
@@ -865,7 +889,71 @@ export function getStateChanges(db: Database.Database, contractEntryId: number, 
     return db.prepare(sql).all(contractEntryId) as StateChange[];
 }
 
+export interface StateChangeHistoryRecord {
+    changeId: number;
+    contractEntryId: number;
+    entryKeyXdr: string;
+    entryType: string;
+    entryLabel: string | null;
+    diffType: "created" | "updated" | "deleted";
+    diffJson: string;
+    detectedAtLedger: number;
+    createdAt: string;
+    oldValueXdr: string | null;
+    newValueXdr: string | null;
+}
+
+/**
+ * Return a rich history view of state changes for a contract,
+ * joining state_changes → contract_entries → state_snapshots.
+ */
+export function getStateChangeHistory(
+    db: Database.Database,
+    contractId: string,
+    opts?: { limit?: number; entryKeyXdr?: string },
+): StateChangeHistoryRecord[] {
+    const limit = opts?.limit;
+    const entryKeyXdr = opts?.entryKeyXdr;
+
+    let sql = `
+        SELECT
+            sc.id              AS changeId,
+            sc.contract_entry_id AS contractEntryId,
+            ce.entry_key_xdr   AS entryKeyXdr,
+            ce.entry_type      AS entryType,
+            ce.label           AS entryLabel,
+            sc.diff_type       AS diffType,
+            sc.diff_json       AS diffJson,
+            sc.detected_at_ledger AS detectedAtLedger,
+            sc.created_at      AS createdAt,
+            old_snap.value_xdr AS oldValueXdr,
+            new_snap.value_xdr AS newValueXdr
+        FROM state_changes sc
+        JOIN contract_entries ce ON ce.id = sc.contract_entry_id
+        LEFT JOIN state_snapshots old_snap ON old_snap.id = sc.old_snapshot_id
+        LEFT JOIN state_snapshots new_snap ON new_snap.id = sc.new_snapshot_id
+        WHERE ce.contract_id = ?
+    `;
+
+    const params: (string | number)[] = [contractId];
+
+    if (entryKeyXdr) {
+        sql += " AND ce.entry_key_xdr = ?";
+        params.push(entryKeyXdr);
+    }
+
+    sql += " ORDER BY sc.detected_at_ledger DESC, sc.id DESC";
+
+    if (limit !== undefined && limit >= 0) {
+        sql += " LIMIT ?";
+        params.push(limit);
+    }
+
+    return db.prepare(sql).all(...params) as StateChangeHistoryRecord[];
+}
+
 // ─── Resource Alert Configuration & History ──────────────────────────────────
+
 
 export interface ResourceAlertConfig {
     id: number;
@@ -1062,6 +1150,46 @@ export function hasUnresolvedResourceAlert(
   return row.usage_percent >= currentUsagePercent;
 }
 
+// ---------------------------- Budget Tracking ----------------------------
+export interface BudgetTracking {
+    id: number;
+    contract_id: string;
+    limit_xlm: number;
+    spent_xlm: number;
+    billing_cycle: string;
+}
+
+export function upsertBudget(db: Database.Database, budget: {
+    contract_id: string;
+    limit_xlm: number;
+    spent_xlm?: number;
+    billing_cycle: string;
+}): void {
+    db.prepare(`
+        INSERT INTO budget_tracking (contract_id, limit_xlm, spent_xlm, billing_cycle)
+        VALUES (@contract_id, @limit_xlm, @spent_xlm, @billing_cycle)
+        ON CONFLICT(contract_id, billing_cycle) DO UPDATE SET
+            limit_xlm = excluded.limit_xlm,
+            spent_xlm = excluded.spent_xlm
+    `).run({
+        contract_id: budget.contract_id,
+        limit_xlm: budget.limit_xlm,
+        spent_xlm: budget.spent_xlm ?? 0.0,
+        billing_cycle: budget.billing_cycle,
+    });
+}
+
+export function getBudget(db: Database.Database, contractId: string, billingCycle: string): BudgetTracking | undefined {
+    return db.prepare("SELECT * FROM budget_tracking WHERE contract_id = ? AND billing_cycle = ?").get(contractId, billingCycle) as BudgetTracking | undefined;
+}
+
+export function addBudgetSpent(db: Database.Database, contractId: string, billingCycle: string, amountXlm: number): void {
+    db.prepare(`
+        UPDATE budget_tracking
+        SET spent_xlm = spent_xlm + ?
+        WHERE contract_id = ? AND billing_cycle = ?
+    `).run(amountXlm, contractId, billingCycle);
+}
 // ─── Resource Usage Logs (issue #164) ────────────────────────────────────────
 
 /**
@@ -1209,3 +1337,4 @@ export function getLatestResourceUsageLog(
         LIMIT 1
     `).get(contractId) as ResourceUsageLog | undefined;
 }
+

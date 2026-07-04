@@ -83,7 +83,7 @@ function migrateAlertConfigsChannelTypeCheck(db: Database.Database): void {
         return;
     }
 
-    const hasLegacyCheck = /CHECK\s*\(\s*channel_type\s+IN\s*\(\s*'slack'\s*,\s*'webhook'\s*\)\s*\)/i.test(row.sql);
+    const hasLegacyCheck = /CHECK\s*\(\s*channel_type\s+IN\s*\(\s*'slack'\s*,\s*'webhook'(?:,\s*'pagerduty')?\s*\)\s*\)/i.test(row.sql);
     if (!hasLegacyCheck) {
         return;
     }
@@ -94,7 +94,7 @@ function migrateAlertConfigsChannelTypeCheck(db: Database.Database): void {
         CREATE TABLE alert_configs_new (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-            channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty')),
+            channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty', 'discord', 'telegram')),
             channel_target TEXT NOT NULL,
             threshold_ledgers INTEGER NOT NULL,
             webhook_secret TEXT,
