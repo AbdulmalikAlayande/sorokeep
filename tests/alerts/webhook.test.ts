@@ -259,4 +259,67 @@ describe("sendWebhookAlert", () => {
             ]);
         });
     });
+
+    // =========================================================================
+    // 6. TIMEOUT HANDLING
+    // =========================================================================
+    describe("Timeout handling", () => {
+        it("throws when fetch is aborted (AbortError propagates as delivery failure)", async () => {
+            // Simulates what happens when the 5-second timeout fires and the
+            // AbortController aborts an in-flight fetch — the error must surface.
+            const abortError = Object.assign(
+                new Error("The operation was aborted."),
+                { name: "AbortError" },
+            );
+            mockFetch.mockRejectedValue(abortError);
+
+            await expect(
+                sendWebhookAlert("https://slow.example.com/hook", makeAlertEvent()),
+            ).rejects.toThrow("aborted");
+        });
+
+        it("aborts the in-flight request after 5 seconds", async () => {
+            vi.useFakeTimers();
+
+            let aborted = false;
+            // Capture the abort without rejecting the promise — this lets us
+            // observe the timeout threshold without a dangling rejection.
+            mockFetch.mockImplementation((_url: string, options: any) => {
+                options.signal.addEventListener("abort", () => { aborted = true; });
+                return new Promise(() => {}); // intentionally hangs
+            });
+
+            // Fire the call but suppress the eventual rejection to avoid noise
+            sendWebhookAlert("https://slow.example.com/hook", makeAlertEvent()).catch(() => {});
+
+            // One millisecond before the 5-second mark — not yet aborted
+            await vi.advanceTimersByTimeAsync(4_999);
+            expect(aborted).toBe(false);
+
+            // Cross the 5-second boundary
+            await vi.advanceTimersByTimeAsync(2);
+            expect(aborted).toBe(true);
+
+            vi.useRealTimers();
+        });
+
+        it("does not abort a request that completes within 5 seconds", async () => {
+            vi.useFakeTimers();
+
+            let aborted = false;
+            mockFetch.mockImplementation((_url: string, options: any) => {
+                options.signal.addEventListener("abort", () => { aborted = true; });
+                return Promise.resolve(makeOkResponse());
+            });
+
+            await sendWebhookAlert("https://fast.example.com/hook", makeAlertEvent());
+
+            // Advance well past the timeout — already resolved, should stay un-aborted
+            await vi.advanceTimersByTimeAsync(10_000);
+
+            expect(aborted).toBe(false);
+
+            vi.useRealTimers();
+        });
+    });
 });

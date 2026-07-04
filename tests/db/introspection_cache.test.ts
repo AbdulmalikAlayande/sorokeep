@@ -47,6 +47,7 @@ describe("last_introspected_at column — schema", () => {
             .prepare("PRAGMA table_info(contracts)")
             .all() as { name: string }[];
         expect(columns.map((c) => c.name)).toContain("last_introspected_at");
+        expect(columns.map((c) => c.name)).toContain("poll_interval_seconds");
     });
 
     it("new contracts have last_introspected_at = NULL by default", () => {

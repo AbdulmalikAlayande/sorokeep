@@ -11,7 +11,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type Database from "better-sqlite3";
+import Database from "better-sqlite3";
+import { Keypair } from "@stellar/stellar-sdk";
 import { getDatabaseForTesting } from "../../src/db/database.js";
 import {
     insertContract,
@@ -62,7 +63,7 @@ function seedContractAndPolicy(
         entry_key_xdr: "instance-key-xdr",
         entry_type: "instance",
         label: "Contract Instance",
-        live_until_ledger: 5_000, // very low → below threshold → would trigger extension
+        live_until_ledger: 2_540_000, // very low - below threshold - would trigger extension
         last_modified_ledger: 2_400_000,
         discovery_source: "deterministic",
     });
@@ -190,6 +191,7 @@ describe("isRateLimited", () => {
 describe("runAutoExtensions — rate limiting", () => {
     let db: Database.Database;
     const savedEnv: Record<string, string | undefined> = {};
+    const DUMMY_SECRET = Keypair.random().secret();
 
     function setEnv(key: string, value: string) {
         savedEnv[key] = process.env[key];
@@ -207,9 +209,9 @@ describe("runAutoExtensions — rate limiting", () => {
             entries: [
                 {
                     entryKeyXdr: "instance-key-xdr",
-                    liveUntilLedgerSeq: 2_600_000,
+                    liveUntilLedgerSeq: 2_540_000,
                     lastModifiedLedgerSeq: 2_400_000,
-                    remainingTTL: 100_000,
+                    remainingTTL: 40_000,
                 },
             ],
         });
@@ -231,7 +233,7 @@ describe("runAutoExtensions — rate limiting", () => {
     });
 
     it("skips a rate-limited contract and records an error in the result", async () => {
-        setEnv("TEST_STELLAR_SECRET", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        setEnv("TEST_STELLAR_SECRET", DUMMY_SECRET);
 
         const entryId = seedContractAndPolicy(db);
         // Saturate the rate limit
@@ -242,12 +244,13 @@ describe("runAutoExtensions — rate limiting", () => {
         // The contract was checked but NOT extended
         expect(result.contractsExtended).toBe(0);
         expect(result.entriesExtended).toBe(0);
+
         // An error/warning entry documents the rate-limit skip
         expect(result.errors.some(e => /rate.limit/i.test(e))).toBe(true);
     });
 
     it("allows extension when count is below the hourly limit", async () => {
-        setEnv("TEST_STELLAR_SECRET", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        setEnv("TEST_STELLAR_SECRET", DUMMY_SECRET);
 
         const entryId = seedContractAndPolicy(db);
         // One below the limit
@@ -260,7 +263,7 @@ describe("runAutoExtensions — rate limiting", () => {
     });
 
     it("does not call submitExtension for a rate-limited contract", async () => {
-        setEnv("TEST_STELLAR_SECRET", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        setEnv("TEST_STELLAR_SECRET", DUMMY_SECRET);
 
         const entryId = seedContractAndPolicy(db);
         insertRecentExtensions(db, CONTRACT_ID, entryId, HOURLY_RATE_LIMIT);
@@ -271,7 +274,7 @@ describe("runAutoExtensions — rate limiting", () => {
     });
 
     it("rate-limits each contract independently", async () => {
-        setEnv("TEST_STELLAR_SECRET", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        setEnv("TEST_STELLAR_SECRET", DUMMY_SECRET);
 
         const contract2 = "COTHER111111111111111111111111111111111111111111111111111";
 
@@ -292,7 +295,7 @@ describe("runAutoExtensions — rate limiting", () => {
     });
 
     it("includes the contract id in the rate-limit error message", async () => {
-        setEnv("TEST_STELLAR_SECRET", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        setEnv("TEST_STELLAR_SECRET", DUMMY_SECRET);
 
         const entryId = seedContractAndPolicy(db);
         insertRecentExtensions(db, CONTRACT_ID, entryId, HOURLY_RATE_LIMIT);

@@ -1,0 +1,61 @@
+name: 'Sorokeep TTL Check'
+description: 'Check Soroban smart contract TTL before deployments. Fails the workflow if TTL is below threshold.'
+author: 'Sorokeep'
+
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  contract-id:
+    description: 'Soroban contract ID to check (56-character string starting with C)'
+    required: true
+  network:
+    description: 'Stellar network to use: "testnet" or "mainnet"'
+    required: false
+    default: 'testnet'
+  threshold:
+    description: 'Minimum required TTL in ledgers. The action fails if TTL drops below this value.'
+    required: false
+    default: '500'
+  rpc-url:
+    description: 'Custom Stellar RPC endpoint URL (overrides the default URL for the chosen network)'
+    required: false
+    default: ''
+
+outputs:
+  ttl:
+    description: 'Minimum TTL in ledgers across all contract entries (instance and WASM)'
+    value: ${{ steps.ttl-check.outputs.ttl }}
+  status:
+    description: 'Check result: "passed" if TTL >= threshold, "failed" otherwise'
+    value: ${{ steps.ttl-check.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Install dependencies
+      shell: bash
+      run: npm ci
+      working-directory: ${{ github.action_path }}
+
+    - name: Build sorokeep
+      shell: bash
+      run: npm run build
+      working-directory: ${{ github.action_path }}
+
+    - name: Run TTL check
+      id: ttl-check
+      shell: bash
+      env:
+        SOROKEEP_CONTRACT_ID: ${{ inputs.contract-id }}
+        SOROKEEP_NETWORK: ${{ inputs.network }}
+        SOROKEEP_THRESHOLD: ${{ inputs.threshold }}
+        SOROKEEP_RPC_URL: ${{ inputs.rpc-url }}
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+      run: ${{ github.action_path }}/action/entrypoint.sh

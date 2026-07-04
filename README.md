@@ -34,14 +34,20 @@ Sorokeep is the unified operations layer that handles all of this.
 
 ## Features
 
-- **Watch** — Register contracts and automatically discover their instance, WASM, and storage entries
+- **Watch & Introspect** — Register contracts, footprint discovery from on-chain transactions, and introspection specs
 - **Monitor** — Continuous TTL polling with configurable intervals via a long-running daemon
-- **Alert** — Webhook and Slack notifications with severity levels, HMAC signing, and retry logic
-- **Auto-Extend** — Policy-based automatic TTL extension via `ExtendFootprintTTLOp` transactions
-- **Restore** — Recover archived entries via `RestoreFootprintOp` transactions
-- **Cost Tracking** — Per-contract extension history with XLM costs and 30-day projections
-- **Discovery** — Footprint-based storage key discovery from on-chain transaction activity
-- **Local-First** — All state stored in SQLite. No external services beyond a Stellar RPC endpoint.
+- **Alert** — Decoupled, queue-backed multi-channel notifications (Webhook with HMAC-SHA256, Slack Block Kit, Discord, Telegram, PagerDuty) with robust retry logic for low TTLs, resource usage spikes, and state changes
+- **Auto-Extend** — Policy-based automatic TTL extension with transaction simulation before submission via `ExtendFootprintTTLOp`
+- **Restore** — Recover archived entries via `RestoreFootprintOp` with pre-submission simulation
+- **Cost & Resource Tracking** — Track extension history, XLM costs, 30-day projections, resource usage logs, and enforce configurable monthly budgets to prevent runaway spend
+- **Inspect** — Inspect on-chain state, parse SAC token balances, and diff state changes
+- **Channels** — Manage funded channel accounts for concurrent transaction submissions without sequence bottlenecks
+- **Local-First** — All state stored in a SQLite database-backed queue. No external services beyond a Stellar RPC endpoint
+- **AI-Ready** — Built-in Model Context Protocol (MCP) server exposing tools for AI agents to interact with Sorokeep's data natively
+- **Advanced Security** — Integrates with AWS Secrets Manager & HashiCorp Vault for secure key resolution
+- **Production-Ready deployments** — Includes Dockerfile, systemd service templates, and GitHub Actions for CI/CD integration
+
+> 🏆 **Sorokeep was accepted into the Stellar Drips Wave program** and is actively maintained with contributions from a growing open-source community (over 55 forks and 22+ PRs from Wave contributors).
 
 ## Install
 
@@ -307,14 +313,56 @@ sorokeep restore <contract-id> --keypair-env STELLAR_SECRET_KEY --entry <base64-
 sorokeep restore <contract-id> --keypair-env STELLAR_SECRET_KEY --all
 ```
 
+---
+
+### `sorokeep resources`
+
+View resource usage logs (CPU instructions, memory bytes, fee structures) for a contract to track execution efficiency over time.
+
+---
+
+### `sorokeep budget`
+
+Set and monitor a monthly XLM extension budget for a contract. Prevents runaway costs if a contract requires frequent extensions.
+
+---
+
+### `sorokeep channels`
+
+Manage funded channel accounts used to submit extension and restoration transactions concurrently, avoiding sequence number bottlenecks.
+
+---
+
+### `sorokeep inspect`
+
+Inspect on-chain state directly. Can parse Stellar Asset Contract (SAC) token balances, diff state changes, and decode XDR without manual intervention.
+
+---
+
+### `sorokeep check`
+
+Perform an ad-hoc, one-off execution of the monitoring cycle without starting the long-running daemon.
+
+---
+
+### `sorokeep db`
+
+Database management tasks, including migrations, backups, and introspection cache management.
+
+---
+
+### `sorokeep completion`
+
+Generate shell autocomplete scripts for bash/zsh to enable tab completion for all Sorokeep commands.
+
 ## Alerting
 
-Sorokeep delivers alerts through two channels: **webhooks** and **Slack**. Each alert includes a severity level and rich context about the affected entry.
+Sorokeep delivers alerts through multiple channels: **webhooks**, **Slack**, **Discord**, **Telegram**, and **PagerDuty**. Each alert includes a severity level and rich context about the affected entry. Sorokeep uses a robust, decoupled detection and dispatch architecture with a database-backed queue.
 
 ### Alert Lifecycle
 
-1. **Threshold Crossed** — During each monitoring cycle, if an entry's remaining TTL drops below a configured threshold, Sorokeep fires a `threshold_crossed` alert.
-2. **Delivery** — The dispatcher routes the alert to the configured channel (webhook or Slack). Failed deliveries are retried on subsequent cycles, up to 5 attempts.
+1. **Threshold Crossed** — During each monitoring cycle, if an entry's remaining TTL drops below a configured threshold, the monitor writes a `threshold_crossed` alert to the database queue.
+2. **Delivery** — The dispatcher reads undelivered rows from the queue and routes the alert to the configured channel. Failed deliveries are retried on subsequent cycles, up to 5 attempts, and then gracefully abandoned. Success marks the row as delivered.
 3. **Resolution** — When TTL recovers past the threshold (e.g., after an extension), Sorokeep fires an `alert_resolved` notification to all configured channels.
 
 ### Severity Levels
@@ -453,9 +501,9 @@ Every polling interval (default: 5 minutes), the daemon runs three phases:
 
 1. **Monitor** — For each registered contract, fetches fresh TTLs from the RPC, updates the database, checks each entry against every configured alert threshold. Fires `threshold_crossed` when TTL drops below a threshold; fires `alert_resolved` when TTL recovers.
 
-2. **Deliver** — Processes all undelivered alerts. Routes each to its configured channel (webhook or Slack), marks successful deliveries, increments retry counters on failures, abandons after 5 retries.
+2. **Deliver** — Processes all undelivered alerts from the database queue. Routes each to its configured channel (Webhook, Slack, Discord, Telegram, PagerDuty), marks successful deliveries, increments retry counters on failures, and abandons gracefully after 5 retries.
 
-3. **Auto-Extend** — For contracts with an active guard policy, checks which entries have TTL below the policy threshold and submits `ExtendFootprintTTLOp` transactions to extend them. Records the extension cost in XLM.
+3. **Auto-Extend** — For contracts with an active guard policy, checks which entries have TTL below the policy threshold and simulates an `ExtendFootprintTTLOp` transaction via the Stellar RPC. If successful, it submits the transaction, records the exact XLM cost, and updates the contract's monthly budget usage to prevent runaway spend.
 
 ### Storage
 
@@ -524,6 +572,8 @@ sorokeep/
 ├── package.json
 ├── tsconfig.json
 ├── vitest.config.ts
+├── Dockerfile                   # Docker container definition
+├── systemd/                     # Systemd service templates for Linux deployments
 ├── LICENSE
 └── CONTRIBUTING.md
 ```
@@ -562,22 +612,23 @@ npx vitest run tests/core/monitor.test.ts
 npx vitest
 ```
 
-**238 tests** across **14 test files** covering:
+**891 tests** across **66 test files** covering:
 
 - **Formatting** — TTL conversion, status classification, human-readable time
-- **Database** — CRUD, cascades, upserts, deduplication, alert delivery queries
-- **RPC Client** — Contract instance, WASM code, batch TTL queries
-- **Watch** — Registration, re-watch, SAC contracts, error handling, network isolation
+- **Database** — CRUD, cascades, upserts, deduplication, alert delivery queues
+- **RPC Client** — Contract instance, WASM code, batch TTL queries, transaction simulation
+- **Watch** — Registration, re-watch, SAC contracts, error handling, network isolation, introspection
 - **Monitor Cycle** — TTL refresh, threshold detection, alert deduplication, resolution, fault isolation, multi-threshold escalation, partial RPC responses
-- **Extension** — TTL extension, auto-extension policy evaluation, restore, cost recording
-- **Alert Dispatcher** — Channel routing, retry logic, max retry cap, abandoned alerts
-- **Webhook** — HMAC signing, timeout handling, HTTP error responses
+- **Extension** — TTL extension, auto-extension policy evaluation, restore, cost recording, budget enforcement
+- **Alert Dispatcher** — Channel routing, retry logic, max retry cap, abandoned alerts (Slack, Discord, Telegram, Webhook, PagerDuty)
+- **Webhook** — HMAC-SHA256 signing, timeout handling, HTTP error responses
 - **Slack** — Token resolution, Block Kit structure, `body.ok` validation
-- **CLI Commands** — Alerts add/list/remove/test/history, email type blocking
+- **CLI Commands** — Alerts, budget, guard, costs, watch, status, daemon, check, restore, db, channels
 - **Config** — Load/save, defaults, parse failure handling, file permissions
 - **Daemon** — Start/stop, re-entrance guard, cycle error isolation
+- **MCP Server** — Test coverage for all exposed MCP tools
 
-All tests use in-memory SQLite databases and mocked RPC responses — no network calls, no filesystem side effects.
+All tests use in-memory SQLite databases and mocked RPC responses — no network calls, no filesystem side effects. TDD is practiced throughout.
 
 ## FAQ
 
@@ -610,9 +661,6 @@ Email is not yet implemented. The CLI will reject `--type email` with a clear er
 ## Roadmap
 
 - Web dashboard for visual TTL monitoring
-- npm library mode for CI/CD integration
-- MCP server for AI-assisted development tools
-- Email alert channel
 - Multi-contract batch operations
 
 ## Contributing

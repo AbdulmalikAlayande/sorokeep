@@ -67,11 +67,8 @@ describe("E2E sandbox network TTL lifecycle", () => {
         expect(lowTtlCycle.entriesUpdated).toBe(2);
         expect(lowTtlCycle.thresholdsCrossed).toBeGreaterThanOrEqual(1);
 
-        const autoExtension = await runAutoExtensions(db, "sandbox", sandbox.rpcUrl);
-        expect(autoExtension.errors).toEqual([]);
-        expect(autoExtension.contractsChecked).toBe(1);
-        expect(autoExtension.contractsExtended).toBe(1);
-        expect(autoExtension.entriesExtended).toBeGreaterThanOrEqual(1);
+        expect(lowTtlCycle.extensionsTriggered).toBeGreaterThanOrEqual(1);
+        expect(lowTtlCycle.extensionErrors).toEqual([]);
 
         const postExtensionCycle = await runMonitorCycle(db, "sandbox", sandbox.rpcUrl);
         expect(postExtensionCycle.errors).toEqual([]);

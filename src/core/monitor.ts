@@ -13,6 +13,7 @@ import {
 import { StellarRpcClient } from "../rpc/client.js";
 import { deliverSingleAlert } from "../alerts/dispatcher.js";
 import { buildAlertEvent } from "../alerts/types.js";
+import { runAutoExtensions } from "./extension.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "MonitorCycle" });
@@ -28,6 +29,10 @@ export interface MonitorCycleResult {
     thresholdsCrossed: number;
     /** Number of previously-open alerts that were resolved because TTL recovered. */
     alertsResolved: number;
+    /** Total ledger entries extended by the auto-extension phase this cycle. */
+    extensionsTriggered: number;
+    /** Non-fatal errors from the auto-extension phase. */
+    extensionErrors: string[];
     /** Per-contract error messages for any contract that failed during the cycle. */
     errors: string[];
     /** Timestamp when this cycle started. */
@@ -61,6 +66,7 @@ export async function runMonitorCycle(
     db: Database.Database,
     network: string,
     rpcUrl?: string,
+    feeSponsorSecret?: string,
 ): Promise<MonitorCycleResult> {
     const cycleStartedAt = new Date();
 
@@ -69,6 +75,8 @@ export async function runMonitorCycle(
         entriesUpdated: 0,
         thresholdsCrossed: 0,
         alertsResolved: 0,
+        extensionsTriggered: 0,
+        extensionErrors: [],
         errors: [],
         cycleStartedAt,
         cycleFinishedAt: cycleStartedAt,   // will be overwritten at the end
@@ -96,6 +104,29 @@ export async function runMonitorCycle(
         }
     }
 
+    // Auto-extension phase: check extension_policies and submit transactions for
+    // entries whose TTL fell below the configured threshold.
+    try {
+        const ext = await runAutoExtensions(db, network, rpcUrl, feeSponsorSecret);
+        result.extensionsTriggered = ext.entriesExtended;
+        result.extensionErrors = ext.errors;
+        if (ext.entriesExtended > 0) {
+            logger.info(
+                `Auto-extensions — contracts: ${ext.contractsExtended}, ` +
+                `entries: ${ext.entriesExtended}`,
+            );
+        }
+        for (const e of ext.extensions) {
+            if (e.isAnomaly) {
+                logger.warn(`Cost anomaly — contract: ${e.contractId}: ${e.anomalyDetails}`);
+            }
+        }
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        result.extensionErrors = [msg];
+        logger.error("runAutoExtensions threw unexpectedly", err);
+    }
+
     result.cycleFinishedAt = new Date();
 
     logger.debug(
@@ -103,6 +134,7 @@ export async function runMonitorCycle(
         `updated: ${result.entriesUpdated}, ` +
         `crossed: ${result.thresholdsCrossed}, ` +
         `resolved: ${result.alertsResolved}, ` +
+        `extended: ${result.extensionsTriggered}, ` +
         `errors: ${result.errors.length}`,
     );
 
@@ -200,7 +232,7 @@ async function processContract(
             } else {
                 // 5. TTL is at or above threshold — resolve any open alert.
                 if (hasUnresolvedAlert(db, alertConfig.id, entry.id)) {
-                    const resolvedConfigIds = resolveAlerts(db, entry.id);
+                    const resolvedConfigIds = resolveAlerts(db, entry.id, alertConfig.id);
                     result.alertsResolved++;
 
                     logger.info(

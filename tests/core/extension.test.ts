@@ -178,7 +178,7 @@ describe("Core Extension Logic", () => {
                 success: false,
                 txHash: "failed-tx",
                 ledger: 0,
-                error: "Insufficient funds",
+                error: "Transaction send error: Insufficient funds",
             });
 
             const result = await extendEntries(
@@ -190,11 +190,63 @@ describe("Core Extension Logic", () => {
             );
 
             expect(result.success).toBe(false);
-            expect(result.error).toBe("Insufficient funds");
+            expect(result.error).toBe("Transaction send error: Insufficient funds");
 
             // No history should be recorded
             const history = getExtensionHistory(db, contractId);
             expect(history.length).toBe(0);
+        });
+
+        it("logs warning and returns error on simulation failure", async () => {
+            const contractId = seedContract(db);
+            const entries = getEntriesForContract(db, contractId);
+
+            mockSubmitExtension.mockRejectedValue(new Error("Simulation failed: Invalid footprint key"));
+
+            const result = await extendEntries(
+                db,
+                contractId,
+                entries.map(e => e.entry_key_xdr),
+                100000,
+                "SECRETKEY123",
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe("Simulation failed: Invalid footprint key");
+        });
+
+        it("propagates feeCharged from the submitted transaction result", async () => {
+            const contractId = seedContract(db);
+            const entries = getEntriesForContract(db, contractId);
+
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "fee-tx-hash",
+                ledger: 2500100,
+                feeCharged: 7500,
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2500100,
+                entries: entries.map(e => ({
+                    entryKeyXdr: e.entry_key_xdr,
+                    latestLedger: 2500100,
+                    liveUntilLedgerSeq: 2600100,
+                    lastModifiedLedgerSeq: 2500100,
+                    remainingTTL: 100000,
+                })),
+            });
+
+            const result = await extendEntries(
+                db,
+                contractId,
+                entries.map(e => e.entry_key_xdr),
+                100000,
+                "SECRETKEY123",
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.feeCharged).toBe(7500);
         });
     });
 
@@ -222,11 +274,7 @@ describe("Core Extension Logic", () => {
         it("returns error on simulation failure", async () => {
             const contractId = seedContract(db);
 
-            mockSimulateExtension.mockResolvedValue({
-                success: false,
-                minResourceFee: 0,
-                error: "Entry is archived",
-            });
+            mockSimulateExtension.mockRejectedValue(new Error("Entry is archived"));
 
             const result = await simulateExtension(
                 db, contractId, ["instance-key-xdr"], 100000, "GPUBLICKEY",
@@ -242,6 +290,28 @@ describe("Core Extension Logic", () => {
             );
             expect(result.success).toBe(false);
             expect(result.error).toBe("Contract not found");
+        });
+
+        it("delegates simulation to the RPC client and returns estimated fee as minResourceFee", async () => {
+            const contractId = seedContract(db);
+
+            mockSimulateExtension.mockResolvedValue({
+                success: true,
+                minResourceFee: 12500,
+            });
+
+            const result = await simulateExtension(
+                db, contractId, ["instance-key-xdr", "wasm-key-xdr"], 100000, "GPUBLICKEY",
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.estimatedFee).toBe(12500);
+            expect(result.entriesExtended).toBe(2);
+            expect(mockSimulateExtension).toHaveBeenCalledWith(
+                ["instance-key-xdr", "wasm-key-xdr"],
+                100000,
+                "GPUBLICKEY",
+            );
         });
     });
 
