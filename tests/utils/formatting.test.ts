@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { convertLedgerCloseTimeToSeconds, formatTimeToCloseLedger, classifyTTL, statusIndicator, formatContractID } from "../../src/utils/formatting";
+import { convertLedgerCloseTimeToSeconds, formatTimeToCloseLedger, classifyTTL, statusIndicator, formatContractID, formatSecretKey } from "../../src/utils/formatting";
 
 describe("convertLedgerCloseTimeToSeconds", () => {
     it("should convert ledger close time to seconds using 5.5s average", () => {
@@ -94,5 +94,42 @@ describe("formatContractID", () => {
 
   it.skip("TODO: Implement XDR entry key decoding for better labeling", () => {
     // Phase 1/2 feature to make the 'status' output more readable
+  });
+});
+
+describe("formatSecretKey", () => {
+  it("masks a valid Stellar secret key showing first 4 and last 4 characters", () => {
+    const key = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    expect(formatSecretKey(key)).toBe("SAAA...AAAA");
+  });
+
+  it("returns the original string for env:VAR_NAME references", () => {
+    expect(formatSecretKey("env:MY_SECRET_KEY")).toBe("env:MY_SECRET_KEY");
+    expect(formatSecretKey("env:SECRET_VAR_42")).toBe("env:SECRET_VAR_42");
+  });
+
+  it("returns the original string for short keys that cannot be masked", () => {
+    expect(formatSecretKey("S")).toBe("S");
+    expect(formatSecretKey("S123")).toBe("S123");
+  });
+
+  it("returns null or empty string as-is", () => {
+    expect(formatSecretKey(null)).toBeNull();
+    expect(formatSecretKey("")).toBe("");
+  });
+
+  it("masks even a malformed long key starting with S", () => {
+    const long = "S" + "X".repeat(60);
+    expect(formatSecretKey(long)).toBe("SXXX...XXXX");
+  });
+
+  it("does not mask keys that do not start with S", () => {
+    expect(formatSecretKey("GABCDEF123456789")).toBe("GABCDEF123456789");
+    expect(formatSecretKey("raw-text")).toBe("raw-text");
+  });
+
+  it("produces exactly 11 characters for a 56-char Stellar secret key", () => {
+    const key = "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    expect(formatSecretKey(key).length).toBe(11);
   });
 });

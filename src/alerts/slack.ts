@@ -34,6 +34,7 @@ interface SlackBlock {
 
 function severityEmoji(event: AlertEvent): string {
     if (event.type === "alert_resolved") return "✅";
+    if (event.type === "state_changed") return "🔄";
     if (event.severity === "critical") return "🔴";
     return "⚠️";
 }
@@ -48,6 +49,9 @@ function buildBlocks(event: AlertEvent): SlackBlock[] {
         status = `Resource ${resourceType} ${event.severity === "critical" ? "CRITICAL" : "Warning"}`;
     } else if (event.type === "threshold_crossed") {
         status = `TTL ${event.severity === "critical" ? "CRITICAL" : "Warning"}`;
+    } else if (event.type === "state_changed") {
+        const diffLabel = event.diff.diffType.charAt(0).toUpperCase() + event.diff.diffType.slice(1);
+        status = `State ${diffLabel}`;
     } else {
         status = "Alert Resolved";
     }
@@ -63,7 +67,6 @@ function buildBlocks(event: AlertEvent): SlackBlock[] {
 
     let details: SlackBlock;
     if (event.type === "resource_alert") {
-        const resourceType = event.resource.type === "cpu" ? "CPU Instructions" : "Memory Bytes";
         const usageStr = event.resource.currentUsage.toLocaleString();
         const limitStr = event.resource.limit.toLocaleString();
 
@@ -85,6 +88,36 @@ function buildBlocks(event: AlertEvent): SlackBlock[] {
                 {
                     type: "mrkdwn",
                     text: `*Severity:*\n${event.severity}`,
+                },
+            ],
+        };
+    } else if (event.type === "state_changed") {
+        const entryLabel = event.entry.label ?? event.entry.type;
+        const oldVal = event.diff.oldValueXdr ?? "(none)";
+        const newVal = event.diff.newValueXdr ?? "(none)";
+
+        details = {
+            type: "section",
+            fields: [
+                {
+                    type: "mrkdwn",
+                    text: `*Entry:*\n${entryLabel}`,
+                },
+                {
+                    type: "mrkdwn",
+                    text: `*Network:*\n${event.network}`,
+                },
+                {
+                    type: "mrkdwn",
+                    text: `*Change Type:*\n${event.diff.diffType}`,
+                },
+                {
+                    type: "mrkdwn",
+                    text: `*Old Value:*\n\`${oldVal}\``,
+                },
+                {
+                    type: "mrkdwn",
+                    text: `*New Value:*\n\`${newVal}\``,
                 },
             ],
         };
@@ -136,6 +169,13 @@ function buildFallbackText(event: AlertEvent): string {
             `${icon} ${status} — ${contractDisplay} (${event.network}) | ` +
             `Usage: ${event.resource.currentUsage.toLocaleString()} / ${event.resource.limit.toLocaleString()} ` +
             `(${event.resource.usagePercent}%)`
+        );
+    } else if (event.type === "state_changed") {
+        const diffLabel = event.diff.diffType.charAt(0).toUpperCase() + event.diff.diffType.slice(1);
+        return (
+            `${icon} State ${diffLabel} — ${contractDisplay} (${event.network}) | ` +
+            `Entry: ${event.entry.label ?? event.entry.type} | ` +
+            `Old: ${event.diff.oldValueXdr ?? "(none)"} → New: ${event.diff.newValueXdr ?? "(none)"}`
         );
     } else if (event.type === "threshold_crossed") {
         const status = `TTL ${event.severity === "critical" ? "CRITICAL" : "Warning"}`;

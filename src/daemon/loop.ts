@@ -4,10 +4,17 @@ import { runIntrospectionRescan } from "../core/introspection.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
 import { runAutoExtensions } from "../core/extension.js";
 import { vacuumDatabase } from "../db/database.js";
-import { aggregateDailyCostSnapshots } from "../db/repositories.js";
+import { aggregateDailyCostSnapshots, getAllContracts } from "../db/repositories.js";
 import { getLogger } from "../logging/index.js";
+import type { Logger } from "../logging/types.js";
 
-const logger = getLogger().child({ component: "DaemonLoop" });
+// Resolve the child logger lazily so that a runtime reconfiguration of the
+// global logger (e.g. the daemon command's `--log-format json`) is in effect
+// by the time the loop emits its first line.
+let loopLogger: Logger | null = null;
+function logger(): Logger {
+    return (loopLogger ??= getLogger().child({ component: "DaemonLoop" }));
+}
 
 // ─── Public contract ──────────────────────────────────────────────────────────
 
@@ -16,6 +23,8 @@ export interface DaemonOptions {
     intervalMs?: number;
     /** Optional RPC endpoint URL override. */
     rpcUrl?: string;
+    /** Optional sponsor secret key for auto-extensions */
+    feeSponsorSecret?: string;
     /** How frequently to run vacuum maintenance. Defaults to 24 hours. */
     vacuumIntervalMs?: number;
     /** Called after every cycle with the result (or null + error on failure). */
@@ -59,17 +68,18 @@ export async function startDaemon(
     vacuumIntervalMs = options?.vacuumIntervalMs ?? DEFAULT_VACUUM_INTERVAL_MS;
     const rpcUrl = options?.rpcUrl;
     const onCycle = options?.onCycle;
+    const effectiveIntervalMs = resolvePollIntervalMs(db, network, intervalMs);
 
     lastVacuumAt = Date.now();
-    logger.info(`Daemon starting — network: ${network}, interval: ${intervalMs}ms`);
+    logger().info(`Daemon starting — network: ${network}, interval: ${intervalMs}ms`);
 
     // Run the initial cycle immediately.
-    await executeCycle(db, network, rpcUrl, onCycle);
+    await executeCycle(db, network, rpcUrl, options?.feeSponsorSecret, onCycle);
 
     // Schedule repeating cycles.
     intervalHandle = setInterval(() => {
-        void scheduledTick(db, network, rpcUrl, onCycle);
-    }, intervalMs);
+        void scheduledTick(db, network, rpcUrl, options?.feeSponsorSecret, onCycle);
+    }, effectiveIntervalMs);
 }
 
 /**
@@ -84,7 +94,7 @@ export function stopDaemon(): void {
     if (intervalHandle !== null) {
         clearInterval(intervalHandle);
         intervalHandle = null;
-        logger.info("Daemon stopped");
+        logger().info("Daemon stopped");
     }
     cycleInFlight = false;
 }
@@ -102,6 +112,7 @@ async function executeCycle(
     db: Database.Database,
     network: string,
     rpcUrl: string | undefined,
+    feeSponsorSecret: string | undefined,
     onCycle: DaemonOptions["onCycle"],
 ): Promise<void> {
     cycleInFlight = true;
@@ -109,7 +120,7 @@ async function executeCycle(
     try {
         const result = await runMonitorCycle(db, network, rpcUrl);
 
-        logger.debug(
+        logger().debug(
             `Cycle complete — checked: ${result.contractsChecked}, ` +
             `updated: ${result.entriesUpdated}, ` +
             `crossed: ${result.thresholdsCrossed}, ` +
@@ -122,7 +133,7 @@ async function executeCycle(
         try {
             const delivery = await deliverPendingAlerts(db, network);
             if (delivery.attempted > 0) {
-                logger.info(
+                logger().info(
                     `Delivery — attempted: ${delivery.attempted}, ` +
                     `delivered: ${delivery.delivered}, failed: ${delivery.failed}`,
                 );
@@ -130,28 +141,28 @@ async function executeCycle(
         } catch (deliveryErr: unknown) {
             // This should never happen (deliverPendingAlerts never throws),
             // but guard defensively.
-            logger.error("deliverPendingAlerts threw unexpectedly", deliveryErr);
+            logger().error("deliverPendingAlerts threw unexpectedly", deliveryErr);
         }
 
         // Step 3: Run introspection re-scan
         try {
             const introspection = await runIntrospectionRescan(db, network, rpcUrl);
             if (introspection.contractsChecked > 0) {
-                logger.info(
+                logger().info(
                     `Introspection — checked: ${introspection.contractsChecked}, ` +
                     `new keys: ${introspection.newEntriesFound}, ` +
                     `errors: ${introspection.errors.length}`,
                 );
             }
         } catch (introErr: unknown) {
-            logger.error("runIntrospectionRescan threw unexpectedly", introErr);
+            logger().error("runIntrospectionRescan threw unexpectedly", introErr);
         }
 
         // Step 4: run auto-extensions for contracts with enabled policies.
         try {
-            const extensions = await runAutoExtensions(db, network, rpcUrl);
+            const extensions = await runAutoExtensions(db, network, rpcUrl, feeSponsorSecret);
             if (extensions.contractsChecked > 0) {
-                logger.info(
+                logger().info(
                     `Auto-extensions — checked: ${extensions.contractsChecked}, ` +
                     `extended: ${extensions.contractsExtended}, ` +
                     `entries: ${extensions.entriesExtended}, ` +
@@ -160,24 +171,24 @@ async function executeCycle(
             }
             for (const ext of extensions.extensions) {
                 if (ext.isAnomaly) {
-                    logger.warn(`Cost anomaly detected for contract ${ext.contractId}: ${ext.anomalyDetails}`);
+                    logger().warn(`Cost anomaly detected for contract ${ext.contractId}: ${ext.anomalyDetails}`);
                 }
             }
         } catch (extensionErr: unknown) {
-            logger.error("runAutoExtensions threw unexpectedly", extensionErr);
+            logger().error("runAutoExtensions threw unexpectedly", extensionErr);
         }
 
         // Step 4: aggregate daily cost snapshots for past extension history.
         try {
             aggregateDailyCostSnapshots(db);
         } catch (snapshotErr: unknown) {
-            logger.error("aggregateDailyCostSnapshots threw unexpectedly", snapshotErr);
+            logger().error("aggregateDailyCostSnapshots threw unexpectedly", snapshotErr);
         }
 
         safeOnCycle(onCycle, result, undefined);
     } catch (err: unknown) {
         const error = err instanceof Error ? err : new Error(String(err));
-        logger.error(`Cycle failed: ${error.message}`, err);
+        logger().error(`Cycle failed: ${error.message}`, err);
         safeOnCycle(onCycle, null, error);
     } finally {
         cycleInFlight = false;
@@ -188,15 +199,16 @@ async function scheduledTick(
     db: Database.Database,
     network: string,
     rpcUrl: string | undefined,
+    feeSponsorSecret: string | undefined,
     onCycle: DaemonOptions["onCycle"],
 ): Promise<void> {
     if (cycleInFlight) {
-        logger.debug("Skipping tick — previous cycle still in flight");
+        logger().debug("Skipping tick — previous cycle still in flight");
         return;
     }
 
     await runScheduledVacuum(db);
-    await executeCycle(db, network, rpcUrl, onCycle);
+    await executeCycle(db, network, rpcUrl, feeSponsorSecret, onCycle);
 }
 
 async function runScheduledVacuum(db: Database.Database): Promise<void> {
@@ -205,17 +217,17 @@ async function runScheduledVacuum(db: Database.Database): Promise<void> {
     }
 
     if (db.inTransaction) {
-        logger.info("Skipping scheduled vacuum — database has an active transaction");
+        logger().info("Skipping scheduled vacuum — database has an active transaction");
         return;
     }
 
-    logger.info("Scheduled maintenance: starting database vacuum");
+    logger().info("Scheduled maintenance: starting database vacuum");
     const vacuumed = vacuumDatabase(db);
     if (vacuumed) {
         lastVacuumAt = Date.now();
-        logger.info("Scheduled maintenance: database vacuum completed");
+        logger().info("Scheduled maintenance: database vacuum completed");
     } else {
-        logger.info("Scheduled maintenance: database vacuum skipped due to busy database");
+        logger().info("Scheduled maintenance: database vacuum skipped due to busy database");
     }
 }
 
@@ -231,6 +243,19 @@ function safeOnCycle(
     try {
         onCycle(result, error);
     } catch (cbErr) {
-        logger.error("onCycle callback threw — ignoring", cbErr);
+        logger().error("onCycle callback threw — ignoring", cbErr);
     }
+}
+
+function resolvePollIntervalMs(db: Database.Database, network: string, fallbackIntervalMs: number): number {
+    const contracts = getAllContracts(db).filter((contract) => contract.network === network);
+    const overrides = contracts
+        .map((contract) => contract.poll_interval_seconds)
+        .filter((value): value is number => typeof value === "number" && value > 0);
+
+    if (overrides.length === 0) {
+        return fallbackIntervalMs;
+    }
+
+    return Math.min(...overrides) * 1000;
 }
