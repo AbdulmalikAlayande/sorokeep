@@ -47,8 +47,6 @@ Sorokeep is the unified operations layer that handles all of this.
 - **Advanced Security** — Integrates with AWS Secrets Manager & HashiCorp Vault for secure key resolution
 - **Production-Ready deployments** — Includes Dockerfile, systemd service templates, and GitHub Actions for CI/CD integration
 
-> 🏆 **Sorokeep was accepted into the Stellar Drips Wave program** and is actively maintained with contributions from a growing open-source community (over 55 forks and 22+ PRs from Wave contributors).
-
 ## Install
 
 **Requirements:** Node.js 22+
