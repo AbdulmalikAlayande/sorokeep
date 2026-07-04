@@ -14,11 +14,43 @@ import {
     reserveBudget,
     commitBudget,
     rollbackBudget,
+    countExtensionsInLastHour,
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
+import { formatSecretKey } from "../utils/formatting.js";
+import { VaultResolver } from "./vault.js";
+import { loadConfig } from "../utils/config.js";
 
 const logger = getLogger().child({ component: "Extension" });
+
+// ─── Rate limiter ─────────────────────────────────────────────────────────────
+
+/**
+ * Maximum number of auto-extension transactions allowed per contract per hour.
+ * Prevents runaway fee submissions under extreme network load (issue #142).
+ */
+export const HOURLY_RATE_LIMIT = 5;
+
+/**
+ * Check whether the given contract has reached its hourly auto-extension rate limit.
+ *
+ * Queries `extension_history` for records within the last 60 minutes and
+ * compares the count against `limit` (default: HOURLY_RATE_LIMIT).
+ *
+ * @param db - The SQLite database connection.
+ * @param contractId - The contract to check.
+ * @param limit - Maximum allowed extensions per hour (defaults to HOURLY_RATE_LIMIT).
+ * @returns `true` when the contract is rate-limited; `false` otherwise.
+ */
+export function isRateLimited(
+    db: import("better-sqlite3").Database,
+    contractId: string,
+    limit = HOURLY_RATE_LIMIT,
+): boolean {
+    const count = countExtensionsInLastHour(db, contractId);
+    return count >= limit;
+}
 
 // ─── Public contract ──────────────────────────────────────────────────────────
 
@@ -35,8 +67,10 @@ export interface ExtensionResult {
     ledger?: number;
     /** Error message if failed. */
     error?: string;
-    /** Estimated fee in stroops (from simulation). */
+    /** Estimated fee in stroops (from simulation, before submission). */
     estimatedFee?: number;
+    /** Actual fee charged in stroops (from submitted transaction result). */
+    feeCharged?: number;
     /** CPU instructions consumed by the transaction. */
     cpuInsns?: number;
     /** Memory bytes consumed by the transaction. */
@@ -80,6 +114,8 @@ export interface RestoreResult {
     ledger?: number;
     /** Error message if failed. */
     error?: string;
+    /** Fee charged in stroops. */
+    feeCharged?: number;
 }
 
 // ─── Core implementation ──────────────────────────────────────────────────────
@@ -103,14 +139,16 @@ export async function simulateExtension(
 
     const client = new StellarRpcClient(contract.network, rpcUrl);
 
-    const sim = await client.simulateExtension(entryKeyXdrs, extendToLedgers, sourcePublicKey);
-
-    if (!sim.success) {
+    let sim;
+    try {
+        sim = await client.simulateExtension(entryKeyXdrs, extendToLedgers, sourcePublicKey);
+    } catch (err: any) {
+        logger.warn(`Simulation warning for ${contractId}: ${err.message}`);
         return {
             success: false,
             contractId,
             entriesExtended: 0,
-            error: sim.error,
+            error: err.message,
         };
     }
 
@@ -133,6 +171,7 @@ export async function extendEntries(
     extendToLedgers: number,
     secretKey: string,
     rpcUrl?: string,
+    sponsorSecret?: string,
 ): Promise<ExtensionResult> {
     const contract = getContract(db, contractId);
     if (!contract) {
@@ -149,7 +188,35 @@ export async function extendEntries(
         `Extending ${entryKeyXdrs.length} entries for ${contractId} to ${extendToLedgers} ledgers`,
     );
 
-    const txResult = await client.submitExtension(entryKeyXdrs, extendToLedgers, secretKey);
+    const resolvedSponsorSecret = sponsorSecret ? await resolveSecretKey(sponsorSecret) : undefined;
+    if (sponsorSecret && !resolvedSponsorSecret) {
+        return {
+            success: false,
+            contractId,
+            entriesExtended: 0,
+            error: `Failed to resolve sponsor secret key from environment variable: ${sponsorSecret}`,
+        };
+    }
+
+    let txResult;
+    try {
+        txResult = resolvedSponsorSecret
+            ? await client.submitExtensionWithFeeBump(
+                entryKeyXdrs,
+                extendToLedgers,
+                secretKey,
+                resolvedSponsorSecret,
+            )
+            : await client.submitExtension(entryKeyXdrs, extendToLedgers, secretKey);
+    } catch (err: any) {
+        logger.warn(`Simulation warning for ${contractId}: ${err.message}`);
+        return {
+            success: false,
+            contractId,
+            entriesExtended: 0,
+            error: err.message,
+        };
+    }
 
     if (!txResult.success) {
         logger.error(`Extension failed for ${contractId}: ${txResult.error}`);
@@ -234,6 +301,7 @@ export async function extendEntries(
         entriesExtended: entryKeyXdrs.length,
         txHash: txResult.txHash,
         ledger: txResult.ledger,
+        feeCharged: txResult.feeCharged,
         cpuInsns: txResult.cpuInsns,
         memBytes: txResult.memBytes,
         isAnomaly,
@@ -255,6 +323,7 @@ export async function runAutoExtensions(
     db: Database.Database,
     network: string,
     rpcUrl?: string,
+    sponsorSecret?: string,
 ): Promise<AutoExtensionResult> {
     const result: AutoExtensionResult = {
         contractsChecked: 0,
@@ -294,10 +363,21 @@ export async function runAutoExtensions(
             const needsExtension = entries.filter(e => {
                 if (!e.live_until_ledger) return false;
                 const remaining = e.live_until_ledger - latestLedger;
-                return remaining > 0 && remaining < policy.extend_when_below_ledgers;
+                return remaining >= 0 && remaining < policy.extend_when_below_ledgers;
             });
 
             if (needsExtension.length === 0) return;
+
+            // ── Rate limit check (issue #142) ────────────────────────────────
+            // Block auto-extension if the contract has already hit the maximum
+            // number of extension transactions allowed per hour.
+            if (isRateLimited(db, contract.id)) {
+                const count = countExtensionsInLastHour(db, contract.id);
+                const msg = `Contract ${contract.id}: rate limit reached — ${count}/${HOURLY_RATE_LIMIT} extensions in the last hour. Skipping.`;
+                logger.warn(msg);
+                result.errors.push(msg);
+                return;
+            }
 
             // Resolve secret key: prefer channel pool, fall back to policy keypair
             let secretKey: string | null = null;
@@ -305,7 +385,7 @@ export async function runAutoExtensions(
 
             if (pool) {
                 slot = await pool.acquire();
-                secretKey = resolveSecretKey(slot.keypairSource);
+                secretKey = await resolveSecretKey(slot.keypairSource);
                 if (!secretKey) {
                     pool.release(slot.publicKey);
                     slot = null;
@@ -313,12 +393,12 @@ export async function runAutoExtensions(
             }
 
             if (!secretKey) {
-                secretKey = resolveSecretKey(policy.keypair_source);
+                secretKey = await resolveSecretKey(policy.keypair_source);
             }
 
             if (!secretKey) {
                 result.errors.push(
-                    `Contract ${contract.id}: Cannot resolve keypair from source "${pool ? "channel pool" : policy.keypair_source}"`,
+                    `Contract ${contract.id}: Cannot resolve keypair from source "${pool ? "channel pool" : formatSecretKey(policy.keypair_source)}"`,
                 );
                 return;
             }
@@ -357,6 +437,7 @@ export async function runAutoExtensions(
                     policy.target_ttl_ledgers,
                     secretKey,
                     rpcUrl,
+                    sponsorSecret,
                 );
 
                 if (extResult.success) {
@@ -417,7 +498,18 @@ export async function restoreEntries(
 
     logger.info(`Restoring ${entryKeyXdrs.length} entries for ${contractId}`);
 
-    const txResult = await client.submitRestore(entryKeyXdrs, secretKey);
+    let txResult;
+    try {
+        txResult = await client.submitRestore(entryKeyXdrs, secretKey);
+    } catch (err: any) {
+        logger.warn(`Simulation warning for ${contractId}: ${err.message}`);
+        return {
+            success: false,
+            contractId,
+            entriesRestored: 0,
+            error: err.message,
+        };
+    }
 
     if (!txResult.success) {
         logger.error(`Restore failed for ${contractId}: ${txResult.error}`);
@@ -467,6 +559,7 @@ export async function restoreEntries(
         entriesRestored: restored,
         txHash: txResult.txHash,
         ledger: txResult.ledger,
+        feeCharged: txResult.feeCharged,
     };
 }
 
@@ -476,9 +569,10 @@ export async function restoreEntries(
  * Resolve a secret key from a keypair_source string.
  * Supports:
  *   - "env:VAR_NAME" — reads from environment variable
+ *   - "vault:<secret_path>" — reads from HashiCorp Vault (KV v1/v2)
  *   - Direct secret key string starting with "S" (56 chars)
  */
-function resolveSecretKey(source: string | null): string | null {
+export async function resolveSecretKey(source: string | null): Promise<string | null> {
     if (!source) return null;
 
     if (source.startsWith("env:")) {
@@ -491,11 +585,40 @@ function resolveSecretKey(source: string | null): string | null {
         return value;
     }
 
+    if (source.startsWith("vault:")) {
+        const vaultPath = source.slice(6);
+        if (!vaultPath) {
+            logger.warn("Vault keypair_source is empty");
+            return null;
+        }
+
+        try {
+            const config = loadConfig();
+            if (!config.vault?.url || !config.vault?.token) {
+                logger.error("Vault resolver requested but vault configuration missing in config.yaml (vault.url / vault.token)");
+                return null;
+            }
+
+            const resolver = new VaultResolver({
+                url: config.vault.url,
+                token: config.vault.token,
+                namespace: config.vault.namespace,
+            });
+
+            const secret = await resolver.getSecret(vaultPath);
+            return secret;
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            logger.error(`Failed to resolve secret from Vault path "${vaultPath}": ${message}`);
+            return null;
+        }
+    }
+
     // Direct secret key
     if (source.startsWith("S") && source.length === 56) {
         return source;
     }
 
-    logger.warn(`Unknown keypair_source format: ${source}`);
+    logger.warn(`Unknown keypair_source format: ${formatSecretKey(source)}`);
     return null;
 }

@@ -31,6 +31,7 @@ function resolveBotToken(): string {
 
 function severityEmoji(event: AlertEvent): string {
     if (event.type === "alert_resolved") return "✅";
+    if (event.type === "state_changed") return "🔄";
     if (event.severity === "critical") return "🔴";
     return "⚠️";
 }
@@ -51,6 +52,25 @@ function buildMessage(event: AlertEvent): string {
             `*Usage:* ${event.resource.usagePercent}% \\(${event.resource.currentUsage.toLocaleString()} / ${event.resource.limit.toLocaleString()}\\)`,
             ``,
             `_Severity: ${escapeMarkdown(event.severity)} \\| Contract: ${escapeMarkdown(event.contractId)}_`,
+        ].join("\n");
+    }
+
+    if (event.type === "state_changed") {
+        const diffLabel = event.diff.diffType.charAt(0).toUpperCase() + event.diff.diffType.slice(1);
+        const entryLabel = event.entry.label ?? event.entry.type;
+        const oldValStr = event.diff.oldValueXdr ? `\`${escapeCode(event.diff.oldValueXdr)}\`` : "\\(none\\)";
+        const newValStr = event.diff.newValueXdr ? `\`${escapeCode(event.diff.newValueXdr)}\`` : "\\(none\\)";
+
+        return [
+            `${icon} *State ${diffLabel}* — ${escapeMarkdown(contractDisplay)}`,
+            ``,
+            `*Entry:* ${escapeMarkdown(entryLabel)}`,
+            `*Network:* ${escapeMarkdown(event.network)}`,
+            `*Change Type:* ${escapeMarkdown(event.diff.diffType)}`,
+            `*Old Value:* ${oldValStr}`,
+            `*New Value:* ${newValStr}`,
+            ``,
+            `_Contract: ${escapeMarkdown(event.contractId)}_`,
         ].join("\n");
     }
 
@@ -77,6 +97,13 @@ function buildMessage(event: AlertEvent): string {
  */
 function escapeMarkdown(text: string): string {
     return text.replace(/[_*[\]()~`>#+=|{}.!\\-]/g, "\\$&");
+}
+
+/**
+ * Escape special characters for Telegram MarkdownV2 inside inline code block (`).
+ */
+function escapeCode(text: string): string {
+    return text.replace(/[\\`]/g, "\\$&");
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
