@@ -19,7 +19,6 @@ import {
     projectRentCost,
     projectRentWindows,
     RentProjectionInput,
-    RentProjectionResult,
     RentWindowProjection,
     LEDGERS_PER_DAY,
     DEFAULT_FEE_PER_RENT_1KB,
@@ -133,6 +132,7 @@ describe("projectRentCost", () => {
 
     it("uses persistent denominator when isPersistent=true (no explicit denominator)", () => {
         // Call without an explicit rentRateDenominator so the function resolves it from isPersistent.
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { rentRateDenominator: _drop, ...baseNoExplicitDenom } = baseInput as RentProjectionInput & { rentRateDenominator?: number };
         const persistent = projectRentCost({ ...baseNoExplicitDenom, isPersistent: true, rentRateDenominator: undefined });
         const temporary  = projectRentCost({ ...baseNoExplicitDenom, isPersistent: false, rentRateDenominator: undefined });

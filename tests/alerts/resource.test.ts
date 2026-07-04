@@ -3,11 +3,10 @@ import type Database from "better-sqlite3";
 import { getDatabaseForTesting } from "../../src/db/database";
 import {
     insertContract,
-    upsertEntry,
     insertResourceAlertConfig,
-    recordResourceAlertFired,
+    recordResourceAlertFired
 } from "../../src/db/repositories";
-import { checkResourceLimitsAndAlert } from "../../src/alerts/resource";
+import { checkResourceLimitsAndAlert, deliverPendingResourceAlerts } from "../../src/alerts/resource";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
@@ -246,7 +245,7 @@ describe("Resource Alert Detection and Dispatch", () => {
             checkResourceLimitsAndAlert(db, "CTEST1234", resourceData);
 
             expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
-            const [url, event, secret] = mockSendWebhookAlert.mock.calls[0]!;
+            const [, , secret] = mockSendWebhookAlert.mock.calls[0]!;
             expect(secret).toBe("test-secret-key");
         });
     });
@@ -543,6 +542,88 @@ describe("Resource Alert Detection and Dispatch", () => {
                 const [, event] = mockSendWebhookAlert.mock.calls[0]!;
                 expect(event.severity).toBe("critical");
             }
+        });
+    });
+
+    describe("deliverPendingResourceAlerts", () => {
+        beforeEach(() => {
+            mockSendWebhookAlert.mockReset();
+            mockSendSlackAlert.mockReset();
+        });
+
+        it("delivers pending alerts and updates their status", async () => {
+            const { resourceAlertConfigId } = seedContractWithResourceAlert(db, {
+                contractId: "C123",
+                channelType: "webhook",
+                channelTarget: "http://example.com"
+            });
+
+            const alertId = recordResourceAlertFired(db, {
+                resource_alert_config_id: resourceAlertConfigId,
+                resource_type: "cpu",
+                usage: 90000000,
+                limit: 100000000,
+                usage_percent: 90,
+                fired_at_ledger: 100
+            });
+
+            mockSendWebhookAlert.mockResolvedValue(true);
+
+            const result = await deliverPendingResourceAlerts(db, "testnet");
+            
+            expect(result.attempted).toBe(1);
+            expect(result.delivered).toBe(1);
+            expect(result.failed).toBe(0);
+            
+            const row = db.prepare("SELECT delivered FROM resource_alerts_fired WHERE id = ?").get(alertId) as any;
+            expect(row.delivered).toBe(1);
+        });
+
+        it("returns early if no pending alerts", async () => {
+            const result = await deliverPendingResourceAlerts(db, "testnet");
+            expect(result.attempted).toBe(0);
+            expect(result.delivered).toBe(0);
+        });
+
+        it("handles delivery failure and retries", async () => {
+            const { resourceAlertConfigId } = seedContractWithResourceAlert(db, {
+                contractId: "C456",
+                channelType: "webhook",
+                channelTarget: "http://example.com"
+            });
+
+            const alertId = recordResourceAlertFired(db, {
+                resource_alert_config_id: resourceAlertConfigId,
+                resource_type: "cpu",
+                usage: 90000000,
+                limit: 100000000,
+                usage_percent: 90,
+                fired_at_ledger: 100
+            });
+
+            mockSendWebhookAlert.mockImplementation(() => {
+                throw new Error("Network error");
+            });
+
+            let result = await deliverPendingResourceAlerts(db, "testnet");
+            expect(mockSendWebhookAlert).toHaveBeenCalledTimes(1);
+            expect(result.attempted).toBe(1);
+            expect(result.failed).toBe(1);
+            
+            let row = db.prepare("SELECT delivered, retry_count FROM resource_alerts_fired WHERE id = ?").get(alertId) as any;
+            expect(row.delivered).toBe(0);
+            expect(row.retry_count).toBe(1);
+
+            db.prepare("UPDATE resource_alerts_fired SET retry_count = 4 WHERE id = ?").run(alertId);
+            
+            result = await deliverPendingResourceAlerts(db, "testnet");
+            expect(result.attempted).toBe(1);
+            expect(result.failed).toBe(1);
+            expect(result.abandoned).toBe(1);
+            
+            row = db.prepare("SELECT delivered, retry_count FROM resource_alerts_fired WHERE id = ?").get(alertId) as any;
+            expect(row.delivered).toBe(0);
+            expect(row.retry_count).toBe(5);
         });
     });
 });

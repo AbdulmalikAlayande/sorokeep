@@ -3,7 +3,7 @@ import { formatTimeToCloseLedger } from "../utils/formatting.js";
 // ─── Core event type ─────────────────────────────────────────────────────────
 
 export type AlertSeverity = "critical" | "warning" | "info";
-export type AlertEventType = "threshold_crossed" | "alert_resolved" | "resource_alert";
+export type AlertEventType = "threshold_crossed" | "alert_resolved" | "resource_alert" | "state_changed";
 
 // ─── TTL-based alert event ──────────────────────────────────────────────────
 
@@ -57,9 +57,33 @@ export interface ResourceAlertEvent {
     timestamp: string;
 }
 
+// ─── State-change alert event ───────────────────────────────────────────────
+
+export interface StateChangeAlertEvent {
+    type: "state_changed";
+    severity: AlertSeverity;
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    entry: {
+        keyXdr: string;
+        type: string;
+        label: string | null;
+    };
+    diff: {
+        diffType: "created" | "updated" | "deleted";
+        oldValueXdr: string | null;
+        newValueXdr: string | null;
+    };
+    /** Ledger sequence number at the time of detection. */
+    detectedAtLedger: number;
+    /** ISO 8601 timestamp. */
+    timestamp: string;
+}
+
 // ─── Union of all alert event types ──────────────────────────────────────────
 
-export type AlertEvent = TTLAlertEvent | ResourceAlertEvent;
+export type AlertEvent = TTLAlertEvent | ResourceAlertEvent | StateChangeAlertEvent;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -159,6 +183,42 @@ export function buildResourceAlertEvent(opts: {
         },
         message,
         firedAtLedger: opts.firedAtLedger,
+        timestamp: new Date().toISOString(),
+    };
+}
+
+/**
+ * Build a state-change AlertEvent from raw data.
+ */
+export function buildStateChangeAlertEvent(opts: {
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    entryKeyXdr: string;
+    entryType: string;
+    entryLabel: string | null;
+    diffType: "created" | "updated" | "deleted";
+    oldValueXdr: string | null;
+    newValueXdr: string | null;
+    detectedAtLedger: number;
+}): StateChangeAlertEvent {
+    return {
+        type: "state_changed",
+        severity: "info",
+        contractId: opts.contractId,
+        contractName: opts.contractName,
+        network: opts.network,
+        entry: {
+            keyXdr: opts.entryKeyXdr,
+            type: opts.entryType,
+            label: opts.entryLabel,
+        },
+        diff: {
+            diffType: opts.diffType,
+            oldValueXdr: opts.oldValueXdr,
+            newValueXdr: opts.newValueXdr,
+        },
+        detectedAtLedger: opts.detectedAtLedger,
         timestamp: new Date().toISOString(),
     };
 }

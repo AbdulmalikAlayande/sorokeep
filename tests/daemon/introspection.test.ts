@@ -1,7 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import type Database from "better-sqlite3";
+import { describe, it, vi, beforeEach, afterEach } from "vitest";
 import { getDatabaseForTesting } from "../../src/db/database";
-import { startDaemon, stopDaemon } from "../../src/daemon/loop";
+import { stopDaemon } from "../../src/daemon/loop";
 
 // Mocks
 const mockRunMonitorCycle = vi.fn();
@@ -28,10 +27,8 @@ vi.mock("../../src/core/introspection.js", () => ({
 }));
 
 describe("daemon introspection re-scan", () => {
-    let db: Database.Database;
-
     beforeEach(() => {
-        db = getDatabaseForTesting();
+        getDatabaseForTesting();
         vi.clearAllMocks();
         vi.useFakeTimers();
         
