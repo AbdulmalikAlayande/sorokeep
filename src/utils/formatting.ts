@@ -46,3 +46,11 @@ export function formatContractID(contractID: string, maxLength: number = 16): st
     return `${contractID.slice(0, 8)}...${contractID.slice(-4)}`;
 }
 
+export function formatSecretKey(key: string | null): string | null {
+    if (!key || key.startsWith("env:")) return key;
+    if (key.startsWith("S") && key.length >= 8) {
+        return `${key.slice(0, 4)}...${key.slice(-4)}`;
+    }
+    return key;
+}
+
