@@ -94,14 +94,7 @@ vi.mock("@stellar/stellar-sdk", async () => {
                 resourceFee: actualModule.xdr.Int64.fromString("0")
             });
 
-            // Build TransactionEnvelope
-            const txExt = actualModule.xdr.TransactionExt.1(
-                new actualModule.xdr.TransactionV1EnvelopeExt({
-                    sorobanData
-                }) // Actually, ext.v1() is SorobanTransactionData
-            );
-            // wait, xdr.TransactionExt is a union? Yes. It might be simpler to just return a mock object that matches the structure.
-            
+
             const mockEnvelope = {
                 switch: () => ({ name: 'envelopeTypeTx' }),
                 v1: () => ({
