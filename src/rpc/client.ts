@@ -64,9 +64,6 @@ const RPC_URLS: Record<string, string> = {
     mainnet: "https://mainnet.sorobanrpc.com",
 };
 
-// Sorokeep's own processed types — intentionally NOT extending the SDK's LedgerEntryResult
-// because we don't want to carry raw XDR objects (key, val) through the application layer.
-
 export interface SorokeepLedgerEntryResult {
     entryKeyXdr: string;
     latestLedger: number;
@@ -90,12 +87,17 @@ export interface ContractStorageEntryResult extends SorokeepLedgerEntryResult {
 }
 
 export interface SimulateExtensionResult {
-    /** Estimated fee in stroops. */
     minResourceFee: number;
-    /** Whether the simulation succeeded. */
     success: boolean;
-    /** Error message if simulation failed. */
     error?: string;
+    /** CPU instructions consumed by the transaction. */
+    cpuInstructions?: number;
+    /** Memory bytes consumed by the transaction. */
+    memoryBytes?: number;
+    /** Read footprint size in bytes. */
+    readBytes?: number;
+    /** Write footprint size in bytes. */
+    writeBytes?: number;
 }
 
 /**
@@ -176,20 +178,15 @@ export interface FeeStatsResult {
 }
 
 export interface SubmitTransactionResult {
-    /** Whether the transaction succeeded. */
     success: boolean;
-    /** Transaction hash. */
     txHash: string;
-    /** Ledger the transaction was included in. */
     ledger: number;
-    /** CPU instructions consumed by the transaction. */
     cpuInsns?: number;
-    /** Memory bytes consumed by the transaction. */
     memBytes?: number;
-    /** Error message if the transaction failed. */
     error?: string;
     cpuInstructions?: number;
     memoryBytes?: number;
+    minResourceFee?: number;
     /** Actual fee charged in stroops, parsed from the transaction result. */
     feeCharged?: number;
 }
@@ -465,7 +462,6 @@ export class StellarRpcClient {
         const contract = new Contract(contractId);
         const op = contract.call("get_monitored_keys");
 
-        // Use a dummy account for simulation
         const account = new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0");
 
         const tx = new TransactionBuilder(account, {
@@ -482,10 +478,7 @@ export class StellarRpcClient {
 
         const successSim = sim;
         
-        // Parse the result
         const scv = successSim.result!.retval;
-        
-        // Assuming the return type is a Vec<ScVal> (or similar) of keys
         if (scv.switch().name === "scvVec") {
             const vec = scv.vec()!;
             return vec.map(val => val.toXDR("base64"));
@@ -494,9 +487,6 @@ export class StellarRpcClient {
         return [];
     }
 
-    /**
-     * Simulate an ExtendFootprintTTLOp to estimate fees before submitting.
-     */
     async simulateExtension(
         entryKeyXdrs: string[],
         extendToLedgers: number,
@@ -504,7 +494,6 @@ export class StellarRpcClient {
     ): Promise<SimulateExtensionResult> {
         const passphrase = await this.getNetworkPassphrase();
 
-        // Fetch account to get a valid sequence number for simulation
         const accountResponse = await this.server.getAccount(sourcePublicKey);
         const account = new Account(sourcePublicKey, accountResponse.sequenceNumber());
 
@@ -540,8 +529,53 @@ export class StellarRpcClient {
         return {
             success: true,
             minResourceFee: Number(successSim.minResourceFee ?? 0),
+            cpuInstructions: Number((successSim as any).cost?.cpuInsns ?? 0),
+            memoryBytes: Number((successSim as any).cost?.memBytes ?? 0),
+            readBytes: Number((successSim as any).cost?.readBytes ?? 0),
+            writeBytes: Number((successSim as any).cost?.writeBytes ?? 0),
         };
     }
+
+    async simulateRestore(
+        entryKeyXdrs: string[],
+        sourcePublicKey: string,
+    ): Promise<SimulateExtensionResult> {
+        const passphrase = await this.getNetworkPassphrase();
+        const accountResponse = await this.server.getAccount(sourcePublicKey);
+        const account = new Account(sourcePublicKey, accountResponse.sequenceNumber());
+
+        const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
+
+        const tx = new TransactionBuilder(account, {
+            fee: "100",
+            networkPassphrase: passphrase,
+        })
+            .addOperation(Operation.restoreFootprint({}))
+            .setTimeout(30)
+            .setSorobanData(
+                new SorobanDataBuilder()
+                    .setReadWrite(keys)
+                    .build(),
+            )
+            .build();
+
+        const sim = await this.server.simulateTransaction(tx);
+
+        if (rpc.Api.isSimulationError(sim)) {
+            return {
+                success: false,
+                minResourceFee: 0,
+                error: sim.error ?? "Simulation failed",
+            };
+        }
+
+        const successSim = sim as rpc.Api.SimulateTransactionSuccessResponse;
+        return {
+            success: true,
+            minResourceFee: Number(successSim.minResourceFee ?? 0),
+        };
+    }
+
 
     /**
      * Build, sign, and submit an ExtendFootprintTTLOp transaction.
@@ -556,6 +590,7 @@ export class StellarRpcClient {
         const passphrase = await this.getNetworkPassphrase();
         const keypair = Keypair.fromSecret(secretKey);
         const publicKey = keypair.publicKey();
+
         const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
 
         const buildTx = async () => {
@@ -769,10 +804,6 @@ export class StellarRpcClient {
         return txResult.success ? this.addResourcesToSuccess(txResult, sim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
     }
 
-    /**
-     * Send XLM payments from a source keypair to multiple destination accounts.
-     * Builds a single transaction with one PaymentOp per destination.
-     */
     async sendPayments(
         destinations: { publicKey: string; amountXlm: string }[],
         secretKey: string,
@@ -821,7 +852,6 @@ export class StellarRpcClient {
         return this.pollTransaction(sendResult.hash);
     }
 
-    // ─── Private helpers ─────────────────────────────────────────────────────
 
     /**
      * Returns true if the sendTransaction ERROR response indicates a txBadSeq result code.
@@ -869,9 +899,6 @@ export class StellarRpcClient {
         });
     }
 
-    /**
-     * Poll getTransaction until it reaches a terminal state (SUCCESS or FAILED).
-     */
     private async pollTransaction(
         txHash: string,
         maxAttempts = 30,
@@ -920,7 +947,6 @@ export class StellarRpcClient {
                 };
             }
 
-            // NOT_FOUND — still pending
             await new Promise(resolve => setTimeout(resolve, intervalMs));
         }
 
