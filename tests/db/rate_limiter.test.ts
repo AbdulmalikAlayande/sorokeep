@@ -19,7 +19,6 @@ import { getDatabaseForTesting } from "../../src/db/database.js";
 import {
     insertContract,
     upsertEntry,
-    recordExtension,
     countExtensionsInLastHour,
 } from "../../src/db/repositories.js";
 

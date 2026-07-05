@@ -83,13 +83,13 @@ function seedBasicData(db: Database.Database, costXlm = 0.001) {
 
 describe("costs command — Forecasted Rent section", () => {
     let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-    let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
     let exitSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
         mockDb = getDatabaseForTesting();
         consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-        consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        vi.spyOn(console, "error").mockImplementation(() => {});
         exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
             throw new Error("process.exit called");
         });

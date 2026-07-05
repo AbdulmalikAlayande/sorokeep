@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // --- 1. CORE IMPLEMENTATION CODE ---
 // ==========================================
 
-import { KeychainStore, SecureKeypairStore, KeysCliController } from "./keys";
+import { SecureKeypairStore, KeysCliController } from "./keys";
 
 // ==========================================
 // --- 2. TDD AUTOMATED TEST SUITE ---
@@ -23,11 +23,11 @@ describe("TDD - Local OS Keychain & Safe CLI Key Management Engine", () => {
 
     // Step 1: Build robust spy mocks matching native keytar interfaces
     mockKeytar = {
-      setPassword: vi.fn().mockImplementation(async (service, account, password) => {
+      setPassword: vi.fn().mockImplementation(async (_service, account, password) => {
         fakeKeychainDb.push({ account, value: password });
         return null;
       }),
-      findCredentials: vi.fn().mockImplementation(async (service) => {
+      findCredentials: vi.fn().mockImplementation(async () => {
         return fakeKeychainDb.map(item => ({ account: item.account, password: item.value }));
       })
     };

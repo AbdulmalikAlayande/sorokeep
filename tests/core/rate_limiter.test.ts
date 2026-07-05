@@ -18,7 +18,6 @@ import {
     insertContract,
     upsertEntry,
     upsertExtensionPolicy,
-    recordExtension,
 } from "../../src/db/repositories.js";
 
 // ─── Mock RPC client ─────────────────────────────────────────────────────────
@@ -279,7 +278,7 @@ describe("runAutoExtensions — rate limiting", () => {
         const contract2 = "COTHER111111111111111111111111111111111111111111111111111";
 
         const entryId1 = seedContractAndPolicy(db, CONTRACT_ID);
-        const entryId2 = seedContractAndPolicy(db, contract2);
+        seedContractAndPolicy(db, contract2);
 
         // Saturate contract1 only
         insertRecentExtensions(db, CONTRACT_ID, entryId1, HOURLY_RATE_LIMIT);

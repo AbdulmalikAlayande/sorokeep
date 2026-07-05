@@ -3,7 +3,6 @@ import type Database from "better-sqlite3";
 import { getDatabaseForTesting } from "../../src/db/database.js";
 import { watchContract } from "../../src/core/watch.js";
 import { runMonitorCycle } from "../../src/core/monitor.js";
-import { runAutoExtensions } from "../../src/core/extension.js";
 import {
     getAlertHistory,
     getEntriesForContract,
