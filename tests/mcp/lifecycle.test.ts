@@ -16,7 +16,7 @@ describe("MCP Server Lifecycle", () => {
         const stdout = new PassThrough();
 
         const server = createMcpServer(() => mockDb);
-        const transport = new StdioServerTransport({ stdin, stdout });
+        const transport = new StdioServerTransport(stdin, stdout);
 
         await server.connect(transport);
 
@@ -65,7 +65,7 @@ describe("MCP Server Lifecycle", () => {
         const stdout = new PassThrough();
 
         const server = createMcpServer(() => mockDb);
-        const transport = new StdioServerTransport({ stdin, stdout });
+        const transport = new StdioServerTransport(stdin, stdout);
 
         await server.connect(transport);
 
