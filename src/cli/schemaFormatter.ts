@@ -25,30 +25,30 @@ function normalizeSchemaCandidate(input: unknown): SchemaDictionary {
 }
 
 export function loadSchema(schemaPath: string): SchemaDictionary {
-  try {
-    const raw = fs.readFileSync(schemaPath, "utf8");
-    let parsed: unknown;
     try {
-      parsed = JSON.parse(raw);
+        const raw = fs.readFileSync(schemaPath, "utf8");
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`Schema configuration error: malformed JSON in schema file: ${msg}`, { cause: err });
+        }
+
+        return normalizeSchemaCandidate(parsed);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new Error(`Schema configuration error: malformed JSON in schema file: ${msg}`, { cause: err });
-    }
+        const nodeErr = err as NodeJS.ErrnoException;
+        if (nodeErr?.code === "ENOENT") {
+            throw new Error(
+                `Schema configuration error: schema file not found at '${schemaPath}'`,
+                { cause: err } // Pass the original caught variable directly
+            );
+        }
 
-    return normalizeSchemaCandidate(parsed);
-  } catch (err) {
-    const nodeErr = err as NodeJS.ErrnoException;
-    if (nodeErr?.code === "ENOENT") {
-      throw new Error(
-        `Schema configuration error: schema file not found at '${schemaPath}'`,
-        { cause: nodeErr ?? err }
-      );
+        const msg = nodeErr?.message ?? String(err);
+        throw new Error(`Schema configuration error: failed to load schema file: ${msg}`, { cause: err }); // Pass the original caught variable directly
     }
-    const msg = nodeErr?.message ?? String(err);
-    throw new Error(`Schema configuration error: failed to load schema file: ${msg}`, { cause: nodeErr ?? err });
-  }
 }
-
 function applySchemaToValue(value: unknown, schema: SchemaDictionary): unknown {
   if (typeof value === "string") {
     return schema[value] ?? value;
