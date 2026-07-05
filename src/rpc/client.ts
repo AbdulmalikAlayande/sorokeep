@@ -576,64 +576,6 @@ export class StellarRpcClient {
         };
     }
 
-    async submitRestore(
-        entryKeyXdrs: string[],
-        secretKey: string,
-    ): Promise<SubmitTransactionResult> {
-        const passphrase = await this.getNetworkPassphrase();
-        const keypair = Keypair.fromSecret(secretKey);
-        const publicKey = keypair.publicKey();
-
-        const buildTx = async () => {
-            const accountResponse = await this.server.getAccount(publicKey);
-            const account = new Account(publicKey, accountResponse.sequenceNumber());
-            const keys = entryKeyXdrs.map(k => xdr.LedgerKey.fromXDR(k, "base64"));
-            return new TransactionBuilder(account, { fee: "100", networkPassphrase: passphrase })
-                .addOperation(Operation.restoreFootprint({}))
-                .setTimeout(30)
-                .setSorobanData(new SorobanDataBuilder().setReadWrite(keys).build())
-                .build();
-        };
-
-        const tx = await buildTx();
-        const sim = await this.server.simulateTransaction(tx);
-
-        assertSimulationSuccess(sim);
-
-        const prepared = rpc.assembleTransaction(tx, sim).build();
-        prepared.sign(keypair);
-        const sendResult = await this.server.sendTransaction(prepared);
-
-        if (sendResult.status === "ERROR") {
-            if (this.isBadSeqError(sendResult)) {
-                logger.warn("Sequence mismatch detected on RestoreFootprint — refreshing account sequence and retrying");
-                const retryTx = await buildTx();
-                const retrySim = await this.server.simulateTransaction(retryTx);
-                assertSimulationSuccess(retrySim);
-                const retryPrepared = rpc.assembleTransaction(retryTx, retrySim).build();
-                retryPrepared.sign(keypair);
-                const retrySendResult = await this.server.sendTransaction(retryPrepared);
-                if (retrySendResult.status === "ERROR") {
-                    const diagnostics = (retrySendResult as any).errorResult ?? (retrySendResult as any).diagnosticEventsXdr ?? "";
-                    return { success: false, txHash: retrySendResult.hash, ledger: 0, cpuInsns: Number((retrySim as any).cost?.cpuInsns ?? 0), memBytes: Number((retrySim as any).cost?.memBytes ?? 0), error: `Transaction send error: ${diagnostics || retrySendResult.status}` };
-                }
-                const txResult = await this.pollTransaction(retrySendResult.hash);
-                return txResult.success ? this.addResourcesToSuccess(txResult, retrySim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
-            }
-            const diagnostics = (sendResult as any).errorResult ?? (sendResult as any).diagnosticEventsXdr ?? "";
-            return {
-                success: false,
-                txHash: sendResult.hash,
-                ledger: 0,
-                cpuInsns: Number((sim as any).cost?.cpuInsns ?? 0),
-                memBytes: Number((sim as any).cost?.memBytes ?? 0),
-                error: `Transaction send error: ${diagnostics || sendResult.status}`,
-            };
-        }
-
-        const txResult = await this.pollTransaction(sendResult.hash);
-        return txResult.success ? this.addResourcesToSuccess(txResult, sim as rpc.Api.SimulateTransactionSuccessResponse) : txResult;
-    }
 
     /**
      * Build, sign, and submit an ExtendFootprintTTLOp transaction.
