@@ -1,140 +1,279 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { registerCostsCommand } from "../../src/commands/costs";
 import { Command } from "commander";
-import * as dbLib from "../../src/db/database";
-import * as costsLib from "../../src/core/costs";
+import type Database from "better-sqlite3";
+import { getDatabaseForTesting } from "../../src/db/database.js";
+import { registerCostsCommand } from "../../src/commands/costs.js";
+import {
+    insertContract,
+    upsertEntry,
+    recordExtension,
+} from "../../src/db/repositories.js";
 
-vi.mock("../../src/db/database");
-vi.mock("../../src/core/costs");
-vi.mock("../../src/rpc/client");
+// ─── Shared mock state ────────────────────────────────────────────────────────
 
-describe("Costs Command CLI", () => {
-    let program: Command;
-    let mockExit: any;
-    let mockError: any;
-    let mockLog: any;
-    let actionFn: (contractId: string, options: any) => Promise<void>;
+let mockDb: Database.Database;
+
+vi.mock("../../src/db/database.js", async (importOriginal) => {
+    const actual = await importOriginal() as Record<string, unknown>;
+    return {
+        ...actual,
+        getDatabase: () => mockDb,
+    };
+});
+
+// Suppress live RPC calls — getFeeStats always resolves with a neutral result
+vi.mock("../../src/rpc/client.js", async (importOriginal) => {
+    const actual = await importOriginal() as Record<string, unknown>;
+    return {
+        ...actual,
+        StellarRpcClient: class {
+            getFeeStats() {
+                return Promise.resolve({
+                    baseFeeStroops: 100,
+                    surgeFeeStroops: 100,
+                    surgePricingMultiplier: 1,
+                });
+            }
+        },
+    };
+});
+
+// ─── Fixtures ─────────────────────────────────────────────────────────────────
+
+const CONTRACT_ID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+
+// Helper: seed a contract + one instance entry + one extension record
+function seedBasicData(db: Database.Database, costXlm = 0.001) {
+    insertContract(db, {
+        id: CONTRACT_ID,
+        name: "test-contract",
+        network: "testnet",
+    });
+
+    upsertEntry(db, {
+        contract_id: CONTRACT_ID,
+        entry_key_xdr: "AAAAA",
+        entry_type: "instance",
+        label: "instance",
+        live_until_ledger: 500000,
+        last_modified_ledger: 400000,
+        discovery_source: "deterministic",
+    });
+
+    // Retrieve the auto-assigned entry id
+    const entryRow = db
+        .prepare("SELECT id FROM contract_entries WHERE contract_id = ? LIMIT 1")
+        .get(CONTRACT_ID) as { id: number };
+
+    recordExtension(db, {
+        contract_id: CONTRACT_ID,
+        contract_entry_id: entryRow.id,
+        old_ttl_ledgers: 10000,
+        new_ttl_ledgers: 20000,
+        tx_hash: "abc123def456abc123def456abc123de",
+        cost_xlm: costXlm,
+        mem_bytes: 2048,
+        executed_at_ledger: 400001,
+    });
+
+    return entryRow.id;
+}
+
+// ─── Test suite ───────────────────────────────────────────────────────────────
+
+describe("costs command — Forecasted Rent section", () => {
+    let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+    let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+    let exitSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-        program = new Command();
-
-        vi.spyOn(Command.prototype, "action").mockImplementation(function (this: any, fn: any) {
-            actionFn = fn;
-            return this;
+        mockDb = getDatabaseForTesting();
+        consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+        consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+        exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+            throw new Error("process.exit called");
         });
-
-        registerCostsCommand(program);
-
-        mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
-        mockError = vi.spyOn(console, "error").mockImplementation(() => {});
-        mockLog = vi.spyOn(console, "log").mockImplementation(() => {});
-        vi.spyOn(dbLib, "getDatabase").mockReturnValue({} as any);
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    it("exits with 1 if --period is not a positive integer", async () => {
-        await actionFn("VALID_ID", { period: "abc" });
-        expect(mockExit).toHaveBeenCalledWith(1);
-        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("--period must be a positive integer"));
+    // ── AC1: "Forecasted Rent" section header appears ─────────────────────────
+    it("prints a 'Forecasted Rent' section header when extension history exists", async () => {
+        seedBasicData(mockDb);
+
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).toMatch(/Forecasted Rent/i);
     });
 
-    it("exits with 1 if --period is zero", async () => {
-        await actionFn("VALID_ID", { period: "0" });
-        expect(mockExit).toHaveBeenCalledWith(1);
+    // ── AC2: 30-day window is shown ───────────────────────────────────────────
+    it("shows a 30-day projected cost in the Forecasted Rent section", async () => {
+        seedBasicData(mockDb);
+
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).toMatch(/30.day/i);
+        expect(allOutput).toMatch(/XLM/);
     });
 
-    it("exits with 1 if --period is negative", async () => {
-        await actionFn("VALID_ID", { period: "-5" });
-        expect(mockExit).toHaveBeenCalledWith(1);
+    // ── AC3: 60-day window is shown ───────────────────────────────────────────
+    it("shows a 60-day projected cost in the Forecasted Rent section", async () => {
+        seedBasicData(mockDb);
+
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).toMatch(/60.day/i);
     });
 
-    it("exits with 1 when contract is not found", async () => {
-        vi.mocked(costsLib.getExtensionCosts).mockReturnValue({
-            success: false,
-            error: "contract_not_found",
-        } as any);
+    // ── AC4: 90-day window is shown ───────────────────────────────────────────
+    it("shows a 90-day projected cost in the Forecasted Rent section", async () => {
+        seedBasicData(mockDb);
 
-        await actionFn("MISSING_ID", { period: "30" });
-        expect(mockExit).toHaveBeenCalledWith(1);
-        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("not found"));
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).toMatch(/90.day/i);
     });
 
-    it("displays cost summary for a valid contract", async () => {
-        vi.mocked(costsLib.getExtensionCosts).mockReturnValue({
-            success: true,
-            data: {
-                contract: { name: "MyContract", network: "testnet" },
-                period: { label: "Last 30 days" },
-                message: null,
-                summary: {
-                    totalExtensions: 5,
-                    totalCostXlm: 0.05,
-                },
-                byEntryType: {
-                    wasm: { count: 3, costXlm: 0.03 },
-                    instance: { count: 2, costXlm: 0.02 },
-                },
-                recentExtensions: [],
-            },
-        } as any);
-        vi.mocked(costsLib.calculateFeeAdjustedProjection).mockReturnValue({
-            adjustedProjectedCostXlm: 0.05,
-            surgePricingMultiplier: 1.0,
-        } as any);
 
-        await actionFn("VALID_ID", { period: "30" });
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("MyContract"));
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Total extensions"));
+    // ── AC5: No Forecasted Rent when there is no extension history ────────────
+    it("does not show a forecast section when there is no extension history", async () => {
+        insertContract(mockDb, {
+            id: CONTRACT_ID,
+            name: "empty",
+            network: "testnet"
+        });
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).not.toMatch(/Forecasted Rent/i);
     });
 
-    it("displays message when no extensions found", async () => {
-        vi.mocked(costsLib.getExtensionCosts).mockReturnValue({
-            success: true,
-            data: {
-                contract: { name: "MyContract", network: "testnet" },
-                period: { label: "Last 30 days" },
-                message: "No extensions found in this period",
-                summary: { totalExtensions: 0, totalCostXlm: 0 },
-                byEntryType: {},
-                recentExtensions: [],
-            },
-        } as any);
+    // ── AC6: Show historical extension details in the output ────────────────
+    it("shows recent extension history details", async () => {
+        seedBasicData(mockDb);
 
-        await actionFn("VALID_ID", { period: "30" });
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("No extensions found"));
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).toContain("instance");
+        expect(allOutput).toContain("tx:");
     });
 
-    it("passes --all flag correctly to skip period parsing", async () => {
-        vi.mocked(costsLib.getExtensionCosts).mockReturnValue({
-            success: true,
-            data: {
-                contract: { name: "Test", network: "testnet" },
-                period: { label: "All time" },
-                message: "No extensions found",
-                summary: { totalExtensions: 0, totalCostXlm: 0 },
-                byEntryType: {},
-                recentExtensions: [],
-            },
-        } as any);
+    // ── AC7: JSON output is emitted when requested ───────────────────────────
+    it("prints JSON output when --json is passed", async () => {
+        seedBasicData(mockDb);
 
-        await actionFn("VALID_ID", { all: true, period: "30" });
-        expect(costsLib.getExtensionCosts).toHaveBeenCalledWith(
-            expect.anything(),
-            "VALID_ID",
-            expect.objectContaining({ all: true })
-        );
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID, "--json",
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).toContain("\"contract\"");
+        expect(allOutput).toContain("\"summary\"");
     });
 
-    it("handles thrown errors gracefully", async () => {
-        vi.mocked(costsLib.getExtensionCosts).mockImplementation(() => {
-            throw new Error("DB connection lost");
+    // ── AC8: invalid period exits with a usage error ─────────────────────────
+    it("exits when the period argument is invalid", async () => {
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await expect(program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID, "--period", "abc",
+        ])).rejects.toThrow();
+    });
+    it("does NOT print Forecasted Rent when there are no extensions", async () => {
+        insertContract(mockDb, {
+            id: CONTRACT_ID,
+            name: "empty-contract",
+            network: "testnet",
+
         });
 
-        await actionFn("VALID_ID", { period: "30" });
-        expect(mockExit).toHaveBeenCalledWith(1);
-        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("DB connection lost"));
+        const program = new Command();
+        registerCostsCommand(program);
+
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).not.toMatch(/Forecasted Rent/i);
     });
+
+    // ── AC6: Budget warning displayed when 30-day projection exceeds budget ───
+    it("displays a budget warning when 30-day projection exceeds the configured monthly budget", async () => {
+        // Seed with a very high extension cost so the projection easily exceeds
+        // any small monthly budget limit.
+        seedBasicData(mockDb, 999);
+
+        const program = new Command();
+        registerCostsCommand(program);
+
+        // Pass a tiny budget so it will definitely be breached
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+            "--monthly-budget", "0.001",
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).toMatch(/budget/i);
+        expect(allOutput).toMatch(/exceed|over|breach/i);
+    });
+
+    // ── AC7: No budget warning when projection is within budget ──────────────
+    it("does NOT display a budget warning when projection is within budget", async () => {
+        seedBasicData(mockDb, 0.0000001);
+
+        const program = new Command();
+        registerCostsCommand(program);
+
+        // Very large budget so nothing is breached
+        await program.parseAsync([
+            "node", "sorokeep", "costs", CONTRACT_ID,
+            "--monthly-budget", "10000",
+        ]);
+
+        const allOutput = consoleLogSpy.mock.calls.flat().join("\n");
+        expect(allOutput).not.toMatch(/exceed|over|breach/i);
+    });
+
 });

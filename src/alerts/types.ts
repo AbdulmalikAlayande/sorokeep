@@ -1,11 +1,7 @@
 import { formatTimeToCloseLedger } from "../utils/formatting.js";
 
-// ─── Core event type ─────────────────────────────────────────────────────────
-
 export type AlertSeverity = "critical" | "warning" | "info";
-export type AlertEventType = "threshold_crossed" | "alert_resolved" | "resource_alert";
-
-// ─── TTL-based alert event ──────────────────────────────────────────────────
+export type AlertEventType = "threshold_crossed" | "alert_resolved" | "resource_alert" | "state_changed";
 
 export interface TTLAlertEvent {
     type: "threshold_crossed" | "alert_resolved";
@@ -32,8 +28,6 @@ export interface TTLAlertEvent {
     timestamp: string;
 }
 
-// ─── Resource-based alert event ─────────────────────────────────────────────
-
 export interface ResourceAlertEvent {
     type: "resource_alert";
     severity: AlertSeverity;
@@ -57,18 +51,12 @@ export interface ResourceAlertEvent {
     timestamp: string;
 }
 
-// ─── Union of all alert event types ──────────────────────────────────────────
-
 export type AlertEvent = TTLAlertEvent | ResourceAlertEvent;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+export interface AlertChannel {
+    send(target: string, event: AlertEvent, secret?: string | null): Promise<void>;
+}
 
-/**
- * Compute alert severity from remaining TTL.
- * - critical: less than 25% of threshold remaining
- * - warning:  less than threshold (but above 25%)
- * - info:     used for resolution events
- */
 export function computeSeverity(remainingTTL: number, thresholdLedgers: number, isResolution: boolean): AlertSeverity {
     if (isResolution) return "info";
     if (remainingTTL <= 0) return "critical";
@@ -76,21 +64,12 @@ export function computeSeverity(remainingTTL: number, thresholdLedgers: number, 
     return "warning";
 }
 
-/**
- * Compute alert severity from resource usage percentage.
- * - critical: 95% or higher
- * - warning:  80-95%
- * - info:     not used for resource alerts
- */
 export function computeResourceSeverity(usagePercent: number): AlertSeverity {
     if (usagePercent >= 95) return "critical";
     if (usagePercent >= 80) return "warning";
     return "info";
 }
 
-/**
- * Build a TTL-based AlertEvent from raw data.
- */
 export function buildAlertEvent(opts: {
     type: "threshold_crossed" | "alert_resolved";
     contractId: string;
@@ -124,9 +103,6 @@ export function buildAlertEvent(opts: {
     };
 }
 
-/**
- * Build a resource-based AlertEvent from raw data.
- */
 export function buildResourceAlertEvent(opts: {
     contractId: string;
     contractName: string | null;
@@ -159,6 +135,42 @@ export function buildResourceAlertEvent(opts: {
         },
         message,
         firedAtLedger: opts.firedAtLedger,
+        timestamp: new Date().toISOString(),
+    };
+}
+
+/**
+ * Build a state-change AlertEvent from raw data.
+ */
+export function buildStateChangeAlertEvent(opts: {
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    entryKeyXdr: string;
+    entryType: string;
+    entryLabel: string | null;
+    diffType: "created" | "updated" | "deleted";
+    oldValueXdr: string | null;
+    newValueXdr: string | null;
+    detectedAtLedger: number;
+}): StateChangeAlertEvent {
+    return {
+        type: "state_changed",
+        severity: "info",
+        contractId: opts.contractId,
+        contractName: opts.contractName,
+        network: opts.network,
+        entry: {
+            keyXdr: opts.entryKeyXdr,
+            type: opts.entryType,
+            label: opts.entryLabel,
+        },
+        diff: {
+            diffType: opts.diffType,
+            oldValueXdr: opts.oldValueXdr,
+            newValueXdr: opts.newValueXdr,
+        },
+        detectedAtLedger: opts.detectedAtLedger,
         timestamp: new Date().toISOString(),
     };
 }

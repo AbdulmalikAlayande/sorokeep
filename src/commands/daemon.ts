@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { getDatabase } from "../db/database.js";
 import { startDaemon, stopDaemon } from "../daemon/loop.js";
 import { configureLogger, getLogger } from "../logging/index.js";
+import { loadConfig } from "../utils/config.js";
 
 export function registerDaemonCommand(program: Command): void {
     program
@@ -69,9 +70,11 @@ export function registerDaemonCommand(program: Command): void {
             process.on("SIGTERM", shutdown);
 
             // ── Start the loop ───────────────────────────────────────
+            const config = loadConfig();
             await startDaemon(db, options.network, {
                 intervalMs,
                 rpcUrl: options.rpcUrl,
+                feeSponsorSecret: config.feeSponsorSecret,
                 onCycle: (result, error) => {
                     const timestamp = new Date().toLocaleTimeString();
 

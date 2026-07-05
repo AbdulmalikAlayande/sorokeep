@@ -243,7 +243,7 @@ describe("getUndeliveredAlerts", () => {
 
         it("does not exclude resolved alerts — resolved != delivered", () => {
             const { entryId } = seedFull(db, { contractId: "CA", network: "testnet" });
-            resolveAlerts(db, entryId);
+            resolveAlerts(db, entryId, 1);
 
             // resolved = 1, but delivered = 0 — still needs to be sent
             const result = getUndeliveredAlerts(db, "testnet");
@@ -387,8 +387,8 @@ describe("countUndeliveredAlerts", () => {
     });
 
     it("includes resolved but undelivered alerts", () => {
-        const { entryId } = seedFull(db, { contractId: "CA", network: "testnet" });
-        resolveAlerts(db, entryId);
+        const { entryId, alertConfigId } = seedFull(db, { contractId: "CA", network: "testnet" });
+        resolveAlerts(db, entryId, alertConfigId);
 
         // resolved = 1, but delivered = 0 — still needs to be counted
         const count = countUndeliveredAlerts(db, "testnet");

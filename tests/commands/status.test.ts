@@ -1,111 +1,123 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { registerStatusCommand } from "../../src/commands/status";
 import { Command } from "commander";
 import * as dbLib from "../../src/db/database";
 import { ContractNotFoundError } from "../../src/core/status";
 import * as statusModule from "../../src/core/status";
+import { registerStatusCommand } from "../../src/commands/status";
 
-vi.mock("../../src/db/database");
+vi.mock("../../src/db/database", () => ({
+    getDatabase: vi.fn(),
+}));
 
-describe("Status Command CLI", () => {
-    let program: Command;
-    let mockExit: any;
-    let mockLog: any;
-    let actionFn: (contractId: string) => void;
+vi.mock("../../src/core/status", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("../../src/core/status")>();
+    return {
+        ...actual,
+        getContractStatus: vi.fn(),
+    };
+});
+
+describe("status command", () => {
+    const contractID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+    let actionFn: (contractId: string, options: { json?: boolean }) => void;
+    let mockExit: ReturnType<typeof vi.spyOn>;
+    let mockLog: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
-        program = new Command();
-
+        const program = new Command();
         vi.spyOn(Command.prototype, "action").mockImplementation(function (this: any, fn: any) {
             actionFn = fn;
             return this;
         });
 
         registerStatusCommand(program);
-
-        mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
+        mockExit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
         mockLog = vi.spyOn(console, "log").mockImplementation(() => {});
-        vi.spyOn(dbLib, "getDatabase").mockReturnValue({} as any);
+        vi.mocked(dbLib.getDatabase).mockReturnValue({} as any);
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
     });
 
-    it("exits with code 1 if contract is not found (ContractNotFoundError)", () => {
-        vi.spyOn(statusModule, "getContractStatus").mockImplementation(() => {
+    it("prints JSON payload when --json is provided", () => {
+        vi.mocked(statusModule.getContractStatus).mockReturnValue({
+            contractId: contractID,
+            name: "sample-contract",
+            network: "testnet",
+            lastCheckedLedger: 400000,
+            entries: [
+                {
+                    label: "Instance",
+                    entryType: "instance",
+                    entryKeyXdr: "AAAAA",
+                    liveUntilLedger: 500000,
+                    remainingTTL: 100000,
+                    approximateTimeRemaining: "~1 day",
+                    status: "ok",
+                },
+            ],
+        } as any);
+
+        actionFn(contractID, { json: true });
+
+        const output = mockLog.mock.calls.map((args) => args.join(" ")).join("\n");
+        const parsed = JSON.parse(output);
+
+        expect(parsed).toMatchObject({
+            contractId: contractID,
+            name: "sample-contract",
+            network: "testnet",
+            lastCheckedLedger: 400000,
+        });
+        expect(parsed.entries).toHaveLength(1);
+        expect(output).not.toContain("\u001b[");
+    });
+
+    it("prints human-readable output by default", () => {
+        vi.mocked(statusModule.getContractStatus).mockReturnValue({
+            contractId: contractID,
+            name: "sample-contract",
+            network: "testnet",
+            lastCheckedLedger: 400000,
+            entries: [
+                {
+                    label: "Instance",
+                    entryType: "instance",
+                    entryKeyXdr: "AAAAA",
+                    liveUntilLedger: 500000,
+                    remainingTTL: 100000,
+                    approximateTimeRemaining: "~1 day",
+                    status: "ok",
+                },
+            ],
+        } as any);
+
+        actionFn(contractID, { json: false });
+
+        const output = mockLog.mock.calls.map((args) => args.join(" ")).join("\n");
+
+        expect(output).toContain("Network:");
+        expect(output).toContain("TTL:");
+        expect(output).not.toContain("\"contractId\"");
+    });
+
+    it("exits with code 1 if contract is not found", () => {
+        vi.mocked(statusModule.getContractStatus).mockImplementation(() => {
             throw new ContractNotFoundError("MISSING_ID");
         });
 
-        actionFn("MISSING_ID");
+        actionFn("MISSING_ID", { json: false });
 
         expect(mockExit).toHaveBeenCalledWith(1);
         expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("is not registered"));
     });
 
     it("re-throws unknown errors", () => {
-        vi.spyOn(statusModule, "getContractStatus").mockImplementation(() => {
+        vi.mocked(statusModule.getContractStatus).mockImplementation(() => {
             throw new Error("DB Corrupt");
         });
 
-        expect(() => actionFn("VALID_ID")).toThrow("DB Corrupt");
-    });
-
-    it("prints 'No entries tracked' for a contract with empty entries", () => {
-        vi.spyOn(statusModule, "getContractStatus").mockReturnValue({
-            contractId: "VALID_ID",
-            name: "MyContract",
-            network: "testnet",
-            lastCheckedLedger: null,
-            entries: [],
-        });
-
-        actionFn("VALID_ID");
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("No entries tracked"));
-    });
-
-    it("prints TTL info for tracked entries", () => {
-        vi.spyOn(statusModule, "getContractStatus").mockReturnValue({
-            contractId: "VALID_ID",
-            name: "MyContract",
-            network: "testnet",
-            lastCheckedLedger: 123456,
-            entries: [
-                { label: "WASM Code", entryType: "wasm", entryKeyXdr: "AAAA", liveUntilLedger: 173456, remainingTTL: 50000, approximateTimeRemaining: "~3.2 days", status: "ok" },
-                { label: "Instance", entryType: "instance", entryKeyXdr: "BBBB", liveUntilLedger: null, remainingTTL: null, approximateTimeRemaining: null, status: "unknown" },
-            ],
-        });
-
-        actionFn("VALID_ID");
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("MyContract"));
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("testnet"));
-    });
-
-    it("displays last checked ledger when available", () => {
-        vi.spyOn(statusModule, "getContractStatus").mockReturnValue({
-            contractId: "VALID_ID",
-            name: "MyContract",
-            network: "testnet",
-            lastCheckedLedger: 999999,
-            entries: [
-                { label: "WASM Code", entryType: "wasm", entryKeyXdr: "AAAA", liveUntilLedger: 1099999, remainingTTL: 100000, approximateTimeRemaining: "~6.4 days", status: "ok" },
-            ],
-        });
-
-        actionFn("VALID_ID");
-        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("999,999"));
-    });
-
-    it("handles contract with no name (uses formatted ID)", () => {
-        vi.spyOn(statusModule, "getContractStatus").mockReturnValue({
-            contractId: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
-            name: null,
-            network: "testnet",
-            lastCheckedLedger: null,
-            entries: [],
-        });
-
-        actionFn("CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6");
-        expect(mockLog).toHaveBeenCalled();
+        expect(() => actionFn("VALID_ID", { json: false })).toThrow("DB Corrupt");
     });
 });

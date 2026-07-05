@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     network TEXT NOT NULL DEFAULT 'testnet',
     wasm_hash TEXT,
     tags TEXT,
+    poll_interval_seconds INTEGER,
     registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_checked_ledger INTEGER,
     last_introspected_at DATETIME
@@ -38,7 +39,7 @@ CREATE TABLE IF NOT EXISTS extension_policies (
 CREATE TABLE IF NOT EXISTS alert_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty')),
+    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty', 'discord', 'telegram')),
     channel_target TEXT NOT NULL,
     threshold_ledgers INTEGER NOT NULL,
     webhook_secret TEXT,
@@ -154,4 +155,45 @@ CREATE TABLE IF NOT EXISTS resource_alerts_fired (
     retry_count INTEGER NOT NULL DEFAULT 0,
     resolved BOOLEAN NOT NULL DEFAULT 0,
     resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS contract_budgets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    monthly_limit_xlm REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(contract_id)
+);
+
+
+
+CREATE TABLE IF NOT EXISTS resource_usage_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    cpu_insns INTEGER NOT NULL,
+    mem_bytes INTEGER NOT NULL,
+    fee_instructions INTEGER,
+    fee_read_ledger_entries INTEGER,
+    fee_write_ledger_entries INTEGER,
+    fee_read_bytes INTEGER,
+    fee_write_bytes INTEGER,
+    fee_transaction_size INTEGER,
+    fee_historical_ledger INTEGER,
+    fee_rent_ledger INTEGER,
+    fee_refundable INTEGER,
+    recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_contract_id
+    ON resource_usage_logs(contract_id);
+CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_recorded_at
+    ON resource_usage_logs(recorded_at DESC);
+
+CREATE TABLE IF NOT EXISTS budget_tracking (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    limit_xlm REAL NOT NULL,
+    spent_xlm REAL NOT NULL DEFAULT 0.0,
+    billing_cycle TEXT NOT NULL,
+    UNIQUE(contract_id, billing_cycle)
 );
