@@ -358,11 +358,22 @@ describe("StellarRpcClient", () => {
             expect(result.txHash).toBe("mock-tx-hash");
         });
 
-        it("submitExtension handles simulation error", async () => {
-            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail.com");
-            const result = await simFailClient.submitExtension([dummyKey], 1000, secretKey);
-            expect(result.success).toBe(false);
-            expect(result.error).toBe("Simulation failed");
+        it("submitExtension handles simulation error (expired sequence number)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-seq.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "txBadSeq" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Expired sequence number");
+        });
+
+        it("submitExtension handles simulation error (insufficient balance)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-bal.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "txInsufficientBalance" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Insufficient wallet balance");
+        });
+
+        it("submitExtension handles simulation error (invalid footprint)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-key.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "invalid footprint" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Invalid footprint key");
         });
 
         it("submitExtension handles send error", async () => {
@@ -391,6 +402,7 @@ describe("StellarRpcClient", () => {
             expect(result.error).toContain("Transaction polling timed out after 2 attempts");
         });
     });
+
 
     describe("RPC rate limiting", () => {
         it("does not exceed the configured requests per second", async () => {
@@ -462,14 +474,14 @@ describe("StellarRpcClient", () => {
             const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
             (rateLimitedClient as any).server = server;
 
-            const requests = [1, 2, 3, 4].map(() => rateLimitedClient.checkHealth());
+            const requests = [1, 2, 3, 4, 5, 6].map(() => rateLimitedClient.checkHealth());
 
             await vi.runAllTimersAsync();
             await Promise.all(requests);
 
             // With 2 req/sec rate limit, at most 2 should have been in-flight simultaneously
             expect(maxInFlight).toBeLessThanOrEqual(2);
-            expect(server.getHealth).toHaveBeenCalledTimes(4);
+            expect(server.getHealth).toHaveBeenCalledTimes(6);
         });
 
         it("continues processing queued requests even if a preceding request fails", async () => {
@@ -487,21 +499,24 @@ describe("StellarRpcClient", () => {
                 }),
             };
 
-            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
+            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 1 });
             (rateLimitedClient as any).server = server;
 
-            const [first, second] = await Promise.allSettled([
-                rateLimitedClient.checkHealth(),
-                rateLimitedClient.checkHealth(),
-            ]);
+            const firstPromise = rateLimitedClient.checkHealth();
+            firstPromise.catch(() => {}); // prevent unhandled rejection during runAllTimersAsync
+            const secondPromise = rateLimitedClient.checkHealth();
+            secondPromise.catch(() => {}); // prevent unhandled rejection during runAllTimersAsync
 
             await vi.runAllTimersAsync();
+            const [first, second] = await Promise.allSettled([firstPromise, secondPromise]);
 
             // First should have rejected
             expect(first.status).toBe("rejected");
             // Second should have resolved despite the first failing
             expect(second.status).toBe("fulfilled");
             expect(server.getHealth).toHaveBeenCalledTimes(2);
+        });
+    });
     describe("ExtendFootprintTTLOp — Simulation and Fee Parsing", () => {
         const dummyKey = xdr.LedgerKey.contractData(new xdr.LedgerKeyContractData({
             contract: new xdr.ScAddress.scAddressTypeContract(Buffer.from("a".repeat(32))),
@@ -571,8 +586,10 @@ describe("StellarRpcClient", () => {
             const result = await mockClient.submitExtension([dummyKey], 100000, secretKey);
             expect(result.success).toBe(true);
             expect(result.feeCharged).toBeUndefined();
+
         });
     });
+
 
     describe("executeWithRetry", () => {
         beforeEach(() => {
@@ -640,4 +657,5 @@ describe("StellarRpcClient", () => {
             expect(action).toHaveBeenCalledTimes(1);
         });
     });
+
 });

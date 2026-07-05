@@ -183,6 +183,56 @@ export function getExtensionCosts(
     };
 }
 
+const MULTI_PERIOD_WINDOWS = [7, 30, 90] as const;
+
+export interface PeriodCostSummary {
+    days: number;
+    totalExtensions: number;
+    totalCostXlm: number;
+}
+
+export interface MultiPeriodCostsData {
+    contract: { id: string; name: string | null; network: string };
+    periods: PeriodCostSummary[];
+    projection: FeeAdjustedProjection;
+}
+
+export type GetMultiPeriodCostsResponse =
+    | { success: true; data: MultiPeriodCostsData }
+    | { success: false; error: "contract_not_found"; contractId: string };
+
+export function getMultiPeriodCosts(
+    db: Database.Database,
+    contractId: string,
+    feeStats?: Pick<FeeStatsResult, "baseFeeStroops" | "surgePricingMultiplier">,
+): GetMultiPeriodCostsResponse {
+    const contract = getContract(db, contractId);
+    if (!contract) {
+        return { success: false, error: "contract_not_found", contractId };
+    }
+
+    const periods: PeriodCostSummary[] = MULTI_PERIOD_WINDOWS.map((days) => {
+        const history = getExtensionHistory(db, contractId, days);
+        let totalCostXlm = 0;
+        for (const record of history) {
+            totalCostXlm += record.cost_xlm ?? 0;
+        }
+        return { days, totalExtensions: history.length, totalCostXlm };
+    });
+
+    const thirtyDay = periods.find((p) => p.days === 30)!;
+    const projection = calculateFeeAdjustedProjection(thirtyDay.totalCostXlm, 30, feeStats);
+
+    return {
+        success: true,
+        data: {
+            contract: { id: contract.id, name: contract.name, network: contract.network },
+            periods,
+            projection,
+        },
+    };
+}
+
 const DEFAULT_BASE_FEE_STROOPS = 100;
 
 export interface FeeAdjustedProjection {

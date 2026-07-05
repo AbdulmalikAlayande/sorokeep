@@ -26,15 +26,30 @@ export interface SorokeepConfig {
     pollingIntervalSeconds: number;
     /** Slack bot token for Slack alert delivery. */
     slackToken?: string;
+    /**
+     * Monthly rent budget in XLM. When set, the `costs` command will compare
+     * the 30/60/90-day forecasted rent windows against this value and display
+     * a warning in red when any window exceeds it.
+     */
+    monthlyBudgetXlm?: number;
+
     /** HashiCorp Vault configuration for secret key retrieval */
     vault?: VaultConfig;
+    /**
+     * Secret key of the fee sponsor account.
+     * When set, auto-extension transactions are wrapped in FeeBumpTransactions
+     * so this account pays all fees instead of the contract keypair.
+     * Supports "env:VAR_NAME" or a direct Stellar secret key starting with "S".
+     */
+    feeSponsorSecret?: string;
+
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
 
 const DEFAULT_CONFIG: SorokeepConfig = {
-    network: "testnet",
-    pollingIntervalSeconds: 300,
+  network: "testnet",
+  pollingIntervalSeconds: 300,
 };
 
 const SOROKEEP_DIR = path.join(os.homedir(), ".sorokeep");
@@ -47,16 +62,16 @@ const CONFIG_FILE = path.join(SOROKEEP_DIR, "config.yaml");
  * Returns defaults if the file does not exist.
  */
 export function loadConfig(customPath?: string): SorokeepConfig {
-    const configPath = customPath ?? CONFIG_FILE;
+  const configPath = customPath ?? CONFIG_FILE;
 
-    if (!fs.existsSync(configPath)) {
-        logger.debug(`No config file found at ${configPath}, using defaults`);
-        return { ...DEFAULT_CONFIG };
-    }
+  if (!fs.existsSync(configPath)) {
+    logger.debug(`No config file found at ${configPath}, using defaults`);
+    return { ...DEFAULT_CONFIG };
+  }
 
-    try {
-        const raw = fs.readFileSync(configPath, "utf-8");
-        const parsed = YAML.parse(raw) as Partial<SorokeepConfig>;
+  try {
+    const raw = fs.readFileSync(configPath, "utf-8");
+    const parsed = YAML.parse(raw) as Partial<SorokeepConfig>;
 
         let vault: VaultConfig | undefined;
         if (parsed.vault && typeof parsed.vault === "object") {
@@ -77,7 +92,13 @@ export function loadConfig(customPath?: string): SorokeepConfig {
                 ? parsed.pollingIntervalSeconds
                 : DEFAULT_CONFIG.pollingIntervalSeconds,
             slackToken: parsed.slackToken,
+            monthlyBudgetXlm: typeof parsed.monthlyBudgetXlm === "number" && parsed.monthlyBudgetXlm > 0
+                ? parsed.monthlyBudgetXlm
+                : undefined,
+
             vault,
+            feeSponsorSecret: typeof parsed.feeSponsorSecret === "string" ? parsed.feeSponsorSecret : undefined,
+
         };
     } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
@@ -90,21 +111,27 @@ export function loadConfig(customPath?: string): SorokeepConfig {
  * Save configuration to ~/.sorokeep/config.yaml.
  */
 export function saveConfig(config: SorokeepConfig, customPath?: string): void {
-    const configPath = customPath ?? CONFIG_FILE;
-    const dir = path.dirname(configPath);
+  const configPath = customPath ?? CONFIG_FILE;
+  const dir = path.dirname(configPath);
 
-    if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-    }
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 
-    const yamlStr = YAML.stringify(config);
-    fs.writeFileSync(configPath, yamlStr, { encoding: "utf-8", mode: 0o600 });
-    logger.debug(`Config saved to ${configPath}`);
+  const yamlStr = YAML.stringify(config);
+  fs.writeFileSync(configPath, yamlStr, { encoding: "utf-8", mode: 0o600 });
+  try {
+    fs.chmodSync(configPath, 0o600);
+  } catch {
+    // best effort for existing files
+  }
+  logger.debug(`Config saved to ${configPath}`);
 }
 
 /**
  * Get the Sorokeep data directory path.
  */
 export function getSorokeepDir(): string {
-    return SOROKEEP_DIR;
+  return SOROKEEP_DIR;
 }
+
