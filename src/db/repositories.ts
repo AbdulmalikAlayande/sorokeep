@@ -1152,46 +1152,7 @@ export function hasUnresolvedResourceAlert(
   return row.usage_percent >= currentUsagePercent;
 }
 
-// ---------------------------- Budget Tracking ----------------------------
-export interface BudgetTracking {
-    id: number;
-    contract_id: string;
-    limit_xlm: number;
-    spent_xlm: number;
-    billing_cycle: string;
-}
 
-export function upsertBudget(db: Database.Database, budget: {
-    contract_id: string;
-    limit_xlm: number;
-    spent_xlm?: number;
-    billing_cycle: string;
-}): void {
-    db.prepare(`
-        INSERT INTO budget_tracking (contract_id, limit_xlm, spent_xlm, billing_cycle)
-        VALUES (@contract_id, @limit_xlm, @spent_xlm, @billing_cycle)
-        ON CONFLICT(contract_id, billing_cycle) DO UPDATE SET
-            limit_xlm = excluded.limit_xlm,
-            spent_xlm = excluded.spent_xlm
-    `).run({
-        contract_id: budget.contract_id,
-        limit_xlm: budget.limit_xlm,
-        spent_xlm: budget.spent_xlm ?? 0.0,
-        billing_cycle: budget.billing_cycle,
-    });
-}
-
-export function getBudget(db: Database.Database, contractId: string, billingCycle: string): BudgetTracking | undefined {
-    return db.prepare("SELECT * FROM budget_tracking WHERE contract_id = ? AND billing_cycle = ?").get(contractId, billingCycle) as BudgetTracking | undefined;
-}
-
-export function addBudgetSpent(db: Database.Database, contractId: string, billingCycle: string, amountXlm: number): void {
-    db.prepare(`
-        UPDATE budget_tracking
-        SET spent_xlm = spent_xlm + ?
-        WHERE contract_id = ? AND billing_cycle = ?
-    `).run(amountXlm, contractId, billingCycle);
-}
 // ─── Resource Usage Logs (issue #164) ────────────────────────────────────────
 
 /**
