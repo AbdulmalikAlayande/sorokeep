@@ -85,8 +85,8 @@ export async function runMonitorCycle(
     // One RPC client shared across the cycle for the target network.
     const client = new StellarRpcClient(network, rpcUrl);
 
-    // 1. Load all contracts and filter to the target network.
-    const contracts = getAllContracts(db).filter(c => c.network === network);
+    // 1. Load all contracts and filter to the target network and active status.
+    const contracts = getAllContracts(db).filter(c => c.network === network && c.active === 1);
 
     logger.debug(`Monitor cycle started — ${contracts.length} contract(s) on ${network}`);
 

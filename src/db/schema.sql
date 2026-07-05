@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     wasm_hash TEXT,
     tags TEXT,
     poll_interval_seconds INTEGER,
+    active INTEGER NOT NULL DEFAULT 1,
     registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_checked_ledger INTEGER,
     last_introspected_at DATETIME

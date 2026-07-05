@@ -9,17 +9,22 @@ export function registerDaemonCommand(program: Command): void {
     program
         .command("daemon")
         .description("Start the monitoring daemon — polls contracts at a fixed interval")
-        .option("--network <network>", "Stellar network to monitor", "testnet")
-        .option("--interval <ms>", "Polling interval in milliseconds", "300000")
+        .option("--network <network>", "Stellar network to monitor")
+        .option("--interval <ms>", "Polling interval in milliseconds")
         .option("-r, --rpc-url <url>", "Custom RPC endpoint URL")
         .option("--log-format <format>", "Log output format: 'pretty' (human-readable) or 'json' (structured)", "pretty")
         .action(async (options: {
-            network: string;
-            interval: string;
+            network?: string;
+            interval?: string;
             rpcUrl?: string;
             logFormat: string;
         }) => {
-            const intervalMs = parseInt(options.interval, 10);
+            const config = loadConfig();
+            const network = options.network ?? config.network;
+            const intervalMs = options.interval !== undefined 
+                ? parseInt(options.interval, 10) 
+                : config.pollingIntervalSeconds * 1000;
+
             if (isNaN(intervalMs) || intervalMs < 10000) {
                 console.log(chalk.red("Error: --interval must be a number >= 10000 (10 seconds)"));
                 process.exit(1);
@@ -70,8 +75,7 @@ export function registerDaemonCommand(program: Command): void {
             process.on("SIGTERM", shutdown);
 
             // ── Start the loop ───────────────────────────────────────
-            const config = loadConfig();
-            await startDaemon(db, options.network, {
+            await startDaemon(db, network, {
                 intervalMs,
                 rpcUrl: options.rpcUrl,
                 feeSponsorSecret: config.feeSponsorSecret,

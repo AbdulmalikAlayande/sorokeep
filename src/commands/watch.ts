@@ -1,7 +1,9 @@
 import { Command } from "commander";
 import chalk from "chalk";
+import readline from "node:readline";
 import ora from "ora";
 import { getDatabase } from "../db/database.js";
+import { deleteContract, getContract } from "../db/repositories.js";
 import { getLogger } from "../logging/index.js";
 import {
   classifyTTL,
@@ -160,6 +162,53 @@ export const registerWatchCommand = (program: Command): void => {
           error instanceof Error ? error.message : String(error);
         logger.error("Watch command failed", { error: errorMessage });
         console.log(chalk.red(`Failed to watch contract: ${errorMessage}`));
+        process.exit(1);
+      }
+    });
+
+  program
+    .command("unwatch <contract-id>")
+    .description("Remove a registered contract and clean up associated logs")
+    .option("-y, --yes", "Skip confirmation prompt")
+    .action(async (contractId: string, options: { yes?: boolean }) => {
+      try {
+        const db = getDatabase();
+        const contract = getContract(db, contractId);
+
+        if (!contract) {
+          console.log(chalk.red(`Contract ${formatContractID(contractId)} is not being watched.`));
+          process.exit(1);
+        }
+
+        const proceedWithDeletion = async (): Promise<void> => {
+          deleteContract(db, contractId);
+          console.log(chalk.green(`Successfully unwatched contract ${formatContractID(contractId)}.`));
+        };
+
+        if (options.yes) {
+          await proceedWithDeletion();
+        } else {
+          const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+
+          rl.question(
+            chalk.yellow(`Are you sure you want to unwatch ${formatContractID(contractId)}? All associated logs, alerts, and policies will be permanently deleted. (y/N): `),
+            async (answer) => {
+              rl.close();
+              if (answer.toLowerCase() === "y" || answer.toLowerCase() === "yes") {
+                await proceedWithDeletion();
+              } else {
+                console.log("Unwatch cancelled.");
+              }
+            }
+          );
+        }
+      } catch (error: any) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error("Unwatch command failed", { error: errorMessage });
+        console.log(chalk.red(`Failed to unwatch contract: ${errorMessage}`));
         process.exit(1);
       }
     });

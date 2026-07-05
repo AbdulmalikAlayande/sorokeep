@@ -19,9 +19,14 @@ import { deliverSingleAlert } from "../../src/alerts/dispatcher";
 vi.mock("../../src/alerts/webhook.js", () => ({
     sendWebhookAlert: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("../../src/alerts/slack.js", () => ({
-    sendSlackAlert: vi.fn().mockResolvedValue(undefined),
-}));
+const mockSlackSend = vi.fn().mockResolvedValue(undefined);
+vi.mock("../../src/alerts/slack.js", () => {
+    return {
+        SlackChannel: vi.fn().mockImplementation(() => {
+            return { send: mockSlackSend };
+        })
+    };
+});
 vi.mock("../../src/alerts/pagerduty.js", () => ({
     sendPagerDutyAlert: vi.fn().mockResolvedValue(undefined),
 }));
@@ -178,7 +183,7 @@ describe("State Change Alerts", () => {
         });
 
         it("delivers state_changed event via slack", async () => {
-            const { sendSlackAlert } = await import("../../src/alerts/slack.js");
+            const { SlackChannel } = await import("../../src/alerts/slack.js");
 
             const event = buildStateChangeAlertEvent({
                 contractId: "CONTRACT_1",
@@ -200,8 +205,8 @@ describe("State Change Alerts", () => {
             );
 
             expect(success).toBe(true);
-            expect(sendSlackAlert).toHaveBeenCalledWith(
-                "#alerts",
+            expect(SlackChannel).toHaveBeenCalledWith("#alerts");
+            expect(mockSlackSend).toHaveBeenCalledWith(
                 expect.objectContaining({
                     type: "state_changed",
                     diff: expect.objectContaining({

@@ -8,7 +8,7 @@ import {
     type UndeliveredAlert,
 } from "../db/repositories.js";
 import { sendWebhookAlert } from "./webhook.js";
-import { sendSlackAlert } from "./slack.js";
+import { SlackChannel } from "./slack.js";
 import { sendPagerDutyAlert } from "./pagerduty.js";
 import { getLogger } from "../logging/index.js";
 
@@ -43,7 +43,7 @@ async function dispatchToChannel(alert: UndeliveredAlert, event: AlertEvent): Pr
             await sendWebhookAlert(alert.channelTarget, event, alert.webhookSecret);
             break;
         case "slack":
-            await sendSlackAlert(alert.channelTarget, event);
+            await new SlackChannel(alert.channelTarget).send(event);
             break;
         case "pagerduty":
             await sendPagerDutyAlert(alert.channelTarget, event);
@@ -102,7 +102,7 @@ export async function deliverSingleAlert(
                 await sendWebhookAlert(channelTarget, event, secret);
                 break;
             case "slack":
-                await sendSlackAlert(channelTarget, event);
+                await new SlackChannel(channelTarget).send(event);
                 break;
             case "pagerduty":
                 await sendPagerDutyAlert(channelTarget, event);

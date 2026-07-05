@@ -7,6 +7,7 @@ export interface Contract {
     wasm_hash: string | null;
     tags: string | null;
     poll_interval_seconds?: number | null;
+    active: number;
     registered_at: Date;
     last_checked_ledger?: number | null;
     /** ISO-8601 timestamp of the last successful introspection (instance/WASM key discovery). NULL if never introspected. */
@@ -94,16 +95,17 @@ export interface StateChange {
 }
 
 // ---------------------------- Database Access Functions For Schema: Contract ----------------------------
-export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string; poll_interval_seconds?: number | null;}): void {
+export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string; poll_interval_seconds?: number | null; active?: number}): void {
     db.prepare(`
-        INSERT INTO contracts (id, name, network, wasm_hash, tags, poll_interval_seconds)
-        VALUES (@id, @name, @network, @wasm_hash, @tags, @poll_interval_seconds)
+        INSERT INTO contracts (id, name, network, wasm_hash, tags, poll_interval_seconds, active)
+        VALUES (@id, @name, @network, @wasm_hash, @tags, @poll_interval_seconds, @active)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             network = excluded.network,
             wasm_hash = excluded.wasm_hash,
             tags = excluded.tags,
-            poll_interval_seconds = COALESCE(excluded.poll_interval_seconds, contracts.poll_interval_seconds)
+            poll_interval_seconds = COALESCE(excluded.poll_interval_seconds, contracts.poll_interval_seconds),
+            active = COALESCE(excluded.active, contracts.active)
     `).run({
       id: contract.id,
       name: contract.name ?? null,
@@ -111,6 +113,7 @@ export function insertContract(db: Database.Database, contract: {id: string; nam
       wasm_hash: contract.wasm_hash ?? null,
       tags: contract.tags ?? null,
       poll_interval_seconds: contract.poll_interval_seconds ?? null,
+      active: contract.active ?? 1,
     });
 }
 
@@ -144,6 +147,14 @@ export function getContractPollInterval(
 ): number | null {
   const row = db.prepare("SELECT poll_interval_seconds FROM contracts WHERE id = ?").get(contractId) as { poll_interval_seconds: number | null } | undefined;
   return row?.poll_interval_seconds ?? null;
+}
+
+export function setContractActiveStatus(
+  db: Database.Database,
+  contractId: string,
+  active: boolean
+): void {
+  db.prepare("UPDATE contracts SET active = ? WHERE id = ?").run(active ? 1 : 0, contractId);
 }
 
 /**

@@ -63,6 +63,7 @@ export function getDatabase(customPath?: string): Database.Database {
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )`,
         `ALTER TABLE contracts ADD COLUMN last_introspected_at DATETIME`,
+        `ALTER TABLE contracts ADD COLUMN active INTEGER NOT NULL DEFAULT 1`,
     ];
     for (const sql of migrations) {
         try { db.exec(sql); } catch { /* column already exists — no-op */ }

@@ -3,9 +3,11 @@ import { registerDaemonCommand } from "../../src/commands/daemon";
 import { Command } from "commander";
 import * as dbLib from "../../src/db/database";
 import * as daemonLib from "../../src/daemon/loop";
+import * as configLib from "../../src/utils/config";
 
 vi.mock("../../src/db/database");
 vi.mock("../../src/daemon/loop");
+vi.mock("../../src/utils/config");
 
 function getDaemonCommand(): Command {
     const program = new Command();
@@ -52,6 +54,10 @@ describe("Daemon Command CLI", () => {
         mockLog = vi.spyOn(console, "log").mockImplementation(() => {});
         vi.spyOn(dbLib, "getDatabase").mockReturnValue({ close: vi.fn() } as any);
         vi.spyOn(daemonLib, "startDaemon").mockImplementation(async () => {});
+        vi.spyOn(configLib, "loadConfig").mockReturnValue({
+            network: "testnet",
+            pollingIntervalSeconds: 300
+        } as any);
     });
 
     afterEach(() => {
@@ -79,7 +85,7 @@ describe("Daemon Command CLI", () => {
     });
 
     it("starts the daemon loop with correct options", async () => {
-        await actionFn({ network: "mainnet", interval: "300000", rpcUrl: "https://my-rpc.com" });
+        await actionFn({ network: "mainnet", interval: "300000", rpcUrl: "https://my-rpc.com", logFormat: "pretty" });
         
         expect(daemonLib.startDaemon).toHaveBeenCalledWith(
             expect.anything(),
@@ -89,5 +95,22 @@ describe("Daemon Command CLI", () => {
                 rpcUrl: "https://my-rpc.com"
             })
         );
-    });   
+    });
+
+    it("falls back to config values when interval and network are not provided", async () => {
+        vi.spyOn(configLib, "loadConfig").mockReturnValue({
+            network: "futurenet",
+            pollingIntervalSeconds: 45
+        } as any);
+
+        await actionFn({ logFormat: "pretty" });
+        
+        expect(daemonLib.startDaemon).toHaveBeenCalledWith(
+            expect.anything(),
+            "futurenet",
+            expect.objectContaining({
+                intervalMs: 45000
+            })
+        );
+    });
 });

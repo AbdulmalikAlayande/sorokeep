@@ -16,6 +16,8 @@ import { registerCompletionCommand } from "./commands/completion.js";
 import { registerInspectCommand } from "./commands/inspect.js";
 import { registerBudgetCommand } from "./commands/budget.js";
 import { registerDbCommand } from "./commands/db.js";
+import { registerPauseCommand } from "./commands/pause.js";
+import { registerResumeCommand } from "./commands/resume.js";
 
 initLogger({ mode: "cli" });
 
@@ -43,5 +45,7 @@ registerCompletionCommand(program);
 registerInspectCommand(program);
 registerBudgetCommand(program);
 registerDbCommand(program);
+registerPauseCommand(program);
+registerResumeCommand(program);
 
 program.parse(process.argv);
