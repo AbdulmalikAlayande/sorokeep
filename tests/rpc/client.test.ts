@@ -404,7 +404,6 @@ describe("StellarRpcClient", () => {
     });
 
 
-
     describe("RPC rate limiting", () => {
         it("does not exceed the configured requests per second", async () => {
             vi.useFakeTimers();
@@ -516,10 +515,8 @@ describe("StellarRpcClient", () => {
             // Second should have resolved despite the first failing
             expect(second.status).toBe("fulfilled");
             expect(server.getHealth).toHaveBeenCalledTimes(2);
-
         });
     });
-
     describe("ExtendFootprintTTLOp — Simulation and Fee Parsing", () => {
         const dummyKey = xdr.LedgerKey.contractData(new xdr.LedgerKeyContractData({
             contract: new xdr.ScAddress.scAddressTypeContract(Buffer.from("a".repeat(32))),
@@ -660,4 +657,5 @@ describe("StellarRpcClient", () => {
             expect(action).toHaveBeenCalledTimes(1);
         });
     });
+
 });

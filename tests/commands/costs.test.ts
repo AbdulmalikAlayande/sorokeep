@@ -111,10 +111,14 @@ describe("costs command", () => {
     });
 
     it("does not show forecast data when there is no extension history", async () => {
+
+    // ── AC5: No Forecasted Rent when there is no extension history ────────────
+    it("does NOT print Forecasted Rent when there are no extensions", async () => {
         insertContract(mockDb, {
             id: CONTRACT_ID,
             name: "empty-contract",
             network: "testnet",
+
         });
 
         const program = new Command();
@@ -162,4 +166,6 @@ describe("costs command", () => {
         const output = consoleLogSpy.mock.calls.flat().join("\n");
         expect(output).toMatch(/budget/i);
     });
+
+
 });
