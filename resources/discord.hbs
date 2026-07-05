@@ -1,0 +1,63 @@
+{
+  "username": "Sorokeep",
+  "embeds": [
+    {
+      "title": "{{severityEmoji}} {{#if isResourceAlert}}Resource {{severityLevel}}{{else if isResolved}}Alert Resolved{{else}}TTL {{severityLevel}}{{/if}} — {{escapeJson contractDisplay}}",
+      "color": {{#if isResolved}}52292{{else if isCritical}}16711680{{else}}16753920{{/if}},
+      "fields": [
+        {
+          "name": "Contract",
+          "value": "{{escapeJson contractDisplay}}",
+          "inline": true
+        },
+        {
+          "name": "Network",
+          "value": "{{network}}",
+          "inline": true
+        }
+        {{#if isResourceAlert}}
+        ,{
+          "name": "Resource",
+          "value": "{{resourceLabel}}",
+          "inline": true
+        },
+        {
+          "name": "Usage",
+          "value": "{{resource.usagePercent}}% ({{currentUsageFormatted}} / {{limitFormatted}})",
+          "inline": true
+        },
+        {
+          "name": "Severity",
+          "value": "{{upperCase severity}}",
+          "inline": true
+        }
+        {{else}}
+        ,{
+          "name": "Entry",
+          "value": "{{escapeJson entryLabel}}",
+          "inline": true
+        },
+        {
+          "name": "Remaining TTL",
+          "value": "{{currentRemainingLedgersFormatted}} ledgers ({{threshold.approximateTimeRemaining}})",
+          "inline": true
+        },
+        {
+          "name": "Alert Threshold",
+          "value": "{{configuredLedgersFormatted}} ledgers",
+          "inline": true
+        },
+        {
+          "name": "Severity",
+          "value": "{{upperCase severity}}",
+          "inline": true
+        }
+        {{/if}}
+      ],
+      "footer": {
+        "text": "Run `sorokeep status {{contractId}}` for details."
+      },
+      "timestamp": "{{timestamp}}"
+    }
+  ]
+}

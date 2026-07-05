@@ -85,7 +85,7 @@ describe("Restore Command CLI", () => {
         expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("No entries to restore"));
     });
 
-    it("restores entries successfully with --all", async () => {
+    it("restores entries successfully with --all and outputs tx hash and fee", async () => {
         vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet", name: "MyContract" } as any);
         vi.mocked(repos.getEntriesForContract).mockReturnValue([
             { entry_key_xdr: "AAAA" } as any,
@@ -95,10 +95,12 @@ describe("Restore Command CLI", () => {
             entriesRestored: 1,
             txHash: "abcd1234",
             ledger: 5000,
+            feeCharged: 500,
         } as any);
 
         await actionFn("VALID_ID", { keypair: "SKEY", all: true });
         expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("abcd1234"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("500 stroops"));
     });
 
     it("exits with 1 when restore fails", async () => {
