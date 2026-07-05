@@ -163,6 +163,11 @@ describe("costs command — Forecasted Rent section", () => {
 
     // ── AC5: No Forecasted Rent when there is no extension history ────────────
     it("does not show a forecast section when there is no extension history", async () => {
+        insertContract(mockDb, {
+            id: CONTRACT_ID,
+            name: "empty",
+            network: "testnet"
+        });
         const program = new Command();
         registerCostsCommand(program);
 
@@ -215,7 +220,6 @@ describe("costs command — Forecasted Rent section", () => {
             "node", "sorokeep", "costs", CONTRACT_ID, "--period", "abc",
         ])).rejects.toThrow();
     });
-});
     it("does NOT print Forecasted Rent when there are no extensions", async () => {
         insertContract(mockDb, {
             id: CONTRACT_ID,
