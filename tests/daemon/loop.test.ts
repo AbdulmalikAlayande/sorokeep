@@ -51,6 +51,7 @@ vi.mock("../../src/logging/index.js", () => ({
 }));
 
 import { startDaemon, stopDaemon } from "../../src/daemon/loop.js";
+import { insertContract } from "../../src/db/repositories.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -60,6 +61,8 @@ function makeCycleResult(overrides: Partial<MonitorCycleResult> = {}): MonitorCy
         entriesUpdated: 0,
         thresholdsCrossed: 0,
         alertsResolved: 0,
+        extensionsTriggered: 0,
+        extensionErrors: [],
         errors: [],
         cycleStartedAt: new Date(),
         cycleFinishedAt: new Date(),
@@ -139,7 +142,7 @@ describe("daemon loop", () => {
             await startDaemon(db, "testnet", { intervalMs: 300000 });
 
             expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
-            expect(mockRunMonitorCycle).toHaveBeenCalledWith(db, "testnet", undefined);
+            expect(mockRunMonitorCycle).toHaveBeenCalledWith(db, "testnet", undefined, undefined);
         });
 
         it("passes the custom rpcUrl to runMonitorCycle when provided", async () => {
@@ -154,6 +157,7 @@ describe("daemon loop", () => {
                 db,
                 "mainnet",
                 "https://custom-rpc.example.com",
+                undefined,
             );
         });
 
@@ -204,6 +208,31 @@ describe("daemon loop", () => {
 
             await vi.advanceTimersByTimeAsync(5000);
             expect(mockRunMonitorCycle).toHaveBeenCalledTimes(3);
+        });
+
+        it("uses the smallest watched contract poll interval override for the network", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+            insertContract(db, {
+                id: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+                name: "override-1",
+                network: "testnet",
+                poll_interval_seconds: 300,
+            });
+            insertContract(db, {
+                id: "CBEK0975FU6KKOEZHGO098G6HLBS5D6LVATIGCESOGXSZEQ2UWUY8I3O",
+                name: "override-2",
+                network: "testnet",
+                poll_interval_seconds: 600,
+            });
+
+            await startDaemon(db, "testnet", { intervalMs: 900000 });
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(299999);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
         });
 
         it("uses default 5-minute interval when none specified", async () => {
