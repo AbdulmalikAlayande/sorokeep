@@ -77,7 +77,7 @@ export function registerCostsCommand(program: Command): void {
             options = options || {};
             try {
                 const db = getDatabase();
-                const days = options.all ? undefined : parseInt(options.period, 10);
+           const days = options.all ? undefined : parseInt(options.period ?? "0", 10);
 
                 if (days !== undefined && (!Number.isInteger(days) || days <= 0)) {
                     if (options.json) {
