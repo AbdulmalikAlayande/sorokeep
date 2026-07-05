@@ -6,6 +6,7 @@ export interface Contract {
     network: string;
     wasm_hash: string | null;
     tags: string | null;
+    poll_interval_seconds?: number | null;
     registered_at: Date;
     last_checked_ledger?: number | null;
     /** ISO-8601 timestamp of the last successful introspection (instance/WASM key discovery). NULL if never introspected. */
@@ -93,21 +94,23 @@ export interface StateChange {
 }
 
 // ---------------------------- Database Access Functions For Schema: Contract ----------------------------
-export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string;}): void {
+export function insertContract(db: Database.Database, contract: {id: string; name?: string; network: string; wasm_hash?: string; tags?: string; poll_interval_seconds?: number | null;}): void {
     db.prepare(`
-        INSERT INTO contracts (id, name, network, wasm_hash, tags)
-        VALUES (@id, @name, @network, @wasm_hash, @tags)
+        INSERT INTO contracts (id, name, network, wasm_hash, tags, poll_interval_seconds)
+        VALUES (@id, @name, @network, @wasm_hash, @tags, @poll_interval_seconds)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             network = excluded.network,
             wasm_hash = excluded.wasm_hash,
-            tags = excluded.tags
+            tags = excluded.tags,
+            poll_interval_seconds = COALESCE(excluded.poll_interval_seconds, contracts.poll_interval_seconds)
     `).run({
       id: contract.id,
       name: contract.name ?? null,
       network: contract.network,
       wasm_hash: contract.wasm_hash ?? null,
       tags: contract.tags ?? null,
+      poll_interval_seconds: contract.poll_interval_seconds ?? null,
     });
 }
 
@@ -125,6 +128,22 @@ export function updateLastCheckedLedger(db: Database.Database, contractId: strin
 
 export function deleteContract(db: Database.Database, id: string): void {
   db.prepare("DELETE FROM contracts WHERE id = ?").run(id);
+}
+
+export function updateContractPollInterval(
+  db: Database.Database,
+  contractId: string,
+  pollIntervalSeconds: number | null,
+): void {
+  db.prepare("UPDATE contracts SET poll_interval_seconds = ? WHERE id = ?").run(pollIntervalSeconds, contractId);
+}
+
+export function getContractPollInterval(
+  db: Database.Database,
+  contractId: string,
+): number | null {
+  const row = db.prepare("SELECT poll_interval_seconds FROM contracts WHERE id = ?").get(contractId) as { poll_interval_seconds: number | null } | undefined;
+  return row?.poll_interval_seconds ?? null;
 }
 
 /**
@@ -280,21 +299,21 @@ export function hasUnresolvedAlert(db: Database.Database, alertConfigId: number,
     SELECT 1 FROM alerts_fired
     WHERE alert_config_id = ? AND contract_entry_id = ? AND resolved = 0
     LIMIT 1
-  `).get(alertConfigId, entryId);
+  `).get(alertConfigId, entryId) as { 1: number } | undefined;
   return row !== undefined;
 }
 
-export function resolveAlerts(db: Database.Database, entryId: number): number[] {
+export function resolveAlerts(db: Database.Database, entryId: number, alertConfigId: number): number[] {
   const rows = db.prepare(`
     SELECT alert_config_id FROM alerts_fired
-    WHERE contract_entry_id = ? AND resolved = 0
-  `).all(entryId) as { alert_config_id: number }[];
+    WHERE contract_entry_id = ? AND alert_config_id = ? AND resolved = 0
+  `).all(entryId, alertConfigId) as { alert_config_id: number }[];
 
   if (rows.length > 0) {
     db.prepare(`
       UPDATE alerts_fired SET resolved = 1, resolved_at = datetime('now')
-      WHERE contract_entry_id = ? AND resolved = 0
-    `).run(entryId);
+      WHERE contract_entry_id = ? AND alert_config_id = ? AND resolved = 0
+    `).run(entryId, alertConfigId);
   }
 
   return rows.map(r => r.alert_config_id);
@@ -473,6 +492,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
             FROM cost_daily_snapshots
             WHERE contract_id = ? AND snapshot_date >= date('now', ?)
         `).get(contractId, ...snapshotParams) as CostAggregateRow
+
         : db.prepare(`
             SELECT
                 COALESCE(SUM(total_extensions), 0) AS total_extensions,
@@ -488,6 +508,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
             FROM cost_daily_snapshots
             WHERE contract_id = ?
         `).get(contractId) as CostAggregateRow;
+
 
     const currentDayRow = db.prepare(`
         SELECT
@@ -506,6 +527,7 @@ export function getContractCostSummary(db: Database.Database, contractId: string
         WHERE eh.contract_id = ?
           AND date(eh.executed_at) = date('now')
     `).get(contractId) as CostAggregateRow;
+
 
     return {
         contract_id: contractId,
@@ -530,6 +552,27 @@ export function getContractCostSummary(db: Database.Database, contractId: string
             },
         },
     };
+}
+
+/**
+ * Count the number of auto-extension transactions that were executed for the
+ * given contract within the last hour.
+ *
+ * Used by the rate limiter to enforce a maximum of N extensions per hour
+ * per contract (issue #142).
+ *
+ * @param db - The SQLite database connection.
+ * @param contractId - The contract to check.
+ * @returns The number of extensions recorded in the last 60 minutes.
+ */
+export function countExtensionsInLastHour(db: Database.Database, contractId: string): number {
+    const row = db.prepare(`
+        SELECT COUNT(*) AS cnt
+        FROM extension_history
+        WHERE contract_id = ?
+          AND datetime(executed_at) >= datetime('now', '-1 hour')
+    `).get(contractId) as { cnt: number };
+    return row?.cnt ?? 0;
 }
 
 export function getAverageResourceUsage(db: Database.Database, contractId: string, limit?: number): { avg_cpu_insns: number, avg_mem_bytes: number, count: number } | null {
@@ -846,7 +889,71 @@ export function getStateChanges(db: Database.Database, contractEntryId: number, 
     return db.prepare(sql).all(contractEntryId) as StateChange[];
 }
 
+export interface StateChangeHistoryRecord {
+    changeId: number;
+    contractEntryId: number;
+    entryKeyXdr: string;
+    entryType: string;
+    entryLabel: string | null;
+    diffType: "created" | "updated" | "deleted";
+    diffJson: string;
+    detectedAtLedger: number;
+    createdAt: string;
+    oldValueXdr: string | null;
+    newValueXdr: string | null;
+}
+
+/**
+ * Return a rich history view of state changes for a contract,
+ * joining state_changes → contract_entries → state_snapshots.
+ */
+export function getStateChangeHistory(
+    db: Database.Database,
+    contractId: string,
+    opts?: { limit?: number; entryKeyXdr?: string },
+): StateChangeHistoryRecord[] {
+    const limit = opts?.limit;
+    const entryKeyXdr = opts?.entryKeyXdr;
+
+    let sql = `
+        SELECT
+            sc.id              AS changeId,
+            sc.contract_entry_id AS contractEntryId,
+            ce.entry_key_xdr   AS entryKeyXdr,
+            ce.entry_type      AS entryType,
+            ce.label           AS entryLabel,
+            sc.diff_type       AS diffType,
+            sc.diff_json       AS diffJson,
+            sc.detected_at_ledger AS detectedAtLedger,
+            sc.created_at      AS createdAt,
+            old_snap.value_xdr AS oldValueXdr,
+            new_snap.value_xdr AS newValueXdr
+        FROM state_changes sc
+        JOIN contract_entries ce ON ce.id = sc.contract_entry_id
+        LEFT JOIN state_snapshots old_snap ON old_snap.id = sc.old_snapshot_id
+        LEFT JOIN state_snapshots new_snap ON new_snap.id = sc.new_snapshot_id
+        WHERE ce.contract_id = ?
+    `;
+
+    const params: (string | number)[] = [contractId];
+
+    if (entryKeyXdr) {
+        sql += " AND ce.entry_key_xdr = ?";
+        params.push(entryKeyXdr);
+    }
+
+    sql += " ORDER BY sc.detected_at_ledger DESC, sc.id DESC";
+
+    if (limit !== undefined && limit >= 0) {
+        sql += " LIMIT ?";
+        params.push(limit);
+    }
+
+    return db.prepare(sql).all(...params) as StateChangeHistoryRecord[];
+}
+
 // ─── Resource Alert Configuration & History ──────────────────────────────────
+
 
 export interface ResourceAlertConfig {
     id: number;
@@ -1024,7 +1131,7 @@ export function hasUnresolvedResourceAlert(
       SELECT 1 FROM resource_alerts_fired
       WHERE resource_alert_config_id = ? AND resource_type = ? AND resolved = 0
       LIMIT 1
-    `).get(configId, resourceType);
+    `).get(configId, resourceType) as { 1: number } | undefined;
     return !!result;
   }
 
@@ -1042,3 +1149,192 @@ export function hasUnresolvedResourceAlert(
   if (!row || typeof row.usage_percent === "undefined") return false;
   return row.usage_percent >= currentUsagePercent;
 }
+
+// ---------------------------- Budget Tracking ----------------------------
+export interface BudgetTracking {
+    id: number;
+    contract_id: string;
+    limit_xlm: number;
+    spent_xlm: number;
+    billing_cycle: string;
+}
+
+export function upsertBudget(db: Database.Database, budget: {
+    contract_id: string;
+    limit_xlm: number;
+    spent_xlm?: number;
+    billing_cycle: string;
+}): void {
+    db.prepare(`
+        INSERT INTO budget_tracking (contract_id, limit_xlm, spent_xlm, billing_cycle)
+        VALUES (@contract_id, @limit_xlm, @spent_xlm, @billing_cycle)
+        ON CONFLICT(contract_id, billing_cycle) DO UPDATE SET
+            limit_xlm = excluded.limit_xlm,
+            spent_xlm = excluded.spent_xlm
+    `).run({
+        contract_id: budget.contract_id,
+        limit_xlm: budget.limit_xlm,
+        spent_xlm: budget.spent_xlm ?? 0.0,
+        billing_cycle: budget.billing_cycle,
+    });
+}
+
+export function getBudget(db: Database.Database, contractId: string, billingCycle: string): BudgetTracking | undefined {
+    return db.prepare("SELECT * FROM budget_tracking WHERE contract_id = ? AND billing_cycle = ?").get(contractId, billingCycle) as BudgetTracking | undefined;
+}
+
+export function addBudgetSpent(db: Database.Database, contractId: string, billingCycle: string, amountXlm: number): void {
+    db.prepare(`
+        UPDATE budget_tracking
+        SET spent_xlm = spent_xlm + ?
+        WHERE contract_id = ? AND billing_cycle = ?
+    `).run(amountXlm, contractId, billingCycle);
+}
+// ─── Resource Usage Logs (issue #164) ────────────────────────────────────────
+
+/**
+ * A single resource-usage snapshot captured per Soroban transaction.
+ * All fee columns are nullable because not every RPC response includes the
+ * full fee breakdown.
+ */
+export interface ResourceUsageLog {
+    id: number;
+    contract_id: string;
+    cpu_insns: number;
+    mem_bytes: number;
+    fee_instructions: number | null;
+    fee_read_ledger_entries: number | null;
+    fee_write_ledger_entries: number | null;
+    fee_read_bytes: number | null;
+    fee_write_bytes: number | null;
+    fee_transaction_size: number | null;
+    fee_historical_ledger: number | null;
+    fee_rent_ledger: number | null;
+    fee_refundable: number | null;
+    recorded_at: string;
+}
+
+/**
+ * Insert a new resource-usage log entry.
+ *
+ * @returns The auto-assigned row id of the inserted entry.
+ */
+export function insertResourceUsageLog(
+    db: Database.Database,
+    log: {
+        contract_id: string;
+        cpu_insns: number;
+        mem_bytes: number;
+        fee_instructions?: number | null;
+        fee_read_ledger_entries?: number | null;
+        fee_write_ledger_entries?: number | null;
+        fee_read_bytes?: number | null;
+        fee_write_bytes?: number | null;
+        fee_transaction_size?: number | null;
+        fee_historical_ledger?: number | null;
+        fee_rent_ledger?: number | null;
+        fee_refundable?: number | null;
+        /** Optional ISO-8601 timestamp; defaults to CURRENT_TIMESTAMP when omitted. */
+        recorded_at?: string;
+    },
+): number {
+    const result = db.prepare(`
+        INSERT INTO resource_usage_logs (
+            contract_id,
+            cpu_insns,
+            mem_bytes,
+            fee_instructions,
+            fee_read_ledger_entries,
+            fee_write_ledger_entries,
+            fee_read_bytes,
+            fee_write_bytes,
+            fee_transaction_size,
+            fee_historical_ledger,
+            fee_rent_ledger,
+            fee_refundable,
+            recorded_at
+        ) VALUES (
+            @contract_id,
+            @cpu_insns,
+            @mem_bytes,
+            @fee_instructions,
+            @fee_read_ledger_entries,
+            @fee_write_ledger_entries,
+            @fee_read_bytes,
+            @fee_write_bytes,
+            @fee_transaction_size,
+            @fee_historical_ledger,
+            @fee_rent_ledger,
+            @fee_refundable,
+            COALESCE(@recorded_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    `).run({
+        contract_id: log.contract_id,
+        cpu_insns: log.cpu_insns,
+        mem_bytes: log.mem_bytes,
+        fee_instructions: log.fee_instructions ?? null,
+        fee_read_ledger_entries: log.fee_read_ledger_entries ?? null,
+        fee_write_ledger_entries: log.fee_write_ledger_entries ?? null,
+        fee_read_bytes: log.fee_read_bytes ?? null,
+        fee_write_bytes: log.fee_write_bytes ?? null,
+        fee_transaction_size: log.fee_transaction_size ?? null,
+        fee_historical_ledger: log.fee_historical_ledger ?? null,
+        fee_rent_ledger: log.fee_rent_ledger ?? null,
+        fee_refundable: log.fee_refundable ?? null,
+        recorded_at: log.recorded_at ?? null,
+    });
+
+    return result.lastInsertRowid as number;
+}
+
+/**
+ * Return resource-usage logs for a contract, newest first.
+ *
+ * @param options.limit   Maximum number of rows to return (must be ≥ 0).
+ * @param options.since   ISO-8601 lower-bound for recorded_at (inclusive).
+ */
+export function getResourceUsageLogs(
+    db: Database.Database,
+    contractId: string,
+    options: { limit?: number; since?: string } = {},
+): ResourceUsageLog[] {
+    const { limit, since } = options;
+
+    if (limit !== undefined && limit < 0) {
+        throw new Error("limit must be non-negative");
+    }
+
+    const conditions: string[] = ["contract_id = @contractId"];
+    if (since !== undefined) {
+        conditions.push("recorded_at >= @since");
+    }
+
+    const where = conditions.join(" AND ");
+    const limitClause = limit !== undefined ? `LIMIT ${limit}` : "";
+
+    return db.prepare(`
+        SELECT *
+        FROM resource_usage_logs
+        WHERE ${where}
+        ORDER BY recorded_at DESC, id DESC
+        ${limitClause}
+    `).all({ contractId, since: since ?? null }) as ResourceUsageLog[];
+}
+
+/**
+ * Return the single most-recent resource-usage log for a contract,
+ * or `undefined` if none exist.
+ */
+export function getLatestResourceUsageLog(
+    db: Database.Database,
+    contractId: string,
+): ResourceUsageLog | undefined {
+    return db.prepare(`
+        SELECT *
+        FROM resource_usage_logs
+        WHERE contract_id = ?
+        ORDER BY recorded_at DESC, id DESC
+        LIMIT 1
+    `).get(contractId) as ResourceUsageLog | undefined;
+}
+

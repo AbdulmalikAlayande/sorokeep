@@ -1,0 +1,49 @@
+name: TTL Check
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      contract-id:
+        description: 'Soroban contract ID to check'
+        required: true
+      network:
+        description: 'Stellar network (testnet or mainnet)'
+        required: false
+        default: 'testnet'
+      threshold:
+        description: 'Minimum required TTL in ledgers'
+        required: false
+        default: '500'
+
+permissions:
+  contents: read
+
+jobs:
+  ttl-check:
+    name: Soroban Contract TTL Check
+    runs-on: ubuntu-latest
+    # Only run on pull_request when a contract ID is configured,
+    # or always run when triggered manually via workflow_dispatch.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      vars.SOROKEEP_CONTRACT_ID != ''
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check contract TTL
+        id: ttl
+        uses: ./
+        with:
+          contract-id: ${{ github.event.inputs.contract-id || vars.SOROKEEP_CONTRACT_ID }}
+          network: ${{ github.event.inputs.network || vars.SOROKEEP_NETWORK || 'testnet' }}
+          threshold: ${{ github.event.inputs.threshold || vars.SOROKEEP_THRESHOLD || '500' }}
+
+      - name: Report TTL status
+        if: always()
+        run: |
+          echo "TTL check status : ${{ steps.ttl.outputs.status }}"
+          echo "Minimum TTL      : ${{ steps.ttl.outputs.ttl }} ledgers"

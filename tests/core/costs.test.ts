@@ -7,7 +7,7 @@ import {
     getEntriesForContract,
     recordExtension,
 } from "../../src/db/repositories.js";
-import { getExtensionCosts, calculateFeeAdjustedProjection } from "../../src/core/costs.js";
+import { getExtensionCosts, calculateFeeAdjustedProjection, getMultiPeriodCosts } from "../../src/core/costs.js";
 
 const CONTRACT_ID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
 
@@ -175,6 +175,137 @@ describe("getExtensionCosts", () => {
         if (!result.success) return;
 
         expect(result.data.period).toEqual({ days: 30, label: "last 30 days" });
+    });
+});
+
+describe("getMultiPeriodCosts", () => {
+    it("returns contract_not_found for unknown contract", () => {
+        const result = getMultiPeriodCosts(db, "C" + "A".repeat(55));
+        expect(result.success).toBe(false);
+        if (!result.success) {
+            expect(result.error).toBe("contract_not_found");
+        }
+    });
+
+    it("returns zero-cost periods when no extensions exist", () => {
+        const result = getMultiPeriodCosts(db, CONTRACT_ID);
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        expect(result.data.periods).toHaveLength(3);
+        expect(result.data.periods.map(p => p.days)).toEqual([7, 30, 90]);
+        for (const p of result.data.periods) {
+            expect(p.totalExtensions).toBe(0);
+            expect(p.totalCostXlm).toBe(0);
+        }
+    });
+
+    it("returns contract info with the result", () => {
+        const result = getMultiPeriodCosts(db, CONTRACT_ID);
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        expect(result.data.contract).toEqual({
+            id: CONTRACT_ID,
+            name: "sample-contract",
+            network: "testnet",
+        });
+    });
+
+    it("accumulates costs across all three periods", () => {
+        recordExtension(db, {
+            contract_id: CONTRACT_ID,
+            contract_entry_id: entryId,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash-1",
+            cost_xlm: 0.5,
+            executed_at_ledger: 12345,
+        });
+        recordExtension(db, {
+            contract_id: CONTRACT_ID,
+            contract_entry_id: entryId,
+            old_ttl_ledgers: 2000,
+            new_ttl_ledgers: 60000,
+            tx_hash: "hash-2",
+            cost_xlm: 0.3,
+            executed_at_ledger: 12346,
+        });
+
+        const result = getMultiPeriodCosts(db, CONTRACT_ID);
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        for (const p of result.data.periods) {
+            expect(p.totalExtensions).toBe(2);
+            expect(p.totalCostXlm).toBeCloseTo(0.8, 7);
+        }
+    });
+
+    it("includes a 30-day projection based on the 30-day period", () => {
+        recordExtension(db, {
+            contract_id: CONTRACT_ID,
+            contract_entry_id: entryId,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash-proj",
+            cost_xlm: 1.0,
+            executed_at_ledger: 12345,
+        });
+
+        const result = getMultiPeriodCosts(db, CONTRACT_ID);
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        expect(result.data.projection).toBeDefined();
+        expect(result.data.projection.baseProjectedCostXlm).toBeGreaterThan(0);
+        expect(result.data.projection.adjustedProjectedCostXlm).toBeGreaterThan(0);
+    });
+
+    it("applies fee stats to projection when provided", () => {
+        recordExtension(db, {
+            contract_id: CONTRACT_ID,
+            contract_entry_id: entryId,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash-fee",
+            cost_xlm: 1.0,
+            executed_at_ledger: 12345,
+        });
+
+        const withoutFees = getMultiPeriodCosts(db, CONTRACT_ID);
+        const withFees = getMultiPeriodCosts(db, CONTRACT_ID, {
+            baseFeeStroops: 200,
+            surgePricingMultiplier: 1.5,
+        });
+
+        expect(withoutFees.success).toBe(true);
+        expect(withFees.success).toBe(true);
+        if (!withoutFees.success || !withFees.success) return;
+
+        expect(withFees.data.projection.adjustedProjectedCostXlm).toBeGreaterThan(
+            withoutFees.data.projection.adjustedProjectedCostXlm,
+        );
+    });
+
+    it("treats null cost_xlm as zero in period totals", () => {
+        recordExtension(db, {
+            contract_id: CONTRACT_ID,
+            contract_entry_id: entryId,
+            old_ttl_ledgers: 1000,
+            new_ttl_ledgers: 50000,
+            tx_hash: "hash-null-cost",
+            executed_at_ledger: 12345,
+        });
+
+        const result = getMultiPeriodCosts(db, CONTRACT_ID);
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+
+        for (const p of result.data.periods) {
+            expect(p.totalExtensions).toBe(1);
+            expect(p.totalCostXlm).toBe(0);
+        }
     });
 });
 
