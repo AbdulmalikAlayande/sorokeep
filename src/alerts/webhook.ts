@@ -5,7 +5,7 @@ import { renderAlertTemplate } from "./templates.js";
 
 const logger = getLogger().child({ component: "WebhookHandler" });
 
-const TIMEOUT_MS = 10_000;
+const TIMEOUT_MS = 5_000;
 
 /**
  * Send an AlertEvent to a webhook URL via HTTP POST.
