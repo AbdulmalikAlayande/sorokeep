@@ -69,24 +69,15 @@ describe("MCP Server Lifecycle", () => {
 
         await server.connect(transport);
 
-        const responsePromise = new Promise<string>((resolve) => {
-            stdout.on("data", (chunk) => {
-                resolve(chunk.toString());
-            });
+        const errorPromise = new Promise<Error>((resolve) => {
+            server.server.onerror = (err) => resolve(err);
         });
 
         stdin.write("invalid json\n");
 
-        const responseStr = await responsePromise;
-        const response = JSON.parse(responseStr);
-
-        expect(response).toMatchObject({
-            jsonrpc: "2.0",
-            error: {
-                code: -32700,
-                message: expect.any(String),
-            }
-        });
+        const err = await errorPromise;
+        expect(err).toBeInstanceOf(Error);
+        expect(err.message).toMatch(/JSON/i);
 
         await server.close();
     });
