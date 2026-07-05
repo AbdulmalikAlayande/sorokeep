@@ -198,11 +198,3 @@ CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_contract_id
 CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_recorded_at
     ON resource_usage_logs(recorded_at DESC);
 
-CREATE TABLE IF NOT EXISTS budget_tracking (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    limit_xlm REAL NOT NULL,
-    spent_xlm REAL NOT NULL DEFAULT 0.0,
-    billing_cycle TEXT NOT NULL,
-    UNIQUE(contract_id, billing_cycle)
-);
