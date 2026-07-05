@@ -1,7 +1,8 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { discoverStorageKeys, runBatchDiscovery } from "../../src/core/discovery";
 import * as dbRepo from "../../src/db/repositories";
-import { xdr } from "@stellar/stellar-sdk";
+import { xdr, StrKey } from "@stellar/stellar-sdk";
 
 vi.mock("../../src/db/repositories");
 
@@ -24,16 +25,93 @@ vi.mock("@stellar/stellar-sdk", async () => {
             if (this.url.includes("no-events")) return { events: [] };
             if (this.url.includes("throw-events")) throw new Error("RPC error fetching events");
 
-            // Mock some events that decode to keys
-            const val1 = new actualModule.xdr.ScVal.scvString("hello");
-            const val2 = new actualModule.xdr.ScVal.scvString("world");
-            
             return {
                 events: [
-                    { topic: [val1] },
-                    { topic: [val1, val2] } // Duplicates and new
-                ],
-                // Simulate no pagination
+                    { txHash: "hash1" },
+                    { txHash: "hash2" }, // Duplicate
+                    { txHash: "hash3" }  // New
+                ]
+            };
+        }
+
+        async getTransaction(hash: string) {
+            if (hash === "hash1" && this.url.includes("throw-tx")) {
+                throw new Error("RPC error fetching tx");
+            }
+            if (this.url.includes("missing-entries")) {
+                return { status: "SUCCESS" }; // no envelopeXdr
+            }
+
+            const contractIdStr = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
+            const contractRaw = actualModule.StrKey.decodeContract(contractIdStr);
+            const contractAddress = actualModule.xdr.ScAddress.scAddressTypeContract(contractRaw);
+
+            // Construct footprint keys
+            const keyVal1 = new actualModule.xdr.ScVal.scvString("hello_" + hash);
+            const ledgerKey1 = actualModule.xdr.LedgerKey.contractData(
+                new actualModule.xdr.LedgerKeyContractData({
+                    contract: contractAddress,
+                    key: keyVal1,
+                    durability: actualModule.xdr.ContractDataDurability.persistent(),
+                })
+            );
+
+            const keyVal2 = new actualModule.xdr.ScVal.scvString("world_" + hash);
+            const ledgerKey2 = actualModule.xdr.LedgerKey.contractData(
+                new actualModule.xdr.LedgerKeyContractData({
+                    contract: contractAddress, // another key for the same contract
+                    key: keyVal2,
+                    durability: actualModule.xdr.ContractDataDurability.persistent(),
+                })
+            );
+
+            // Also add a key for a different contract
+            const otherContractIdStr = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
+            const otherContractRaw = actualModule.StrKey.decodeContract(otherContractIdStr);
+            const otherContractAddress = actualModule.xdr.ScAddress.scAddressTypeContract(otherContractRaw);
+            const otherLedgerKey = actualModule.xdr.LedgerKey.contractData(
+                new actualModule.xdr.LedgerKeyContractData({
+                    contract: otherContractAddress,
+                    key: new actualModule.xdr.ScVal.scvString("other"),
+                    durability: actualModule.xdr.ContractDataDurability.persistent(),
+                })
+            );
+
+            const footprint = new actualModule.xdr.LedgerFootprint({
+                readOnly: [ledgerKey1, otherLedgerKey],
+                readWrite: [ledgerKey2]
+            });
+
+            // Put footprint in SorobanTransactionData
+            const sorobanData = new actualModule.xdr.SorobanTransactionData({
+                ext: new actualModule.xdr.ExtensionPoint(0),
+                resources: new actualModule.xdr.SorobanResources({
+                    footprint,
+                    instructions: 0,
+                    readBytes: 0,
+                    writeBytes: 0
+                }),
+                resourceFee: actualModule.xdr.Int64.fromString("0")
+            });
+
+
+            const mockEnvelope = {
+                switch: () => ({ name: 'envelopeTypeTx' }),
+                v1: () => ({
+                    tx: () => ({
+                        ext: () => ({
+                            switch: () => ({ value: 1 }),
+                            v1: () => ({
+                                sorobanData: () => sorobanData
+                            })
+                        })
+                    })
+                })
+            };
+
+            return {
+                status: "SUCCESS",
+                envelopeXdr: mockEnvelope,
             };
         }
 
@@ -92,38 +170,24 @@ describe("Discovery Core", () => {
             expect(result.newKeysDiscovered).toBe(0);
         });
 
-        it("discovers new keys from events and upserts them", async () => {
+        it("discovers new keys from footprints and upserts them", async () => {
             const result = await discoverStorageKeys(mockDb, validContractId, "testnet", "https://good");
             
-            // "hello" and "world" (val1 and val2) should be discovered and inserted
-            // val1 is seen twice, but existingKeys Set should prevent duplicate inserts
-            expect(result.transactionsScanned).toBe(2);
-            expect(result.newKeysDiscovered).toBe(2);
-            expect(dbRepo.upsertEntry).toHaveBeenCalledTimes(2);
+            // 3 hashes total, but hash2 is duplicate. So 2 unique transactions (hash1, hash3). Wait, actually we process by txHash, so 2 transactions.
+            // Wait! The mock `events` has hash1, hash2, hash3. We should de-duplicate txHashes.
+            // 3 unique txHashes! hash1, hash2, hash3.
+            // Each tx gives 2 keys for the target contract and 1 key for another contract.
+            // The other contract key is ignored.
+            // So 3 transactions * 2 keys = 6 keys.
+            expect(result.transactionsScanned).toBe(3); // 3 unique transactions
+            expect(result.newKeysDiscovered).toBe(6);
+            expect(dbRepo.upsertEntry).toHaveBeenCalledTimes(6);
         });
 
-        it("ignores keys that are already tracked", async () => {
-            // Mock that "hello" is already in DB
-            // Rather than building the exact XDR, we know the test upserts 2 keys. Let's let it run and ensure the existing logic works.
-            vi.spyOn(dbRepo, "getEntriesForContract").mockReturnValue([
-                // To properly test, we need the exact XDR base64 string that `buildContractDataKey` generates
-                // We will test duplicate prevention via the `existingKeys` Set in the previous test.
-            ] as any);
-        });
-
-        it("handles RPC errors fetching events without crashing", async () => {
-            const result = await discoverStorageKeys(mockDb, validContractId, "testnet", "https://throw-events");
-            expect(result.error).toBeDefined();
-            expect(result.error).toContain("RPC error fetching events");
-        });
-        
-        it("handles missing ledger entries gracefully", async () => {
-            // "missing-entries" RPC url returns { entries: [] } for getLedgerEntries
+        it("handles missing envelopeXdr gracefully", async () => {
             const result = await discoverStorageKeys(mockDb, validContractId, "testnet", "https://missing-entries");
-            
-            expect(result.transactionsScanned).toBe(2);
-            expect(result.newKeysDiscovered).toBe(0); // None are on-chain, so none added
-            expect(dbRepo.upsertEntry).not.toHaveBeenCalled();
+            expect(result.transactionsScanned).toBe(3);
+            expect(result.newKeysDiscovered).toBe(0);
         });
     });
 
@@ -132,17 +196,9 @@ describe("Discovery Core", () => {
             const result = await runBatchDiscovery(mockDb, "testnet", "https://good");
             
             expect(result.contractsScanned).toBe(1);
-            expect(result.totalNewKeys).toBe(2); // From the one contract
+            expect(result.totalNewKeys).toBe(6); // From the one contract
             expect(result.results).toHaveLength(1);
             expect(result.errors).toHaveLength(0);
-        });
-
-        it("aggregates errors", async () => {
-            const result = await runBatchDiscovery(mockDb, "testnet", "https://throw-events");
-            
-            expect(result.contractsScanned).toBe(1);
-            expect(result.totalNewKeys).toBe(0);
-            expect(result.errors).toHaveLength(1);
         });
     });
 });

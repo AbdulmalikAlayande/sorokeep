@@ -18,6 +18,7 @@ export interface WatchOptions {
     name?: string;
     rpcUrl?: string;
     storageKeys?: string[];
+    pollIntervalSeconds?: number;
     /**
      * When true, skip the introspection cache and always fetch fresh data from
      * the RPC. Useful for manual `watch` commands where the user expects an
@@ -48,7 +49,7 @@ export type WatchResult =
  */
 export async function watchContract(db: Database.Database, options: WatchOptions): Promise<WatchResult> {
     logger.debug(`Watching contract ${options.contractId} on ${options.network}`);
-    const { contractId, network, name, rpcUrl, storageKeys, forceRefresh = false } = options;
+    const { contractId, network, name, rpcUrl, storageKeys, forceRefresh = false, pollIntervalSeconds } = options;
 
     // Basic Validation
     if (!contractId.startsWith("C") || contractId.length !== 56) {
@@ -153,6 +154,7 @@ export async function watchContract(db: Database.Database, options: WatchOptions
             name: name,
             network: network,
             wasm_hash: instanceEntry.wasmHash ?? undefined,
+            poll_interval_seconds: pollIntervalSeconds ?? null,
         });
 
         // Store Instance Entry
@@ -229,5 +231,4 @@ export async function watchContract(db: Database.Database, options: WatchOptions
         };
     }
 }
-
 

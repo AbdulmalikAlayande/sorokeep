@@ -11,6 +11,9 @@ import { registerCostsCommand } from "./commands/costs.js";
 import { registerResourcesCommand } from "./commands/resources.js";
 import { registerRestoreCommand } from "./commands/restore.js";
 import { registerChannelsCommand } from "./commands/channels.js";
+import { registerHistoryCommand } from "./commands/history.js";
+import { registerCompletionCommand } from "./commands/completion.js";
+import { registerInspectCommand } from "./commands/inspect.js";
 import { registerBudgetCommand } from "./commands/budget.js";
 import { registerDbCommand } from "./commands/db.js";
 
@@ -35,6 +38,9 @@ registerCostsCommand(program);
 registerResourcesCommand(program);
 registerRestoreCommand(program);
 registerChannelsCommand(program);
+registerHistoryCommand(program);
+registerCompletionCommand(program);
+registerInspectCommand(program);
 registerBudgetCommand(program);
 registerDbCommand(program);
 

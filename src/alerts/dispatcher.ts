@@ -4,8 +4,6 @@ import { buildAlertEvent, type AlertEvent, type AlertChannel } from "./types.js"
 import { sendWebhookAlert } from "./webhook.js";
 import { sendSlackAlert } from "./slack.js";
 import { sendPagerDutyAlert } from "./pagerduty.js";
-import { sendDiscordAlert } from "./discord.js";
-import { sendTelegramAlert } from "./telegram.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "AlertDispatcher" });
@@ -20,10 +18,20 @@ export interface DeliveryResult {
 
 export const DEFAULT_CHANNELS: Record<string, AlertChannel> = {
     webhook: { send: sendWebhookAlert },
-    slack: { send: sendSlackAlert },
-    pagerduty: { send: sendPagerDutyAlert },
-    discord: { send: sendDiscordAlert },
-    telegram: { send: sendTelegramAlert },
+    slack: { send: (target, event) => sendSlackAlert(target, event) },
+    pagerduty: { send: (target, event) => sendPagerDutyAlert(target, event) },
+    discord: { 
+        send: async (target, event) => {
+            const { sendDiscordAlert } = await import("./discord.js");
+            await sendDiscordAlert(target, event);
+        }
+    },
+    telegram: { 
+        send: async (target, event) => {
+            const { sendTelegramAlert } = await import("./telegram.js");
+            await sendTelegramAlert(target, event);
+        }
+    },
 };
 
 export async function deliverPendingAlerts(
@@ -31,6 +39,7 @@ export async function deliverPendingAlerts(
     network: string,
     channels: Record<string, AlertChannel> = DEFAULT_CHANNELS,
 ): Promise<DeliveryResult> {
+    const pending = getUndeliveredAlerts(db, network);
     const result: DeliveryResult = {
         attempted: 0,
         delivered: 0,
@@ -39,7 +48,6 @@ export async function deliverPendingAlerts(
         errors: [],
     };
 
-    const pending = getUndeliveredAlerts(db, network);
     if (pending.length === 0) return result;
 
     logger.debug(`Dispatcher: ${pending.length} undelivered alert(s) for network ${network}`);
@@ -97,7 +105,7 @@ export async function deliverPendingAlerts(
 }
 
 export async function deliverSingleAlert(
-    channelType: string,
+    channelType: "webhook" | "slack" | "pagerduty" | "discord" | "telegram",
     channelTarget: string,
     event: AlertEvent,
     webhookSecret?: string | null,
@@ -108,9 +116,8 @@ export async function deliverSingleAlert(
         if (!channel) throw new Error(`Unknown channel type: ${channelType}`);
         await channel.send(channelTarget, event, webhookSecret ?? null);
         return true;
-    } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        logger.warn(`Resolution alert delivery failed — channel: ${channelType}, error: ${message}`);
+    } catch (error: unknown) {
+        logger.warn(`Single alert delivery failed for ${channelType}: ${error instanceof Error ? error.message : String(error)}`);
         return false;
     }
 }

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { StellarRpcClient, extractResourceCosts, executeWithRetry } from "../../src/rpc/client";
 import { Contract, xdr, Keypair } from "@stellar/stellar-sdk";
@@ -106,7 +107,7 @@ vi.mock("@stellar/stellar-sdk", async () =>  {
         async getTransaction(hash: string) {
             if (hash === "missing") return { status: "NOT_FOUND" };
             if (hash === "failed") return { status: "FAILED", resultXdr: "mock-failed-xdr" };
-            return { status: "SUCCESS", resultMetaXdr: "mock-result-meta-xdr" };
+            return { status: "SUCCESS", resultMetaXdr: "mock-result-meta-xdr", feeCharged: 1234 };
         }
 
         async getAccount(publicKey: string) {
@@ -170,6 +171,7 @@ describe("StellarRpcClient", () => {
     });
 
     afterEach(() => {
+        vi.useRealTimers();
         vi.clearAllMocks();
     });
 
@@ -356,11 +358,22 @@ describe("StellarRpcClient", () => {
             expect(result.txHash).toBe("mock-tx-hash");
         });
 
-        it("submitExtension handles simulation error", async () => {
-            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail.com");
-            const result = await simFailClient.submitExtension([dummyKey], 1000, secretKey);
-            expect(result.success).toBe(false);
-            expect(result.error).toBe("Simulation failed");
+        it("submitExtension handles simulation error (expired sequence number)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-seq.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "txBadSeq" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Expired sequence number");
+        });
+
+        it("submitExtension handles simulation error (insufficient balance)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-bal.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "txInsufficientBalance" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Insufficient wallet balance");
+        });
+
+        it("submitExtension handles simulation error (invalid footprint)", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-key.com");
+            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "invalid footprint" });
+            await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Invalid footprint key");
         });
 
         it("submitExtension handles send error", async () => {
@@ -389,6 +402,197 @@ describe("StellarRpcClient", () => {
             expect(result.error).toContain("Transaction polling timed out after 2 attempts");
         });
     });
+
+
+
+    describe("RPC rate limiting", () => {
+        it("does not exceed the configured requests per second", async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+
+            const timestamps: number[] = [];
+            const server = {
+                getHealth: vi.fn(async () => {
+                    timestamps.push(Date.now());
+                    return { status: "healthy", latestLedger: 2443398 };
+                }),
+            };
+
+            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
+            (rateLimitedClient as any).server = server;
+
+            const requests = [1, 2, 3, 4].map(() => rateLimitedClient.checkHealth());
+
+            await vi.runAllTimersAsync();
+            await Promise.all(requests);
+
+            expect(timestamps).toHaveLength(4);
+            expect(timestamps[2] - timestamps[0]).toBeGreaterThanOrEqual(1000);
+            expect(timestamps[3] - timestamps[1]).toBeGreaterThanOrEqual(1000);
+        });
+
+        it("queues requests and resolves them successfully", async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+
+            const responses = [1, 2, 3, 4].map(() => ({ status: "healthy" }));
+            const server = {
+                getHealth: vi.fn(async () => {
+                    const response = responses.shift();
+                    return response ?? { status: "healthy" };
+                }),
+            };
+
+            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
+            (rateLimitedClient as any).server = server;
+
+            const requests = [1, 2, 3, 4].map(() => rateLimitedClient.checkHealth());
+
+            await vi.runAllTimersAsync();
+            const settled = await Promise.all(requests);
+
+            expect(settled).toHaveLength(4);
+            expect(settled.every((result) => result.status === "healthy")).toBe(true);
+        });
+
+        it("limits in-flight requests to maxRequestsPerSecond at any moment", async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+
+            let inFlight = 0;
+            let maxInFlight = 0;
+            const server = {
+                getHealth: vi.fn(async () => {
+                    inFlight++;
+                    maxInFlight = Math.max(maxInFlight, inFlight);
+                    // Simulate some async work
+                    await new Promise<void>(resolve => setTimeout(resolve, 50));
+                    inFlight--;
+                    return { status: "healthy", latestLedger: 2443398 };
+                }),
+            };
+
+            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
+            (rateLimitedClient as any).server = server;
+
+            const requests = [1, 2, 3, 4, 5, 6].map(() => rateLimitedClient.checkHealth());
+
+            await vi.runAllTimersAsync();
+            await Promise.all(requests);
+
+            // With 2 req/sec rate limit, at most 2 should have been in-flight simultaneously
+            expect(maxInFlight).toBeLessThanOrEqual(2);
+            expect(server.getHealth).toHaveBeenCalledTimes(6);
+        });
+
+        it("continues processing queued requests even if a preceding request fails", async () => {
+            vi.useFakeTimers();
+            vi.setSystemTime(new Date("2024-01-01T00:00:00.000Z"));
+
+            let callCount = 0;
+            const server = {
+                getHealth: vi.fn(async () => {
+                    callCount++;
+                    if (callCount === 1) {
+                        throw new Error("First request failed");
+                    }
+                    return { status: "healthy", latestLedger: 2443398 };
+                }),
+            };
+
+            const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 1 });
+            (rateLimitedClient as any).server = server;
+
+            const firstPromise = rateLimitedClient.checkHealth();
+            firstPromise.catch(() => {}); // prevent unhandled rejection during runAllTimersAsync
+            const secondPromise = rateLimitedClient.checkHealth();
+            secondPromise.catch(() => {}); // prevent unhandled rejection during runAllTimersAsync
+
+            await vi.runAllTimersAsync();
+            const [first, second] = await Promise.allSettled([firstPromise, secondPromise]);
+
+            // First should have rejected
+            expect(first.status).toBe("rejected");
+            // Second should have resolved despite the first failing
+            expect(second.status).toBe("fulfilled");
+            expect(server.getHealth).toHaveBeenCalledTimes(2);
+
+        });
+    });
+
+    describe("ExtendFootprintTTLOp — Simulation and Fee Parsing", () => {
+        const dummyKey = xdr.LedgerKey.contractData(new xdr.LedgerKeyContractData({
+            contract: new xdr.ScAddress.scAddressTypeContract(Buffer.from("a".repeat(32))),
+            key: xdr.ScVal.scvLedgerKeyContractInstance(),
+            durability: xdr.ContractDataDurability.persistent()
+        })).toXDR("base64");
+
+        const secretKey = Keypair.random().secret();
+
+        it("simulateExtension returns minResourceFee from footprint simulation", async () => {
+            const publicKey = Keypair.fromSecret(secretKey).publicKey();
+            const result = await client.simulateExtension([dummyKey], 100000, publicKey);
+            expect(result.success).toBe(true);
+            expect(result.minResourceFee).toBe(100);
+        });
+
+        it("simulateExtension propagates error when RPC simulation fails", async () => {
+            const simFailClient = new StellarRpcClient("testnet", "https://sim-fail.com");
+            const publicKey = Keypair.fromSecret(secretKey).publicKey();
+            const result = await simFailClient.simulateExtension([dummyKey], 100000, publicKey);
+            expect(result.success).toBe(false);
+            expect(result.error).toBe("Simulation failed");
+        });
+
+        it("submitExtension simulates the footprint before assembling and sending", async () => {
+            const simulateSpy = vi.spyOn(client["server"] as any, "simulateTransaction");
+            const sendSpy = vi.spyOn(client["server"] as any, "sendTransaction");
+
+            await client.submitExtension([dummyKey], 100000, secretKey);
+
+            // simulateTransaction must be called before sendTransaction
+            expect(simulateSpy).toHaveBeenCalledTimes(1);
+            expect(sendSpy).toHaveBeenCalledTimes(1);
+            expect(simulateSpy.mock.invocationCallOrder[0])
+                .toBeLessThan(sendSpy.mock.invocationCallOrder[0]!);
+        });
+
+        it("submitExtension parses feeCharged from the transaction result", async () => {
+            const result = await client.submitExtension([dummyKey], 100000, secretKey);
+            expect(result.success).toBe(true);
+            expect(result.feeCharged).toBe(1234);
+        });
+
+        it("submitExtension returns feeCharged as undefined when not present in result", async () => {
+            // Override getTransaction to omit feeCharged
+            const mockClient = new StellarRpcClient("testnet", "https://testnet.stellar.org");
+            mockClient["server"].getTransaction = vi.fn().mockResolvedValue({
+                status: "SUCCESS",
+                resultMetaXdr: "mock-result-meta-xdr",
+                // no feeCharged field
+            });
+            mockClient["server"].getAccount = vi.fn().mockResolvedValue(
+                new (await import("@stellar/stellar-sdk")).Account(
+                    Keypair.fromSecret(secretKey).publicKey(), "1"
+                )
+            );
+            mockClient["server"].simulateTransaction = vi.fn().mockResolvedValue({
+                cost: { cpuInsns: "1000", memBytes: "100" },
+                transactionData: new (await import("@stellar/stellar-sdk")).SorobanDataBuilder().build(),
+                minResourceFee: "100",
+            });
+            mockClient["server"].sendTransaction = vi.fn().mockResolvedValue({
+                status: "PENDING",
+                hash: "tx-no-fee",
+            });
+
+            const result = await mockClient.submitExtension([dummyKey], 100000, secretKey);
+            expect(result.success).toBe(true);
+            expect(result.feeCharged).toBeUndefined();
+
+        });
+    });
+
 
     describe("executeWithRetry", () => {
         beforeEach(() => {
