@@ -1,31 +1,33 @@
 import { describe, it, expect } from "vitest";
-import { Address, SCVal } from "@stellar/stellar-sdk";
+import { nativeToScVal } from "@stellar/stellar-sdk";
 
 import { scvalToJSON } from "../../src/core/scvalTranslator";
 
 describe("SCVal translator (SCVal -> JSON)", () => {
   it("translates primitive Symbol, String, Bool, Address", () => {
-    const sym = SCVal.scvSymbol("hello");
-    const str = SCVal.scvString("world");
-    const bln = SCVal.scvBool(true);
-    const addr = SCVal.scvAddress(new Address("GBB6GZ4X7WJ2X2K2Q4QG7YQK3KJ7G2Q3K3Q3K3Q3K3Q3Q3Q3K3Q3Q3Q3"));
+    const sym = nativeToScVal("hello", { type: "symbol" });
+    const str = nativeToScVal("world", { type: "string" });
+    const bln = nativeToScVal(true, { type: "bool" });
+    const addr = nativeToScVal("GA352JVPP6DKOPFVZMAHJFUX6RPTKJE3TUPSQABR53E2Z4SIDIDSN4NU", { type: "address" });
 
     expect(scvalToJSON(sym)).toBe("hello");
     expect(scvalToJSON(str)).toBe("world");
     expect(scvalToJSON(bln)).toBe(true);
     expect(scvalToJSON(addr)).toBe(
-      "GBB6GZ4X7WJ2X2K2Q4QG7YQK3KJ7G2Q3K3Q3K3Q3K3Q3Q3Q3K3Q3Q3Q3",
+      "GA352JVPP6DKOPFVZMAHJFUX6RPTKJE3TUPSQABR53E2Z4SIDIDSN4NU",
     );
   });
 
   it("converts i/u 64 and i/u 128 into precision-safe strings", () => {
-    const i64 = SCVal.scvI64(-9223372036854775808n);
-    const u64 = SCVal.scvU64(18446744073709551615n);
-    const i128 = SCVal.scvI128(
+    const i64 = nativeToScVal(-9223372036854775808n, { type: "i64" });
+    const u64 = nativeToScVal(18446744073709551615n, { type: "u64" });
+    const i128 = nativeToScVal(
       -170141183460469231731687303715884105728n,
+      { type: "i128" }
     );
-    const u128 = SCVal.scvU128(
+    const u128 = nativeToScVal(
       340282366920938463463374607431768211455n,
+      { type: "u128" }
     );
 
     expect(scvalToJSON(i64)).toBe("-9223372036854775808");
@@ -39,40 +41,37 @@ describe("SCVal translator (SCVal -> JSON)", () => {
   });
 
   it("translates deeply nested vectors (scvVec)", () => {
-    const v = SCVal.scvVec([
-      SCVal.scvSymbol("a"),
-      SCVal.scvVec([SCVal.scvI64(123n), SCVal.scvBool(false)]),
+    const v = nativeToScVal([
+      nativeToScVal("a", { type: "symbol" }),
+      [nativeToScVal(123n, { type: "i64" }), false],
     ]);
 
     expect(scvalToJSON(v)).toEqual(["a", ["123", false]]);
   });
 
   it("translates maps (scvMap) into JSON objects", () => {
-    const m = SCVal.scvMap([
-      [SCVal.scvSymbol("k1"), SCVal.scvString("v1")],
-      [SCVal.scvSymbol("k2"), SCVal.scvI64(5n)],
-    ]);
+    const m = nativeToScVal({
+      k1: "v1",
+      k2: nativeToScVal(5n, { type: "i64" })
+    });
 
     expect(scvalToJSON(m)).toEqual({ k1: "v1", k2: "5" });
   });
 
   it("translates mixed nested structures (vector + map + primitives)", () => {
-    const input = SCVal.scvVec([
-      SCVal.scvMap([
-        [SCVal.scvSymbol("flag"), SCVal.scvBool(true)],
-        [SCVal.scvSymbol("addr"),
-          SCVal.scvAddress(
-            new Address("GBB6GZ4X7WJ2X2K2Q4QG7YQK3KJ7G2Q3K3Q3K3Q3K3Q3Q3Q3K3Q3Q3Q3"),
-          )
-        ],
-      ]),
-      SCVal.scvU128(42n),
+    const input = nativeToScVal([
+      {
+        flag: true,
+        addr: nativeToScVal("GA352JVPP6DKOPFVZMAHJFUX6RPTKJE3TUPSQABR53E2Z4SIDIDSN4NU", { type: "address" })
+      },
+      nativeToScVal(42n, { type: "u128" })
     ]);
 
     expect(scvalToJSON(input)).toEqual([
-      { flag: true, addr: "GBB6GZ4X7WJ2X2K2Q4QG7YQK3KJ7G2Q3K3Q3K3Q3K3Q3Q3Q3K3Q3Q3Q3" },
+      { flag: true, addr: "GA352JVPP6DKOPFVZMAHJFUX6RPTKJE3TUPSQABR53E2Z4SIDIDSN4NU" },
       "42",
     ]);
   });
 });
+
 
