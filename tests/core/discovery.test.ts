@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { discoverStorageKeys, runBatchDiscovery } from "../../src/core/discovery";
 import * as dbRepo from "../../src/db/repositories";
@@ -93,9 +94,7 @@ vi.mock("@stellar/stellar-sdk", async () => {
                 resourceFee: actualModule.xdr.Int64.fromString("0")
             });
 
-            // Build TransactionEnvelope
-            // wait, xdr.TransactionExt is a union? Yes. It might be simpler to just return a mock object that matches the structure.
-            
+
             const mockEnvelope = {
                 switch: () => ({ name: 'envelopeTypeTx' }),
                 v1: () => ({
