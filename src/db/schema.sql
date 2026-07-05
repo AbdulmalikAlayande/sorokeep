@@ -7,8 +7,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     poll_interval_seconds INTEGER,
     registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_checked_ledger INTEGER,
-    last_introspected_at DATETIME,
-    poll_interval_seconds INTEGER
+    last_introspected_at DATETIME
 );
 
 CREATE TABLE IF NOT EXISTS contract_entries (

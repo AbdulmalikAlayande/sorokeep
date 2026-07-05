@@ -25,6 +25,26 @@ const SCHEMA = fs.readFileSync(SCHEMA_FILE_PATH, 'utf-8')
 
 let db: Database.Database | null = null;
 
+const LIVE_MIGRATIONS = [
+    `ALTER TABLE alerts_fired ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE alerts_fired ADD COLUMN delivered_at TEXT`,
+    `ALTER TABLE alerts_fired ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
+    `ALTER TABLE alert_configs ADD COLUMN webhook_secret TEXT`,
+    `ALTER TABLE contracts ADD COLUMN poll_interval_seconds INTEGER`,
+    `CREATE TABLE IF NOT EXISTS channel_accounts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        public_key TEXT NOT NULL UNIQUE,
+        keypair_source TEXT,
+        label TEXT,
+        network TEXT NOT NULL DEFAULT 'testnet',
+        funded BOOLEAN NOT NULL DEFAULT 0,
+        balance_xlm REAL,
+        balance_checked_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `ALTER TABLE contracts ADD COLUMN last_introspected_at DATETIME`,
+];
+
 export function getDatabase(customPath?: string): Database.Database {
     if (db) return db;
 
@@ -45,27 +65,17 @@ export function getDatabase(customPath?: string): Database.Database {
     // ALTER TABLE is idempotent-safe here: we catch the "duplicate column" error
     // that SQLite throws when the column already exists. This handles existing
     // sorokeep.db files created before these columns were added to schema.sql.
-    const migrations = [
-        `ALTER TABLE alerts_fired ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`,
-        `ALTER TABLE alerts_fired ADD COLUMN delivered_at TEXT`,
-        `ALTER TABLE alerts_fired ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0`,
-        `ALTER TABLE alert_configs ADD COLUMN webhook_secret TEXT`,
-        `ALTER TABLE contracts ADD COLUMN poll_interval_seconds INTEGER`,
-        `CREATE TABLE IF NOT EXISTS channel_accounts (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            public_key TEXT NOT NULL UNIQUE,
-            keypair_source TEXT,
-            label TEXT,
-            network TEXT NOT NULL DEFAULT 'testnet',
-            funded BOOLEAN NOT NULL DEFAULT 0,
-            balance_xlm REAL,
-            balance_checked_at TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )`,
-        `ALTER TABLE contracts ADD COLUMN last_introspected_at DATETIME`,
-    ];
-    for (const sql of migrations) {
-        try { db.exec(sql); } catch { /* column already exists — no-op */ }
+    for (const sql of LIVE_MIGRATIONS) {
+        try {
+            db.exec(sql);
+        } catch (err: unknown) {
+            // Only ignore duplicate-column errors; rethrow other problems
+            if (err instanceof Error && /duplicate column name/i.test(err.message)) {
+                /* no-op (already exists) */
+            } else {
+                throw err;
+            }
+        }
     }
 
     migrateAlertConfigsChannelTypeCheck(db);
@@ -144,6 +154,18 @@ export function getDatabaseForTesting(): Database.Database {
     const migrationsDir = path.join(__dirname, 'migrations');
     const migrator = new Migrator(db, migrationsDir);
     migrator.run();
+
+    for (const sql of LIVE_MIGRATIONS) {
+        try {
+            db.exec(sql);
+        } catch (err: unknown) {
+            if (err instanceof Error && /duplicate column name/i.test(err.message)) {
+                /* ignore */
+            } else {
+                throw err;
+            }
+        }
+    }
 
     return db;
 }
