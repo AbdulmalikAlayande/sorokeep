@@ -4,7 +4,7 @@ import ora from "ora";
 import { getDatabase } from "../db/database.js";
 import { getContract, getEntriesForContract, upsertExtensionPolicy, getExtensionPolicy } from "../db/repositories.js";
 import { simulateExtension, extendEntries, resolveSecretKey } from "../core/extension.js";
-import { formatContractID, formatTimeToCloseLedger } from "../utils/formatting.js";
+import { formatContractID, formatTimeToCloseLedger, formatBytes, formatCpuInsns } from "../utils/formatting.js";
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "GuardCommand" });
@@ -117,32 +117,42 @@ export function registerGuardCommand(program: Command): void {
                         process.exit(1);
                     }
 
-                    const entries = getEntriesForContract(db, contractId);
-                    if (entries.length === 0) {
-                        console.log(chalk.yellow("No entries to extend"));
-                        return;
-                    }
+                     const entries = getEntriesForContract(db, contractId);
+                     if (entries.length === 0) {
+                         console.log(chalk.yellow("No entries to extend"));
+                         return;
+                     }
 
-                    const spinner = ora("Simulating extension...").start();
-                    const { Keypair } = await import("@stellar/stellar-sdk");
-                    const kp = Keypair.fromSecret(secretKey);
+                     const spinner = ora("Simulating extension...").start();
+                     const { Keypair } = await import("@stellar/stellar-sdk");
+                     const kp = Keypair.fromSecret(secretKey);
 
-                    const result = await simulateExtension(
-                        db,
-                        contractId,
-                        entries.map(e => e.entry_key_xdr),
-                        targetTTL,
-                        kp.publicKey(),
-                    );
+                     const result = await simulateExtension(
+                         db,
+                         contractId,
+                         entries.map(e => e.entry_key_xdr),
+                         targetTTL,
+                         kp.publicKey(),
+                     );
 
-                    if (result.success) {
-                        spinner.succeed(chalk.green("Simulation successful"));
+                     if (result?.success) {
+                         spinner.succeed(chalk.green("Simulation successful"));
+                        logger.info("Simulation successful in guard.ts");
                         console.log(`  Entries:       ${result.entriesExtended}`);
                         console.log(`  Estimated fee: ${(result.estimatedFee! / 10_000_000).toFixed(7)} XLM`);
+                        console.log(`  CPU:          ${formatCpuInsns(result.cpuInsns!)}`);
+                        console.log(`  Memory:       ${formatBytes(result.memBytes!)}`);
+                        if (result.readBytes !== undefined) {
+                            console.log(`  Read size:    ${formatBytes(result.readBytes)}`);
+                        }
+                        if (result.writeBytes !== undefined) {
+                            console.log(`  Write size:   ${formatBytes(result.writeBytes)}`);
+                        }
                     } else {
-                        spinner.fail(chalk.red(`Simulation failed: ${result.error}`));
-                    }
-                    return;
+                         spinner.fail(chalk.red(`Simulation failed: ${result.error}`));
+                     }
+                     return;
+
                 }
 
                 // One-time manual extension

@@ -198,6 +198,35 @@ describe("watchContract - Deep Coverage Suite", () => {
         expect(entries[0]!.entry_type).toBe("instance");
     });
 
+    it("saves a custom poll interval override during watch", async () => {
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key-xdr",
+            latestLedger: MOCK_LEDGER,
+            liveUntilLedgerSeq: MOCK_LEDGER + 10000,
+            lastModifiedLedgerSeq: MOCK_LEDGER - 500,
+            remainingTTL: 10000,
+            executableType: "contractExecutableWasm",
+            wasmHash: "ab".repeat(32),
+        });
+
+        mockGetWasmCodeEntry.mockResolvedValue({
+            entryKeyXdr: "wasm-key-xdr",
+            latestLedger: MOCK_LEDGER,
+            liveUntilLedgerSeq: MOCK_LEDGER + 50000,
+            lastModifiedLedgerSeq: MOCK_LEDGER - 1000,
+            remainingTTL: 50000,
+        });
+
+        const result = await watchContract(db, {
+            contractId: VALID_CID,
+            network: "testnet",
+            pollIntervalSeconds: 300,
+        });
+
+        expect(result.success).toBe(true);
+        expect(getContract(db, VALID_CID)!.poll_interval_seconds).toBe(300);
+    });
+
     // --- 2. EDGE CASES: ARCHIVAL & DISCOVERY ---
 
     it("handles archived WASM entry gracefully while registering instance", async () => {

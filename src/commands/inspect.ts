@@ -11,7 +11,7 @@ const logger = getLogger().child({ component: "InspectCommand" });
 export function registerInspectCommand(program: Command): void {
     program
         .command("inspect <contractId>")
-        .description("Inspect contract storage and token balances for standard Stellar Asset Contracts")
+        .description("Inspect contract storage and token balances")
         .option("--entry <keyOrShortcut>", "Specific entry key XDR or shortcut (e.g. balance:<address>)", collect, [])
         .option("--network <network>", "The stellar network to use (testnet, mainnet)")
         .option("-r, --rpc-url <url>", "Custom RPC URL")
@@ -45,7 +45,7 @@ export function registerInspectCommand(program: Command): void {
                 console.log();
 
                 if (!result.results || result.results.length === 0) {
-                    console.log(chalk.yellow("  No entries specified to inspect. Use --entry balance:<address>"));
+                    console.log(chalk.yellow("  No entries specified to inspect. Use --entry <keyXdr> or --entry balance:<address>"));
                     console.log();
                     return;
                 }
@@ -59,9 +59,17 @@ export function registerInspectCommand(program: Command): void {
                         console.log(`    Clawback:   ${item.balance.clawback}`);
                     }
 
-                    if (item.status === "unknown" || item.remainingTTL == null) {
-                        console.log(`    TTL:        ${chalk.dim("not found on-chain")}`);
+                    if (!item.found || item.status === "unknown" || item.remainingTTL == null) {
+                        console.log(chalk.red(`    Error: Target key is not active on-chain`));
                     } else {
+                        if (item.type === "raw" && item.decodedValue) {
+                            console.log(chalk.cyan(`    Decoded Value:`));
+                            const formattedJson = JSON.stringify(item.decodedValue, null, 2)
+                                .split('\n')
+                                .map(line => `      ${line}`)
+                                .join('\n');
+                            console.log(formattedJson);
+                        }
                         console.log(
                             `    TTL:        ${item.remainingTTL.toLocaleString()} ledgers (${item.approximateTimeRemaining})  ${statusIndicator(item.status as any)}`,
                         );

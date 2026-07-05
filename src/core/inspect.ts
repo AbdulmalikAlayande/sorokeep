@@ -13,6 +13,11 @@ export interface InspectOptions {
     rpcUrl?: string;
 }
 
+export interface DecodedScVal {
+    type: string;
+    value: any;
+}
+
 export interface InspectEntryInfo {
     inputEntry: string;
     entryKeyXdr: string;
@@ -27,6 +32,7 @@ export interface InspectEntryInfo {
         clawback: boolean;
     };
     formattedBalance?: string;
+    decodedValue?: DecodedScVal;
 }
 
 export interface InspectResult {
@@ -155,20 +161,14 @@ export async function inspectContract(
         return {
             success: false,
             contractId,
-            error: `Contract instance not found on-chain for ${formatContractID(contractId)} (or non-SAC contract).`,
+            error: `Contract instance not found on-chain for ${formatContractID(contractId)}.`,
         };
     }
 
-    if (instance.executableType !== "contractExecutableStellarAsset") {
-        return {
-            success: false,
-            contractId,
-            error: `Contract ${formatContractID(contractId)} is not a standard Stellar Asset Contract (SAC). Executable type: ${instance.executableType}`,
-        };
-    }
+    const isSac = instance.executableType === "contractExecutableStellarAsset";
 
-    // 2. Fetch SAC decimals
-    const decimals = await client.getSacDecimals(contractId);
+    // 2. Fetch SAC decimals (only if SAC)
+    const decimals = isSac ? await client.getSacDecimals(contractId) : 0;
 
     // 3. Process entries
     const inputEntries = options.entries ?? [];
@@ -178,7 +178,7 @@ export async function inspectContract(
             contractId,
             contractName,
             network,
-            isSac: true,
+            isSac,
             decimals,
             results: [],
         };
@@ -188,6 +188,13 @@ export async function inspectContract(
 
     for (const inputEntry of inputEntries) {
         if (inputEntry.startsWith("balance:")) {
+            if (!isSac) {
+                return {
+                    success: false,
+                    contractId,
+                    error: `Contract ${formatContractID(contractId)} is not a standard Stellar Asset Contract (SAC). Cannot inspect balance slots.`,
+                };
+            }
             const address = inputEntry.slice("balance:".length).trim();
             try {
                 const keyXdr = buildSacBalanceKeyXdr(contractId, address);
@@ -259,6 +266,10 @@ export async function inspectContract(
                 formattedBalance: formatTokenBalance(bal.amount, decimals),
             };
         } else {
+            let decodedValue: DecodedScVal | undefined;
+            if (foundEntry.valXdr) {
+                decodedValue = decodeScVal(foundEntry.valXdr);
+            }
             return {
                 inputEntry: item.inputEntry,
                 entryKeyXdr: item.entryKeyXdr,
@@ -267,6 +278,7 @@ export async function inspectContract(
                 remainingTTL: remTTL,
                 approximateTimeRemaining: approxTime,
                 status: ttlStatus,
+                decodedValue,
             };
         }
     });
@@ -276,8 +288,81 @@ export async function inspectContract(
         contractId,
         contractName,
         network,
-        isSac: true,
+        isSac,
         decimals,
         results,
     };
+}
+
+/**
+ * Decode a base64 XDR ScVal string into a JSON-friendly structure.
+ */
+export function decodeScVal(scValBase64: string): DecodedScVal {
+    try {
+        const scVal = xdr.ScVal.fromXDR(scValBase64, "base64");
+        return decodeScValRecursive(scVal);
+    } catch (e: any) {
+        return { type: "error", value: `Failed to decode ScVal: ${e.message}` };
+    }
+}
+
+function decodeScValRecursive(scVal: xdr.ScVal): DecodedScVal {
+    const type = scVal.switch().name;
+    let value: any;
+
+    switch (type) {
+        case "scvU32":
+        case "scvI32":
+            value = scVal.value();
+            break;
+        case "scvBool":
+            value = scVal.b();
+            break;
+        case "scvString":
+        case "scvSymbol":
+            value = scVal.value()?.toString() ?? null;
+            break;
+        case "scvU64":
+        case "scvI64":
+        case "scvU128":
+        case "scvI128":
+        case "scvU256":
+        case "scvI256":
+            try {
+                value = scValToNative(scVal).toString();
+            } catch {
+                value = "<unsupported bigint>";
+            }
+            break;
+        case "scvMap":
+            value = (scVal.map() ?? []).map((entry) => ({
+                key: decodeScValRecursive(entry.key()),
+                value: decodeScValRecursive(entry.val()),
+            }));
+            break;
+        case "scvVec":
+            value = (scVal.vec() ?? []).map((val) => decodeScValRecursive(val));
+            break;
+        case "scvBytes":
+            value = scVal.bytes().toString("hex");
+            break;
+        case "scvAddress":
+            try {
+                value = scValToNative(scVal);
+            } catch {
+                value = "<address>";
+            }
+            break;
+        case "scvVoid":
+            value = null;
+            break;
+        default:
+            try {
+                value = scValToNative(scVal);
+            } catch {
+                value = `<native conversion failed for ${type}>`;
+            }
+    }
+
+    return { type, value };
 }
