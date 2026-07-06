@@ -1,0 +1,62 @@
+{
+  "text": "{{severityEmoji}} {{#if isResourceAlert}}Resource {{resourceLabel}} {{severityLevel}}{{else if isResolved}}Alert Resolved{{else}}TTL {{severityLevel}}{{/if}} — {{escapeJson contractDisplay}} ({{network}})",
+  "blocks": [
+    {
+      "type": "header",
+      "text": {
+        "type": "plain_text",
+        "text": "{{severityEmoji}} {{#if isResourceAlert}}Resource {{resourceLabel}} {{severityLevel}}{{else if isResolved}}Alert Resolved{{else}}TTL {{severityLevel}}{{/if}} — {{escapeJson contractDisplay}}",
+        "emoji": true
+      }
+    },
+    {
+      "type": "section",
+      "fields": [
+        {{#if isResourceAlert}}
+        {
+          "type": "mrkdwn",
+          "text": "*Resource:*\n{{resourceLabel}}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Network:*\n{{network}}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Usage:*\n{{currentUsageFormatted}} / {{limitFormatted}} ({{resource.usagePercent}}%)"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Severity:*\n{{severity}}"
+        }
+        {{else}}
+        {
+          "type": "mrkdwn",
+          "text": "*Entry:*\n{{escapeJson entryLabel}}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Network:*\n{{network}}"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Remaining TTL:*\n{{currentRemainingLedgersFormatted}} ledgers ({{threshold.approximateTimeRemaining}})"
+        },
+        {
+          "type": "mrkdwn",
+          "text": "*Threshold:*\n{{configuredLedgersFormatted}} ledgers"
+        }
+        {{/if}}
+      ]
+    },
+    {
+      "type": "context",
+      "elements": [
+        {
+          "type": "mrkdwn",
+          "text": "Severity: *{{severity}}* | Run `sorokeep status {{contractId}}` for details."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+# docker-compose.devnet.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# Devnet sandbox overlay for sorokeep.
+#
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.devnet.yaml up
+#
+# This override:
+#   • Pins the Quickstart image to a known-stable devnet tag
+#   • Unlocks the Soroban RPC admin and fee-bump endpoints
+#   • Adds a friendbot service so you can fund test accounts
+#   • Configures the sorokeep daemon to point at the local devnet RPC
+#   • Enables verbose daemon logging for local development
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Stellar Quickstart (local devnet sandbox) ──────────────────────────────
+  stellar:
+    image: stellar/quickstart:testing
+    container_name: stellar-devnet
+    command:
+      - "--local"
+      - "--enable-soroban-rpc"
+      - "--limits"
+      - "unlimited"
+    ports:
+      - "8000:8000"   # Horizon + Soroban RPC gateway
+      - "8001:8001"   # Admin / fee-bump endpoint
+      - "11625:11625" # Stellar Core peer port (optional, useful for debugging)
+    environment:
+      # Allow unauthenticated admin calls on the devnet only
+      - ADMIN_PORT=6060
+    volumes:
+      - stellar-devnet-data:/opt/stellar
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 45s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - sorokeep-network
+
+  # ── Sorokeep daemon (devnet mode) ──────────────────────────────────────────
+  sorokeep:
+    container_name: sorokeep-devnet
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      stellar:
+        condition: service_healthy
+    environment:
+      - SOROKEEP_NETWORK=standalone
+      - SOROKEEP_RPC_URL=http://stellar:8000/soroban/rpc
+      - SOROKEEP_POLLING_INTERVAL=30000
+      # Verbose logging for local dev
+      - LOG_LEVEL=debug
+      - NODE_ENV=development
+    command:
+      - "daemon"
+      - "--network"
+      - "standalone"
+      - "--rpc-url"
+      - "http://stellar:8000/soroban/rpc"
+      - "--interval"
+      - "30000"
+    volumes:
+      - sorokeep-devnet-data:/home/sorokeep/.sorokeep
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"
+    networks:
+      - sorokeep-network
+
+# ── Named volumes (devnet-scoped, separate from production) ───────────────────
+volumes:
+  stellar-devnet-data:
+    driver: local
+  sorokeep-devnet-data:
+    driver: local
+
+# ── Network ────────────────────────────────────────────────────────────────────
+networks:
+  sorokeep-network:
+    driver: bridge

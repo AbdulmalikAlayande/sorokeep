@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import type { AlertEvent } from "./types.js";
 import { getLogger } from "../logging/index.js";
+import { renderAlertTemplate } from "./templates.js";
 
 const logger = getLogger().child({ component: "WebhookHandler" });
 
@@ -19,8 +20,20 @@ const TIMEOUT_MS = 5_000;
 export async function sendWebhookAlert(url: string, event: AlertEvent, secret?: string | null): Promise<void> {
     logger.debug(`Sending webhook alert to ${url}`, { type: event.type, contractId: event.contractId });
 
-    const body = JSON.stringify(event);
+    const customMessage = renderAlertTemplate("webhook", event);
+    let body: string;
     const headers: Record<string, string> = { "Content-Type": "application/json" };
+
+    if (customMessage !== null) {
+        body = customMessage;
+        try {
+            JSON.parse(customMessage);
+        } catch {
+            headers["Content-Type"] = "text/plain";
+        }
+    } else {
+        body = JSON.stringify(event);
+    }
 
     if (secret) {
         const signature = createHmac("sha256", secret).update(body).digest("hex");
