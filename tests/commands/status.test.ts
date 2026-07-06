@@ -42,7 +42,7 @@ describe("status command", () => {
 
     it("prints JSON payload when --json is provided", () => {
         vi.mocked(statusModule.getContractStatus).mockReturnValue({
-            contractID,
+            contractId: contractID,
             name: "sample-contract",
             network: "testnet",
             lastCheckedLedger: 400000,
@@ -65,7 +65,7 @@ describe("status command", () => {
         const parsed = JSON.parse(output);
 
         expect(parsed).toMatchObject({
-            contractID,
+            contractId: contractID,
             name: "sample-contract",
             network: "testnet",
             lastCheckedLedger: 400000,
@@ -76,7 +76,7 @@ describe("status command", () => {
 
     it("prints human-readable output by default", () => {
         vi.mocked(statusModule.getContractStatus).mockReturnValue({
-            contractID,
+            contractId: contractID,
             name: "sample-contract",
             network: "testnet",
             lastCheckedLedger: 400000,

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import type { AlertEvent } from "./types.js";
 import { getLogger } from "../logging/index.js";
+import { renderAlertTemplate } from "./templates.js";
 
 const logger = getLogger().child({ component: "PagerDutyHandler" });
 const PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue";
@@ -118,8 +119,36 @@ export class PagerDutyChannel {
     public async send(event: AlertEvent): Promise<void> {
         logger.debug(`Sending PagerDuty event: ${event.type}`, { contractId: event.contractId });
 
-        const payload = buildPayload(event) as Record<string, unknown>;
+        const customMessage = renderAlertTemplate("pagerduty", event);
+        const payload = buildPayload(event) as any;
         payload.routing_key = this.#routingKey;
+
+        if (customMessage !== null) {
+            try {
+                const parsed = JSON.parse(customMessage);
+                if (parsed && typeof parsed === "object") {
+                    if (parsed.payload && typeof parsed.payload === "object") {
+                        payload.payload = {
+                            ...payload.payload,
+                            ...parsed.payload,
+                        };
+                    }
+                    if (parsed.routing_key) payload.routing_key = parsed.routing_key;
+                    if (parsed.event_action) payload.event_action = parsed.event_action;
+                    if (parsed.dedup_key) payload.dedup_key = parsed.dedup_key;
+
+                    for (const key of Object.keys(parsed)) {
+                        if (key !== "payload" && key !== "routing_key" && key !== "event_action" && key !== "dedup_key") {
+                            payload[key] = parsed[key];
+                        }
+                    }
+                } else {
+                    payload.payload.summary = customMessage;
+                }
+            } catch {
+                payload.payload.summary = customMessage;
+            }
+        }
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);

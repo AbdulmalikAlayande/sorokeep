@@ -129,6 +129,15 @@ CREATE TABLE IF NOT EXISTS state_changes (
 CREATE INDEX IF NOT EXISTS idx_state_changes_entry_detected_ledger
     ON state_changes(contract_entry_id, detected_at_ledger DESC);
 
+CREATE TABLE IF NOT EXISTS budgets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    billing_cycle TEXT NOT NULL,
+    limit_xlm REAL NOT NULL,
+    spent_xlm REAL NOT NULL DEFAULT 0,
+    UNIQUE(contract_id, billing_cycle)
+);
+
 CREATE TABLE IF NOT EXISTS resource_alert_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
@@ -189,11 +198,3 @@ CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_contract_id
 CREATE INDEX IF NOT EXISTS idx_resource_usage_logs_recorded_at
     ON resource_usage_logs(recorded_at DESC);
 
-CREATE TABLE IF NOT EXISTS budget_tracking (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    limit_xlm REAL NOT NULL,
-    spent_xlm REAL NOT NULL DEFAULT 0.0,
-    billing_cycle TEXT NOT NULL,
-    UNIQUE(contract_id, billing_cycle)
-);

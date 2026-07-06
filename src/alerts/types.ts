@@ -1,11 +1,7 @@
 import { formatTimeToCloseLedger } from "../utils/formatting.js";
 
-// ─── Core event type ─────────────────────────────────────────────────────────
-
 export type AlertSeverity = "critical" | "warning" | "info";
 export type AlertEventType = "threshold_crossed" | "alert_resolved" | "resource_alert" | "state_changed";
-
-// ─── TTL-based alert event ──────────────────────────────────────────────────
 
 export interface TTLAlertEvent {
     type: "threshold_crossed" | "alert_resolved";
@@ -32,8 +28,6 @@ export interface TTLAlertEvent {
     timestamp: string;
 }
 
-// ─── Resource-based alert event ─────────────────────────────────────────────
-
 export interface ResourceAlertEvent {
     type: "resource_alert";
     severity: AlertSeverity;
@@ -57,42 +51,12 @@ export interface ResourceAlertEvent {
     timestamp: string;
 }
 
-// ─── State-change alert event ───────────────────────────────────────────────
+export type AlertEvent = TTLAlertEvent | ResourceAlertEvent;
 
-export interface StateChangeAlertEvent {
-    type: "state_changed";
-    severity: AlertSeverity;
-    contractId: string;
-    contractName: string | null;
-    network: string;
-    entry: {
-        keyXdr: string;
-        type: string;
-        label: string | null;
-    };
-    diff: {
-        diffType: "created" | "updated" | "deleted";
-        oldValueXdr: string | null;
-        newValueXdr: string | null;
-    };
-    /** Ledger sequence number at the time of detection. */
-    detectedAtLedger: number;
-    /** ISO 8601 timestamp. */
-    timestamp: string;
+export interface AlertChannel {
+    send(target: string, event: AlertEvent, secret?: string | null): Promise<void>;
 }
 
-// ─── Union of all alert event types ──────────────────────────────────────────
-
-export type AlertEvent = TTLAlertEvent | ResourceAlertEvent | StateChangeAlertEvent;
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Compute alert severity from remaining TTL.
- * - critical: less than 25% of threshold remaining
- * - warning:  less than threshold (but above 25%)
- * - info:     used for resolution events
- */
 export function computeSeverity(remainingTTL: number, thresholdLedgers: number, isResolution: boolean): AlertSeverity {
     if (isResolution) return "info";
     if (remainingTTL <= 0) return "critical";
@@ -100,21 +64,12 @@ export function computeSeverity(remainingTTL: number, thresholdLedgers: number, 
     return "warning";
 }
 
-/**
- * Compute alert severity from resource usage percentage.
- * - critical: 95% or higher
- * - warning:  80-95%
- * - info:     not used for resource alerts
- */
 export function computeResourceSeverity(usagePercent: number): AlertSeverity {
     if (usagePercent >= 95) return "critical";
     if (usagePercent >= 80) return "warning";
     return "info";
 }
 
-/**
- * Build a TTL-based AlertEvent from raw data.
- */
 export function buildAlertEvent(opts: {
     type: "threshold_crossed" | "alert_resolved";
     contractId: string;
@@ -148,9 +103,6 @@ export function buildAlertEvent(opts: {
     };
 }
 
-/**
- * Build a resource-based AlertEvent from raw data.
- */
 export function buildResourceAlertEvent(opts: {
     contractId: string;
     contractName: string | null;

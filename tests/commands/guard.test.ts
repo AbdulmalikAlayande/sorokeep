@@ -3,6 +3,22 @@ import { registerGuardCommand } from "../../src/commands/guard";
 import { Command } from "commander";
 import * as repos from "../../src/db/repositories";
 import * as extensionLib from "../../src/core/extension";
+import ora from "ora";
+
+const { mockSpinner } = vi.hoisted(() => {
+    return {
+        mockSpinner: {
+            start: vi.fn().mockReturnThis(),
+            succeed: vi.fn().mockReturnThis(),
+            fail: vi.fn().mockReturnThis(),
+        },
+    };
+});
+
+vi.mock("ora", () => ({
+    default: vi.fn(() => mockSpinner),
+}));
+
 import { getDatabaseForTesting } from "../../src/db/database";
 import { insertContract, getExtensionPolicy } from "../../src/db/repositories";
 
@@ -44,6 +60,7 @@ describe("Guard Command CLI", () => {
     let mockError: any;
     let mockLog: any;
 
+
     beforeEach(() => {
         sharedDb = getDatabaseForTesting();
 
@@ -65,7 +82,7 @@ describe("Guard Command CLI", () => {
     });
 
     afterEach(() => {
-        vi.restoreAllMocks();
+        vi.clearAllMocks();
     });
 
     it("exits with code 1 if contract is not found in DB", async () => {
@@ -178,6 +195,36 @@ describe("Guard Command CLI", () => {
         await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", keypair: "SCZZ" });
         expect(extensionLib.extendEntries).toHaveBeenCalled();
     });
+
+
+    it("displays resource limits during dry-run simulation", async () => {
+        vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet" } as any);
+        vi.mocked(repos.getEntriesForContract).mockImplementation((db, id) => {
+            return [{ entry_key_xdr: "AAAA" }];
+        });
+        vi.mocked(extensionLib.simulateExtension).mockImplementation(async () => ({
+            success: true,
+            entriesExtended: 1,
+            estimatedFee: 100_000_000, // 10 XLM
+            cpuInsns: 500,
+            memBytes: 1024,
+            readBytes: 2048,
+            writeBytes: 3072
+        } as any));
+
+        // Use a valid looking secret key to avoid Keypair.fromSecret throwing
+        const { Keypair } = await import("@stellar/stellar-sdk");
+        const validSecret = Keypair.random().secret();
+        await actionFn("VALID_ID", { targetTtl: "100000", threshold: "20000", dryRun: true, keypair: validSecret });
+        
+        expect(mockSpinner.succeed).toHaveBeenCalled();
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Entries:       1"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Estimated fee: 10.0000000 XLM"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("CPU:          500"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Memory:       1 KB"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Read size:    2 KB"));
+        expect(mockLog).toHaveBeenCalledWith(expect.stringContaining("Write size:   3 KB"));
+    });
 });
 
 // ─── Integration tests: acceptance criteria ────────────────────────────────
@@ -188,6 +235,7 @@ const TEST_CONTRACT_ID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCY
 
 describe("Guard Command --auto-extend integration", () => {
     beforeEach(() => {
+        vi.restoreAllMocks();
         sharedDb = getDatabaseForTesting();
         insertContract(sharedDb, {
             id: TEST_CONTRACT_ID,
@@ -253,5 +301,6 @@ describe("Guard Command --auto-extend integration", () => {
         expect(policy!.keypair_source).toBe("env:STELLAR_TEST_KEY");
 
         delete process.env.STELLAR_TEST_KEY;
+
     });
 });
