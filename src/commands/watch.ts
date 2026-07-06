@@ -178,6 +178,7 @@ export const registerWatchCommand = (program: Command): void => {
         if (!contract) {
           console.log(chalk.red(`Contract ${formatContractID(contractId)} is not being watched.`));
           process.exit(1);
+          return;
         }
 
         const proceedWithDeletion = async (): Promise<void> => {

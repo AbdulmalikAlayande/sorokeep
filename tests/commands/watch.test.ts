@@ -4,21 +4,20 @@ import { Command } from "commander";
 import * as dbLib from "../../src/db/database";
 import * as watchCore from "../../src/core/watch";
 import * as watchConfig from "../../src/utils/watch-config";
+import * as repositories from "../../src/db/repositories";
+import readline from "node:readline";
 
 vi.mock("../../src/db/database");
 vi.mock("../../src/core/watch");
 vi.mock("../../src/utils/watch-config");
 vi.mock("../../src/db/repositories");
-vi.mock("node:readline");
 
 describe("Watch Command CLI", () => {
   let program: Command;
   let mockExit: any;
   let mockLog: any;
   let mockWarn: any;
-  let mockReadline: any;
   let actionFn: (contractId: string | undefined, options: any) => Promise<void>;
-  let unwatchActionFn: (contractId: string, options: any) => Promise<void>;
 
   beforeEach(() => {
     program = new Command();
@@ -28,7 +27,6 @@ describe("Watch Command CLI", () => {
       fn: any,
     ) {
       if (this.name() === "watch") actionFn = fn;
-      if (this.name() === "unwatch") unwatchActionFn = fn;
       return this;
     });
 
@@ -246,9 +244,6 @@ describe("Watch Command CLI", () => {
     expect(mockExit).toHaveBeenCalledWith(1);
   });
 });
-
-import * as repositories from "../../src/db/repositories";
-import readline from "node:readline";
 
 describe("Unwatch Command CLI", () => {
   let program: Command;

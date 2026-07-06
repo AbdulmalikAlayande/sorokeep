@@ -17,6 +17,7 @@ const mockSubmitRestore = vi.fn();
 const mockGetEntryTTLs = vi.fn();
 const mockGetCurrentLedger = vi.fn();
 const mockSimulateExtension = vi.fn();
+const mockSimulateRestore = vi.fn();
 
 vi.mock("../../src/rpc/client.js", () => {
     return {
@@ -27,12 +28,13 @@ vi.mock("../../src/rpc/client.js", () => {
             getEntryTTLs = mockGetEntryTTLs;
             getCurrentLedger = mockGetCurrentLedger;
             simulateExtension = mockSimulateExtension;
+            simulateRestore = mockSimulateRestore;
         },
     };
 });
 
 // Import after mocking
-const { extendEntries, restoreEntries, simulateExtension, runAutoExtensions } = await import(
+const { extendEntries, restoreEntries, simulateExtension, simulateRestore, runAutoExtensions } = await import(
     "../../src/core/extension.js"
 );
 
@@ -197,11 +199,32 @@ describe("Core Extension Logic", () => {
             expect(history.length).toBe(0);
         });
 
-        it("logs warning and returns error on simulation failure", async () => {
+        it("logs warning and returns error on submitExtension exception", async () => {
             const contractId = seedContract(db);
             const entries = getEntriesForContract(db, contractId);
 
-            mockSubmitExtension.mockRejectedValue(new Error("Simulation failed: Invalid footprint key"));
+            mockSubmitExtension.mockRejectedValue(new Error("Network connection lost"));
+
+            const result = await extendEntries(
+                db,
+                contractId,
+                entries.map(e => e.entry_key_xdr),
+                100000,
+                "SECRETKEY123",
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe("Network connection lost");
+        });
+
+        it("logs error and returns false on failed txResult", async () => {
+            const contractId = seedContract(db);
+            const entries = getEntriesForContract(db, contractId);
+
+            mockSubmitExtension.mockResolvedValue({
+                success: false,
+                error: "Simulation failed: Invalid footprint key"
+            });
 
             const result = await extendEntries(
                 db,
@@ -214,7 +237,6 @@ describe("Core Extension Logic", () => {
             expect(result.success).toBe(false);
             expect(result.error).toBe("Simulation failed: Invalid footprint key");
         });
-
         it("propagates feeCharged from the submitted transaction result", async () => {
             const contractId = seedContract(db);
             const entries = getEntriesForContract(db, contractId);
@@ -387,6 +409,90 @@ describe("Core Extension Logic", () => {
 
             expect(result.success).toBe(false);
             expect(result.error).toBe("Entry not found in archive");
+        });
+
+        it("extracts resource fee and status parameters from response", async () => {
+            const contractId = seedContract(db);
+
+            mockSubmitRestore.mockResolvedValue({
+                success: true,
+                txHash: "restore-with-resources",
+                ledger: 2500300,
+                cpuInsns: 8500,
+                memBytes: 2048,
+                minResourceFee: 75000,
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2500300,
+                entries: [
+                    {
+                        entryKeyXdr: "instance-key-xdr",
+                        latestLedger: 2500300,
+                        liveUntilLedgerSeq: 2600300,
+                        lastModifiedLedgerSeq: 2500300,
+                        remainingTTL: 100000,
+                    },
+                ],
+            });
+
+            const result = await restoreEntries(
+                db, contractId, ["instance-key-xdr"], "SECRETKEY123",
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.cpuInsns).toBe(8500);
+            expect(result.memBytes).toBe(2048);
+            expect(result.minResourceFee).toBe(75000);
+            expect(result.txHash).toBe("restore-with-resources");
+            expect(result.ledger).toBe(2500300);
+        });
+    });
+
+    // =========================================================================
+    // 4. simulateRestore
+    // =========================================================================
+    describe("simulateRestore", () => {
+        it("returns fee estimate on successful simulation", async () => {
+            const contractId = seedContract(db);
+
+            mockSimulateRestore.mockResolvedValue({
+                success: true,
+                minResourceFee: 65000,
+            });
+
+            const result = await simulateRestore(
+                db, contractId, ["instance-key-xdr"], "GPUBLICKEY",
+            );
+
+            expect(result.success).toBe(true);
+            expect(result.estimatedFee).toBe(65000);
+            expect(result.entriesRestored).toBe(1);
+        });
+
+        it("returns error on simulation failure", async () => {
+            const contractId = seedContract(db);
+
+            mockSimulateRestore.mockResolvedValue({
+                success: false,
+                minResourceFee: 0,
+                error: "Entry not found in archive",
+            });
+
+            const result = await simulateRestore(
+                db, contractId, ["instance-key-xdr"], "GPUBLICKEY",
+            );
+
+            expect(result.success).toBe(false);
+            expect(result.error).toBe("Entry not found in archive");
+        });
+
+        it("returns error when contract not found", async () => {
+            const result = await simulateRestore(
+                db, "NONEXISTENT", ["key1"], "GPUBLICKEY",
+            );
+            expect(result.success).toBe(false);
+            expect(result.error).toBe("Contract not found");
         });
     });
 

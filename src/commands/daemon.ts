@@ -52,7 +52,7 @@ export function registerDaemonCommand(program: Command): void {
 
             console.log();
             console.log(chalk.bold("  Sorokeep — Daemon"));
-            console.log(`  Network:   ${chalk.cyan(options.network)}`);
+            console.log(`  Network:   ${chalk.cyan(network)}`);
             console.log(`  Interval:  ${chalk.cyan(Math.floor(intervalMs / 1000) + "s")}`);
             if (options.rpcUrl) {
                 console.log(`  RPC:       ${chalk.cyan(options.rpcUrl)}`);

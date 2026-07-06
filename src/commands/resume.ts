@@ -19,6 +19,7 @@ export const registerResumeCommand = (program: Command): void => {
                 if (!contract) {
                     console.log(chalk.red(`Contract ${formatContractID(contractId)} is not being watched.`));
                     process.exit(1);
+                    return;
                 }
 
                 setContractActiveStatus(db, contractId, true);

@@ -26,6 +26,10 @@ export interface SorokeepConfig {
     pollingIntervalSeconds: number;
     /** Slack bot token for Slack alert delivery. */
     slackToken?: string;
+    /** Telegram bot token. */
+    telegramBotToken?: string;
+    /** Directory containing custom Handlebars templates. */
+    templatesPath?: string;
     /**
      * Monthly rent budget in XLM. When set, the `costs` command will compare
      * the 30/60/90-day forecasted rent windows against this value and display
@@ -92,6 +96,8 @@ export function loadConfig(customPath?: string): SorokeepConfig {
                 ? parsed.pollingIntervalSeconds
                 : DEFAULT_CONFIG.pollingIntervalSeconds,
             slackToken: parsed.slackToken,
+            telegramBotToken: parsed.telegramBotToken,
+            templatesPath: parsed.templatesPath,
             monthlyBudgetXlm: typeof parsed.monthlyBudgetXlm === "number" && parsed.monthlyBudgetXlm > 0
                 ? parsed.monthlyBudgetXlm
                 : undefined,

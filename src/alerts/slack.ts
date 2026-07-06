@@ -1,5 +1,6 @@
 import type { AlertEvent } from "./types.js";
 import { getLogger } from "../logging/index.js";
+import { renderAlertTemplate } from "./templates.js";
 
 const logger = getLogger().child({ component: "SlackHandler" });
 const TIMEOUT_MS = 10_000;
@@ -86,6 +87,38 @@ function buildBlocks(event: AlertEvent): any[] {
     return [header, details, footer];
 }
 
+function buildFallbackText(event: AlertEvent): string {
+    const icon = severityEmoji(event);
+    const contractDisplay = event.contractName ?? event.contractId;
+
+    if (event.type === "resource_alert") {
+        const resourceType = event.resource.type === "cpu" ? "CPU" : "Memory";
+        const status = `Resource ${resourceType} ${event.severity === "critical" ? "CRITICAL" : "Warning"}`;
+        return (
+            `${icon} ${status} — ${contractDisplay} (${event.network}) | ` +
+            `Usage: ${event.resource.currentUsage.toLocaleString()} / ${event.resource.limit.toLocaleString()} ` +
+            `(${event.resource.usagePercent}%)`
+        );
+    } else if (event.type === "state_changed") {
+        const diffLabel = event.diff.diffType.charAt(0).toUpperCase() + event.diff.diffType.slice(1);
+        return (
+            `${icon} State ${diffLabel} — ${contractDisplay} (${event.network}) | ` +
+            `Entry: ${event.entry.label ?? event.entry.type} | ` +
+            `Old: ${event.diff.oldValueXdr ?? "(none)"} → New: ${event.diff.newValueXdr ?? "(none)"}`
+        );
+    } else if (event.type === "threshold_crossed") {
+        const status = `TTL ${event.severity === "critical" ? "CRITICAL" : "Warning"}`;
+        return (
+            `${icon} ${status} — ${contractDisplay} (${event.network}) | ` +
+            `Remaining: ${event.threshold.currentRemainingLedgers.toLocaleString()} ledgers ` +
+            `(${event.threshold.approximateTimeRemaining}) | ` +
+            `Threshold: ${event.threshold.configuredLedgers.toLocaleString()} ledgers`
+        );
+    } else {
+        return `${icon} Alert Resolved — ${contractDisplay} (${event.network})`;
+    }
+}
+
 export class SlackChannel {
     constructor(private readonly webhookUrl: string) {
         if (!webhookUrl || !webhookUrl.startsWith("http")) {
@@ -96,9 +129,33 @@ export class SlackChannel {
     async send(event: AlertEvent): Promise<void> {
         logger.debug(`Sending Slack alert to webhook`, { type: event.type, contractId: event.contractId });
 
-        const payload = {
-            blocks: buildBlocks(event),
-        };
+        const customMessage = renderAlertTemplate("slack", event);
+        let payload: { text?: string; blocks?: any[] };
+
+        if (customMessage !== null) {
+            try {
+                const parsed = JSON.parse(customMessage);
+                if (parsed && typeof parsed === "object") {
+                    if (Array.isArray(parsed)) {
+                        payload = { text: buildFallbackText(event), blocks: parsed };
+                    } else {
+                        payload = {
+                            text: parsed.text ?? buildFallbackText(event),
+                            blocks: parsed.blocks,
+                        };
+                    }
+                } else {
+                    payload = { text: customMessage };
+                }
+            } catch {
+                payload = { text: customMessage };
+            }
+        } else {
+            payload = {
+                text: buildFallbackText(event),
+                blocks: buildBlocks(event),
+            };
+        }
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);

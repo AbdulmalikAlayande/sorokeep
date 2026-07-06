@@ -1,5 +1,6 @@
 import type { AlertEvent, AlertSeverity } from "./types.js";
 import { getLogger } from "../logging/index.js";
+import { renderAlertTemplate } from "./templates.js";
 
 const logger = getLogger().child({ component: "DiscordHandler" });
 const TIMEOUT_MS = 10_000;
@@ -184,10 +185,35 @@ export async function sendDiscordAlert(webhookUrl: string, event: AlertEvent): P
         severity: event.severity,
     });
 
-    const payload = {
-        username: "Sorokeep",
-        embeds: [buildEmbed(event)],
-    };
+    const customMessage = renderAlertTemplate("discord", event);
+    let payload: any;
+
+    if (customMessage !== null) {
+        try {
+            const parsed = JSON.parse(customMessage);
+            if (parsed && typeof parsed === "object") {
+                payload = {
+                    username: "Sorokeep",
+                    ...parsed,
+                };
+            } else {
+                payload = {
+                    username: "Sorokeep",
+                    content: customMessage,
+                };
+            }
+        } catch {
+            payload = {
+                username: "Sorokeep",
+                content: customMessage,
+            };
+        }
+    } else {
+        payload = {
+            username: "Sorokeep",
+            embeds: [buildEmbed(event)],
+        };
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);

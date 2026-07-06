@@ -27,8 +27,7 @@ export function getCompletionSuggestions(
   if (words.length <= 1 || cursorIndex <= 1) {
     return TOP_LEVEL_COMMANDS;
   }
-
-  const normalizedWords = words.slice(1, cursorIndex + 1);
+const normalizedWords = words.slice(1, cursorIndex + 1);
   const firstCommand = normalizedWords[0];
 
   if (firstCommand === "alerts") {
@@ -38,15 +37,10 @@ export function getCompletionSuggestions(
     return [];
   }
 
-  if (firstCommand === "channels") {
-    if (cursorIndex === 2) {
-      return CHANNELS_SUBCOMMANDS;
-    }
-    return [];
-  }
-
-  if (STATUS_CONTRACT_COMMANDS.includes(firstCommand) && cursorIndex === 2) {
-    const contracts = getAllContracts(db).map((contract) => contract.id);
+ if (firstCommand && STATUS_CONTRACT_COMMANDS.includes(firstCommand) && cursorIndex === 2) {
+    const contracts = getAllContracts(db)
+      .map((contract) => contract.id)
+      .filter((id): id is string => typeof id === "string");
     return contracts;
   }
 
@@ -73,9 +67,9 @@ export function renderZshCompletionScript(): string {
 _sorokeep() {
   local -a suggestions
   local -a words
-  words=( $words )
+  
   local current_word=\${words[CURRENT]}
-  suggestions=( \${(f)$(sorokeep completion --query --cursor "$CURRENT" "\${words[@]}")} )
+  suggestions=( \${(f)"\$(sorokeep completion --query --cursor "\$CURRENT" "\${words[@]}")"} )
   _describe 'values' suggestions
 }
 
