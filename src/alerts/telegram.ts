@@ -1,6 +1,7 @@
 import type { AlertEvent } from "./types.js";
 import { loadConfig } from "../utils/config.js";
 import { getLogger } from "../logging/index.js";
+import { renderAlertTemplate } from "./templates.js";
 
 const logger = getLogger().child({ component: "TelegramHandler" });
 const TELEGRAM_API_BASE = "https://api.telegram.org/bot";
@@ -124,6 +125,9 @@ export async function sendTelegramAlert(chatId: string, event: AlertEvent): Prom
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
+    const customMessage = renderAlertTemplate("telegram", event);
+    const text = customMessage !== null ? customMessage : buildMessage(event);
+
     let response: Response;
     try {
         response = await fetch(url, {
@@ -131,7 +135,7 @@ export async function sendTelegramAlert(chatId: string, event: AlertEvent): Prom
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 chat_id: chatId,
-                text: buildMessage(event),
+                text: text,
                 parse_mode: "MarkdownV2",
             }),
             signal: controller.signal,

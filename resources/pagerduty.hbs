@@ -1,0 +1,14 @@
+{
+  "routing_key": "",
+  "event_action": "{{#if isResolved}}resolve{{else}}trigger{{/if}}",
+  "dedup_key": "{{dedupKey}}",
+  "payload": {
+    "summary": "{{#if isResourceAlert}}Sorokeep alert: {{escapeJson contractDisplay}} is consuming too much {{resourceLabel}} ({{resource.usagePercent}}% used).{{else if isResolved}}Sorokeep alert resolved: {{escapeJson contractDisplay}} has recovered above threshold.{{else}}Sorokeep alert: {{escapeJson contractDisplay}} has crossed the TTL threshold ({{threshold.currentRemainingLedgers}} ledgers remaining).{{/if}}",
+    "source": "{{contractId}}",
+    "severity": "{{#if isResolved}}info{{else if isCritical}}critical{{else}}warning{{/if}}",
+    "component": "{{#if isResourceAlert}}resource_monitor{{else}}{{escapeJson entryLabel}}{{/if}}",
+    "group": "{{network}}",
+    "class": "{{#if isResourceAlert}}resource:{{resource.type}}{{else}}threshold:{{threshold.configuredLedgers}}{{/if}}",
+    "custom_details": {{{json customDetails}}}
+  }
+}
