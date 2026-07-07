@@ -19,13 +19,14 @@ FROM node:22-alpine AS production
 
 ENV NODE_ENV=production
 
-# Install runtime native-addon deps
-RUN apk add --no-cache python3 make g++
-
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev
+
+# Install build tools, compile native addons, then remove build tools
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+    && npm ci --omit=dev \
+    && apk del .build-deps
 
 # Copy compiled output from builder
 COPY --from=builder /app/dist ./dist
@@ -39,8 +40,5 @@ USER sorokeep
 
 # Persist SQLite database across container restarts
 VOLUME ["/home/sorokeep/.sorokeep"]
-
-# Future dashboard / MCP server port
-EXPOSE 3000
 
 ENTRYPOINT ["node", "/app/dist/index.js"]
