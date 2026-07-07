@@ -414,16 +414,23 @@ export async function runAutoExtensions(
                         const actualFeeXlm = extResult.feeCharged !== undefined ? extResult.feeCharged / 10000000 : estimatedFeeXlm;
                         addBudgetSpent(db, contract.id, billingCycle, actualFeeXlm);
                     }
-                    result.contractsExtended++;
-                    result.entriesExtended += extResult.entriesExtended;
-                    result.extensions.push({
-                        contractId: contract.id,
-                        txHash: extResult.txHash!,
-                        entriesExtended: extResult.entriesExtended,
-                        ledger: extResult.ledger!,
-                        isAnomaly: extResult.isAnomaly,
-                        anomalyDetails: extResult.anomalyDetails,
-                    });
+
+                    if (!extResult.txHash || extResult.ledger == null) {
+                        result.errors.push(
+                            `Contract ${contract.id}: Extension succeeded but RPC returned no txHash or ledger`,
+                        );
+                    } else {
+                        result.contractsExtended++;
+                        result.entriesExtended += extResult.entriesExtended;
+                        result.extensions.push({
+                            contractId: contract.id,
+                            txHash: extResult.txHash,
+                            entriesExtended: extResult.entriesExtended,
+                            ledger: extResult.ledger,
+                            isAnomaly: extResult.isAnomaly,
+                            anomalyDetails: extResult.anomalyDetails,
+                        });
+                    }
                 } else {
                     result.errors.push(
                         `Contract ${contract.id}: Extension failed — ${extResult.error}`,
