@@ -265,7 +265,7 @@ describe("sendWebhookAlert", () => {
     // =========================================================================
     describe("Timeout handling", () => {
         it("throws when fetch is aborted (AbortError propagates as delivery failure)", async () => {
-            // Simulates what happens when the 5-second timeout fires and the
+            // Simulates what happens when the 10-second timeout fires and the
             // AbortController aborts an in-flight fetch — the error must surface.
             const abortError = Object.assign(
                 new Error("The operation was aborted."),
@@ -278,7 +278,7 @@ describe("sendWebhookAlert", () => {
             ).rejects.toThrow("aborted");
         });
 
-        it("aborts the in-flight request after 5 seconds", async () => {
+        it("aborts the in-flight request after 10 seconds", async () => {
             vi.useFakeTimers();
 
             let aborted = false;
@@ -292,18 +292,18 @@ describe("sendWebhookAlert", () => {
             // Fire the call but suppress the eventual rejection to avoid noise
             sendWebhookAlert("https://slow.example.com/hook", makeAlertEvent()).catch(() => {});
 
-            // One millisecond before the 5-second mark — not yet aborted
-            await vi.advanceTimersByTimeAsync(4_999);
+            // One millisecond before the 10-second mark — not yet aborted
+            await vi.advanceTimersByTimeAsync(9_999);
             expect(aborted).toBe(false);
 
-            // Cross the 5-second boundary
+            // Cross the 10-second boundary
             await vi.advanceTimersByTimeAsync(2);
             expect(aborted).toBe(true);
 
             vi.useRealTimers();
         });
 
-        it("does not abort a request that completes within 5 seconds", async () => {
+        it("does not abort a request that completes within 10 seconds", async () => {
             vi.useFakeTimers();
 
             let aborted = false;
