@@ -32,9 +32,7 @@ jobs:
         cache: 'npm'
 
     - name: Clean Install Dependencies
-      run: |
-        rm -rf node_modules package-lock.json
-        npm install
+      run: npm ci
 
     - name: Audit Dependencies
       run: npm audit --audit-level=high
