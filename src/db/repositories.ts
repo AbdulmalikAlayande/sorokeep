@@ -41,7 +41,7 @@ export interface ExtensionPolicy {
 export interface AlertConfig {
     id: number;
     contract_id: string;
-    channel_type: "slack" | "webhook" | "pagerduty";
+    channel_type: "slack" | "webhook" | "pagerduty" | "discord" | "telegram";
     channel_target: string;
     threshold_ledgers: number;
     webhook_secret: string | null;
@@ -418,6 +418,7 @@ export function aggregateDailyCostSnapshots(db: Database.Database): void {
         FROM extension_history eh
         JOIN contract_entries ce ON ce.id = eh.contract_entry_id
         WHERE date(eh.executed_at) < date('now')
+          AND date(eh.executed_at) >= date('now', '-7 days')
         GROUP BY eh.contract_id, date(eh.executed_at)
     `).all() as Array<Omit<CostDailySnapshot, 'id' | 'created_at'>>;
 
@@ -589,14 +590,18 @@ export function countExtensionsInLastHour(db: Database.Database, contractId: str
 }
 
 export function getAverageResourceUsage(db: Database.Database, contractId: string, limit?: number): { avg_cpu_insns: number, avg_mem_bytes: number, count: number } | null {
-  const queryLimit = limit ? `LIMIT ${limit}` : "";
-  const rows = db.prepare(`
-    SELECT cpu_insns, mem_bytes 
-    FROM extension_history 
+  const params: (string | number)[] = [contractId];
+  let query = `
+    SELECT cpu_insns, mem_bytes
+    FROM extension_history
     WHERE contract_id = ? AND cpu_insns IS NOT NULL AND mem_bytes IS NOT NULL
     ORDER BY executed_at DESC, id DESC
-    ${queryLimit}
-  `).all(contractId) as { cpu_insns: number, mem_bytes: number }[];
+  `;
+  if (limit !== undefined) {
+    query += ` LIMIT ?`;
+    params.push(limit);
+  }
+  const rows = db.prepare(query).all(...params) as { cpu_insns: number, mem_bytes: number }[];
 
   if (rows.length === 0) return null;
 
@@ -628,7 +633,7 @@ export interface UndeliveredAlert {
     entryKeyXdr: string;
     entryType: string;
     entryLabel: string | null;
-    channelType: "webhook" | "slack" | "pagerduty";
+    channelType: "webhook" | "slack" | "pagerduty" | "discord" | "telegram";
     channelTarget: string;
     thresholdLedgers: number;
     webhookSecret: string | null;
@@ -1284,15 +1289,20 @@ export function getResourceUsageLogs(
     }
 
     const where = conditions.join(" AND ");
-    const limitClause = limit !== undefined ? `LIMIT ${limit}` : "";
+    const params: Record<string, unknown> = { contractId, since: since ?? null };
 
-    return db.prepare(`
+    let query = `
         SELECT *
         FROM resource_usage_logs
         WHERE ${where}
         ORDER BY recorded_at DESC, id DESC
-        ${limitClause}
-    `).all({ contractId, since: since ?? null }) as ResourceUsageLog[];
+    `;
+    if (limit !== undefined) {
+        query += ` LIMIT @limit`;
+        params.limit = limit;
+    }
+
+    return db.prepare(query).all(params) as ResourceUsageLog[];
 }
 
 /**
