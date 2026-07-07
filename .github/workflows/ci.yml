@@ -36,6 +36,9 @@ jobs:
         rm -rf node_modules package-lock.json
         npm install
 
+    - name: Audit Dependencies
+      run: npm audit --audit-level=high
+
     - name: Lint Code
       run: npm run lint
 
