@@ -1,6 +1,5 @@
 import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
-import { runIntrospectionRescan } from "../core/introspection.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
 import { vacuumDatabase } from "../db/database.js";
 import { aggregateDailyCostSnapshots, getAllContracts } from "../db/repositories.js";
@@ -95,7 +94,10 @@ export function stopDaemon(): void {
         intervalHandle = null;
         logger().info("Daemon stopped");
     }
-    cycleInFlight = false;
+    // Do NOT reset cycleInFlight here — let executeCycle's finally-block
+    // handle it when the in-flight cycle completes.  Resetting it early
+    // breaks the re-entrance guard if startDaemon() is called before the
+    // old cycle finishes.
 }
 
 // ─── Private ──────────────────────────────────────────────────────────────────
@@ -144,21 +146,7 @@ async function executeCycle(
             logger().error("deliverPendingAlerts threw unexpectedly", deliveryErr);
         }
 
-        // Step 3: Run introspection re-scan
-        try {
-            const introspection = await runIntrospectionRescan(db, network, rpcUrl);
-            if (introspection.contractsChecked > 0) {
-                logger().info(
-                    `Introspection — checked: ${introspection.contractsChecked}, ` +
-                    `new keys: ${introspection.newEntriesFound}, ` +
-                    `errors: ${introspection.errors.length}`,
-                );
-            }
-        } catch (introErr: unknown) {
-            logger().error("runIntrospectionRescan threw unexpectedly", introErr);
-        }
-
-        // Step 4: aggregate daily cost snapshots for past extension history.
+        // Step 3: aggregate daily cost snapshots for past extension history.
         try {
             aggregateDailyCostSnapshots(db);
         } catch (snapshotErr: unknown) {
