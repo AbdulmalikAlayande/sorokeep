@@ -38,8 +38,14 @@ describe("Dockerfile", () => {
         expect(dockerfile).toMatch(/sorokeep/i);
     });
 
-    it("exposes port 3000 for the future dashboard", () => {
-        expect(dockerfile).toMatch(/EXPOSE\s+3000/);
+    it("does not expose unused ports", () => {
+        expect(dockerfile).not.toMatch(/EXPOSE\s+/);
+    });
+
+    it("does not leak build tools into the production image", () => {
+        // Build deps should be installed and removed in the same RUN layer
+        const productionStage = dockerfile.split(/^FROM\s+/im).pop() ?? "";
+        expect(productionStage).not.toMatch(/apk add.*(?:make|g\+\+|python3)(?!.*apk del)/s);
     });
 
     it("sets NODE_ENV to production", () => {
