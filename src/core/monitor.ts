@@ -260,13 +260,17 @@ async function processContract(
                             firedAtLedger: rpcResult.latestLedger,
                         });
 
-                        // Fire and forget — resolution is best-effort
-                        void deliverSingleAlert(
+                        // Best-effort — log failures so they're visible, but don't block.
+                        deliverSingleAlert(
                             config.channel_type,
                             config.channel_target,
                             event,
                             config.webhook_secret,
-                        );
+                        ).catch((err: unknown) => {
+                            logger.warn(
+                                `Resolution notification failed for config ${configId}: ${err instanceof Error ? err.message : String(err)}`,
+                            );
+                        });
                     }
                 }
             }
