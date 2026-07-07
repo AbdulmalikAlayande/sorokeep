@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS alerts_fired (
     retry_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE INDEX IF NOT EXISTS idx_alerts_fired_undelivered
+    ON alerts_fired(delivered, retry_count);
+
 CREATE TABLE IF NOT EXISTS channel_accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     public_key TEXT NOT NULL UNIQUE,
@@ -87,6 +90,9 @@ CREATE TABLE IF NOT EXISTS extension_history (
     executed_at_ledger INTEGER NOT NULL,
     executed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_extension_history_contract_executed
+    ON extension_history(contract_id, executed_at);
 
 CREATE TABLE IF NOT EXISTS cost_daily_snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -142,7 +148,7 @@ CREATE TABLE IF NOT EXISTS budgets (
 CREATE TABLE IF NOT EXISTS resource_alert_configs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook')),
+    channel_type TEXT NOT NULL CHECK(channel_type IN ('slack', 'webhook', 'pagerduty', 'discord', 'telegram')),
     channel_target TEXT NOT NULL,
     cpu_limit INTEGER NOT NULL,
     mem_limit INTEGER NOT NULL,
