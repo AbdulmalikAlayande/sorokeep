@@ -421,6 +421,107 @@ describe("daemon loop", () => {
             await vi.advanceTimersByTimeAsync(5000);
             expect(mockRunMonitorCycle).toHaveBeenCalledTimes(3);
         });
+
+        it("does not run concurrent cycles when stopDaemon is called mid-cycle and startDaemon is called again", async () => {
+            let resolveSlowCycle!: (value: MonitorCycleResult) => void;
+
+            // First cycle (initial) resolves immediately
+            mockRunMonitorCycle.mockResolvedValueOnce(makeCycleResult());
+
+            // Second cycle is slow — we control when it resolves
+            mockRunMonitorCycle.mockImplementationOnce(() => {
+                return new Promise<MonitorCycleResult>((resolve) => {
+                    resolveSlowCycle = resolve;
+                });
+            });
+
+            // Any further cycles resolve immediately
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            await startDaemon(db, "testnet", { intervalMs: 5000 });
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            // Trigger the slow second cycle
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
+
+            // Stop the daemon while the second cycle is still in-flight
+            stopDaemon();
+
+            // Start the daemon again — the old cycle is still in-flight.
+            // The initial cycle of the new daemon must be skipped by the
+            // re-entrance guard (cycleInFlight is still true).
+            // startDaemon calls stopDaemon internally (which must NOT reset
+            // cycleInFlight) and then runs executeCycle for the initial tick.
+            // However, the initial tick in startDaemon always runs executeCycle
+            // directly (not via scheduledTick), so it will set cycleInFlight = true
+            // again. The key point is that cycleInFlight is still true from the
+            // first daemon's slow cycle, so startDaemon's initial executeCycle
+            // must not cause two executeCycle calls to be running concurrently.
+            //
+            // Since startDaemon awaits executeCycle, and executeCycle sets
+            // cycleInFlight = true at entry, the new startDaemon will block on
+            // its own executeCycle. Meanwhile, the old slow cycle is also
+            // in-flight concurrently. We verify that the scheduled ticks of the
+            // new daemon don't spawn additional overlapping cycles.
+
+            // Resolve the old slow cycle so that things can proceed
+            resolveSlowCycle(makeCycleResult());
+            await vi.advanceTimersByTimeAsync(0); // flush microtasks
+
+            // Now start a fresh daemon — old cycle has finished
+            await startDaemon(db, "testnet", { intervalMs: 5000 });
+            // call 3: the fresh daemon's initial cycle
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(3);
+
+            // Advance one interval — should trigger exactly one more cycle
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(4);
+
+            // No extra cycles should have leaked from the old daemon
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(5);
+        });
+
+        it("re-entrance guard skips tick when a cycle is still in-flight", async () => {
+            let resolveSlowCycle!: (value: MonitorCycleResult) => void;
+
+            // First cycle (initial) resolves immediately
+            mockRunMonitorCycle.mockResolvedValueOnce(makeCycleResult());
+
+            // Second cycle is slow — controlled via deferred promise
+            mockRunMonitorCycle.mockImplementationOnce(() => {
+                return new Promise<MonitorCycleResult>((resolve) => {
+                    resolveSlowCycle = resolve;
+                });
+            });
+
+            // Third cycle onwards resolves immediately
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            await startDaemon(db, "testnet", { intervalMs: 5000 });
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            // Trigger the slow second cycle
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
+
+            // Advance through several intervals while second cycle is in-flight
+            await vi.advanceTimersByTimeAsync(5000);
+            await vi.advanceTimersByTimeAsync(5000);
+            await vi.advanceTimersByTimeAsync(5000);
+
+            // All those ticks should have been skipped — still only 2 calls
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
+
+            // Now resolve the slow cycle
+            resolveSlowCycle(makeCycleResult());
+            await vi.advanceTimersByTimeAsync(0); // flush microtasks
+
+            // The next tick should now succeed since cycleInFlight is cleared
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(3);
+        });
     });
 
     // =========================================================================
