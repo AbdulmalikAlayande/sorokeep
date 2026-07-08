@@ -700,6 +700,62 @@ describe("Core Extension Logic", () => {
             expect(result.errors.length).toBeGreaterThanOrEqual(1);
         });
 
+        it("records an error when extension succeeds but txHash or ledger is missing", async () => {
+            const contractId = seedContract(db);
+
+            // Set instance entry with low TTL so it triggers extension
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                label: "Contract Instance",
+                live_until_ledger: 2410000,
+                discovery_source: "deterministic",
+            });
+
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 100000,
+                extend_when_below_ledgers: 20000,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            // Extension succeeds but txHash and ledger are missing
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: null,
+                ledger: null,
+                entriesExtended: 1,
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [
+                    {
+                        entryKeyXdr: "instance-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2500100,
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 100000,
+                    },
+                ],
+            });
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            // No extension should be pushed to result.extensions
+            expect(result.extensions).toHaveLength(0);
+
+            // An error should be recorded about missing txHash or ledger
+            expect(result.errors).not.toHaveLength(0);
+            expect(result.errors[0]).toContain(contractId);
+        });
+
         it("flags anomalous execution if resource usage spikes", async () => {
             const contractId = seedContract(db);
 
