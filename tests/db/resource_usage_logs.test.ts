@@ -282,6 +282,43 @@ describe("getResourceUsageLogs", () => {
         expect(() => getResourceUsageLogs(db, CONTRACT_ID, { limit: -1 })).toThrow();
     });
 
+    it("combines limit and since parameters correctly", () => {
+        insertResourceUsageLog(db, {
+            contract_id: CONTRACT_ID,
+            cpu_insns: 100,
+            mem_bytes: 100,
+            recorded_at: "2025-01-01T00:00:00.000Z",
+        });
+        insertResourceUsageLog(db, {
+            contract_id: CONTRACT_ID,
+            cpu_insns: 200,
+            mem_bytes: 200,
+            recorded_at: "2025-03-01T00:00:00.000Z",
+        });
+        insertResourceUsageLog(db, {
+            contract_id: CONTRACT_ID,
+            cpu_insns: 300,
+            mem_bytes: 300,
+            recorded_at: "2025-06-01T00:00:00.000Z",
+        });
+        insertResourceUsageLog(db, {
+            contract_id: CONTRACT_ID,
+            cpu_insns: 400,
+            mem_bytes: 400,
+            recorded_at: "2025-09-01T00:00:00.000Z",
+        });
+
+        // since filters out the Jan record; limit caps to 2 of the remaining 3
+        const logs = getResourceUsageLogs(db, CONTRACT_ID, {
+            limit: 2,
+            since: "2025-02-01T00:00:00.000Z",
+        });
+        expect(logs).toHaveLength(2);
+        // Ordered descending, so we get the two most recent after the since cutoff
+        expect(logs[0]!.cpu_insns).toBe(400);
+        expect(logs[1]!.cpu_insns).toBe(300);
+    });
+
     it("filters by since date when provided", () => {
         insertResourceUsageLog(db, {
             contract_id: CONTRACT_ID,
