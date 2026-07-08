@@ -32,6 +32,28 @@ vi.mock("../../src/core/extension.js", () => ({
     runAutoExtensions: (...args: unknown[]) => mockRunAutoExtensions(...args),
 }));
 
+const { mockDeliverSingleAlert, mockLoggerFns } = vi.hoisted(() => {
+    const mockDeliverSingleAlert = vi.fn();
+    const mockLoggerFns = {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        fatal: vi.fn(),
+        child: vi.fn(),
+    };
+    mockLoggerFns.child.mockReturnValue(mockLoggerFns);
+    return { mockDeliverSingleAlert, mockLoggerFns };
+});
+
+vi.mock("../../src/alerts/dispatcher.js", () => ({
+    deliverSingleAlert: (...args: unknown[]) => mockDeliverSingleAlert(...args),
+}));
+
+vi.mock("../../src/logging/index.js", () => ({
+    getLogger: () => mockLoggerFns,
+}));
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function seedContract(
@@ -83,6 +105,7 @@ describe("runMonitorCycle", () => {
             errors: [],
             extensions: [],
         });
+        mockDeliverSingleAlert.mockResolvedValue(undefined);
     });
 
     // =========================================================================
@@ -609,6 +632,57 @@ describe("runMonitorCycle", () => {
 
             expect(hasUnresolvedAlert(db, configs[0]!.id, instanceEntry.id)).toBe(false);
             expect(hasUnresolvedAlert(db, configs[0]!.id, wasmEntry.id)).toBe(true);
+        });
+
+        it("logs a warning when resolution notification delivery fails", async () => {
+            seedContract(db, "CONTRACT_RESOLVE_WARN", "testnet", [
+                { keyXdr: "rw-key", type: "instance", liveUntil: LEDGER + 5000 },
+            ]);
+            addWebhookAlert(db, "CONTRACT_RESOLVE_WARN", 10000);
+
+            // Cycle 1 — TTL below threshold, alert fires
+            mockGetEntryTTLs.mockResolvedValueOnce({
+                latestLedger: LEDGER,
+                entries: [{ entryKeyXdr: "rw-key", liveUntilLedgerSeq: LEDGER + 5000, lastModifiedLedgerSeq: LEDGER, remainingTTL: 5000 }],
+            });
+            await runMonitorCycle(db, "testnet");
+
+            const configs = getAlertConfigsForContract(db, "CONTRACT_RESOLVE_WARN");
+            const entries = getEntriesForContract(db, "CONTRACT_RESOLVE_WARN");
+            expect(hasUnresolvedAlert(db, configs[0]!.id, entries[0]!.id)).toBe(true);
+
+            // Clear logger mocks before cycle 2 so we can isolate the resolution warning
+            mockLoggerFns.warn.mockClear();
+
+            // Cycle 2 — TTL recovered above threshold, alert should resolve
+            // Make deliverSingleAlert reject to simulate notification failure
+            mockDeliverSingleAlert.mockRejectedValueOnce(new Error("webhook delivery failed"));
+
+            mockGetEntryTTLs.mockResolvedValueOnce({
+                latestLedger: LEDGER,
+                entries: [{ entryKeyXdr: "rw-key", liveUntilLedgerSeq: LEDGER + 120000, lastModifiedLedgerSeq: LEDGER, remainingTTL: 120000 }],
+            });
+
+            // Cycle should complete without throwing
+            const result = await runMonitorCycle(db, "testnet");
+
+            // Alert should still be resolved in the DB despite notification failure
+            expect(result.alertsResolved).toBeGreaterThan(0);
+            expect(hasUnresolvedAlert(db, configs[0]!.id, entries[0]!.id)).toBe(false);
+
+            // deliverSingleAlert should have been called for the resolution notification
+            expect(mockDeliverSingleAlert).toHaveBeenCalled();
+
+            // deliverSingleAlert should have been called for the resolution notification
+            expect(mockDeliverSingleAlert).toHaveBeenCalled();
+
+            // Flush the microtask queue so the fire-and-forget .catch() handler runs
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // A warning should have been logged about the failed notification
+            expect(mockLoggerFns.warn).toHaveBeenCalledWith(
+                expect.stringContaining("Resolution notification failed"),
+            );
         });
 
         it("does not spuriously increment alertsResolved when no alert was ever fired", async () => {
