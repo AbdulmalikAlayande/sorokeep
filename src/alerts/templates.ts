@@ -53,7 +53,7 @@ export function getTemplateContext(event: AlertEvent) {
             firedAtLedger: event.firedAtLedger,
             timestamp: event.timestamp,
         };
-    } else {
+    } else if (event.type === "threshold_crossed" || event.type === "alert_resolved") {
         const entryKey = event.entry.keyXdr || event.entry.type;
         dedupKey = `sorokeep:${event.network}:${event.contractId}:${entryKey}:${event.threshold.configuredLedgers}`;
         customDetails = {
@@ -69,6 +69,23 @@ export function getTemplateContext(event: AlertEvent) {
             firedAtLedger: event.firedAtLedger,
             timestamp: event.timestamp,
         };
+    } else if (event.type === "state_changed") {
+        const entryKey = event.entry.keyXdr || event.entry.type;
+        dedupKey = `sorokeep:${event.network}:${event.contractId}:${entryKey}:state_changed`;
+        customDetails = {
+            contractId: event.contractId,
+            contractName: event.contractName,
+            network: event.network,
+            entryKeyXdr: event.entry.keyXdr,
+            entryType: event.entry.type,
+            entryLabel: event.entry.label,
+            diffType: event.diff.diffType,
+            detectedAtLedger: event.detectedAtLedger,
+            timestamp: event.timestamp,
+        };
+    } else {
+        dedupKey = `sorokeep:${event.network}:${event.contractId}:unknown`;
+        customDetails = { contractId: event.contractId, timestamp: event.timestamp };
     }
 
     return {
@@ -87,8 +104,8 @@ export function getTemplateContext(event: AlertEvent) {
         isInfo: event.severity === "info",
         currentUsageFormatted: isResourceAlert ? event.resource.currentUsage.toLocaleString() : "",
         limitFormatted: isResourceAlert ? event.resource.limit.toLocaleString() : "",
-        currentRemainingLedgersFormatted: !isResourceAlert ? event.threshold.currentRemainingLedgers.toLocaleString() : "",
-        configuredLedgersFormatted: !isResourceAlert ? event.threshold.configuredLedgers.toLocaleString() : "",
+        currentRemainingLedgersFormatted: "threshold" in event ? event.threshold.currentRemainingLedgers.toLocaleString() : "",
+        configuredLedgersFormatted: "threshold" in event ? event.threshold.configuredLedgers.toLocaleString() : "",
         dedupKey,
         customDetails,
     };
