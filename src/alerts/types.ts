@@ -51,7 +51,29 @@ export interface ResourceAlertEvent {
     timestamp: string;
 }
 
-export type AlertEvent = TTLAlertEvent | ResourceAlertEvent;
+export interface StateChangeAlertEvent {
+    type: "state_changed";
+    severity: AlertSeverity;
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    entry: {
+        keyXdr: string;
+        type: string;
+        label: string | null;
+    };
+    diff: {
+        diffType: "created" | "updated" | "deleted";
+        oldValueXdr: string | null;
+        newValueXdr: string | null;
+    };
+    /** Ledger sequence number at the time of detection. */
+    detectedAtLedger: number;
+    /** ISO 8601 timestamp. */
+    timestamp: string;
+}
+
+export type AlertEvent = TTLAlertEvent | ResourceAlertEvent | StateChangeAlertEvent;
 
 export interface AlertChannel {
     send(target: string, event: AlertEvent, secret?: string | null): Promise<void>;
