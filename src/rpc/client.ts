@@ -12,7 +12,7 @@ import {
     Asset,
 } from "@stellar/stellar-sdk";
 import { getLogger } from "../logging/index.js";
-import { CostSummary } from "../core/costs.js";
+// CostSummary removed — no longer exported from costs.js
 
 export function assertSimulationSuccess(sim: rpc.Api.SimulateTransactionResponse): asserts sim is rpc.Api.SimulateTransactionSuccessResponse {
     if (rpc.Api.isSimulationError(sim)) {
@@ -257,7 +257,8 @@ export class StellarRpcClient {
         if (typeof serverAny.getLatestLedger === "function") {
             try {
                 const response = await this.withRateLimit(() => serverAny.getLatestLedger());
-                if (response && typeof response.sequence === "number" && response.sequence > 0) return response.sequence;
+                const seq = (response as any)?.sequence;
+                if (typeof seq === "number" && seq > 0) return seq;
             } catch (error) {
                 logger.debug("getLatestLedger failed, falling back to getHealth", error);
             }
