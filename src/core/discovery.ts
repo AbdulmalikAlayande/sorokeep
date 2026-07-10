@@ -139,7 +139,7 @@ export async function discoverStorageKeys(
 
         for (const txHash of txHashes) {
             try {
-                const txResponse = await server.getTransaction(txHash);
+                const txResponse = await server.getTransaction(txHash) as any;
                 if (!txResponse.envelopeXdr) {
                     continue; // Skip if no envelope
                 }
@@ -148,7 +148,7 @@ export async function discoverStorageKeys(
                 // For mock compatibility, handle if envelopeXdr is already an object or a base64 string
                 const env = typeof txResponse.envelopeXdr === 'string'
                     ? xdr.TransactionEnvelope.fromXDR(txResponse.envelopeXdr as string, "base64")
-                    : txResponse.envelopeXdr as any;
+                    : txResponse.envelopeXdr;
 
                 let innerTx;
                 if (env.switch().name === 'envelopeTypeTx') {
