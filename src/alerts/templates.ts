@@ -25,21 +25,20 @@ export function getTemplateContext(event: AlertEvent) {
 
     let resourceLabel = "";
     let resourceUnit = "";
-    let severityLevel = "Warning";
     let entryLabel = "";
 
     if (isResourceAlert) {
         resourceLabel = event.resource.type === "cpu" ? "CPU" : "Memory";
         resourceUnit = event.resource.type === "cpu" ? "instructions" : "bytes";
-        severityLevel = event.severity === "critical" ? "CRITICAL" : "Warning";
     } else {
         entryLabel = event.entry.label ?? event.entry.type;
-        severityLevel = event.severity === "critical" ? "CRITICAL" : "Warning";
     }
 
+    const severityLevel = event.severity === "critical" ? "CRITICAL" : "Warning";
+
     // Dedup keys and details for channels like PagerDuty
-    let dedupKey = "";
-    let customDetails: Record<string, unknown> = {};
+    let dedupKey: string;
+    let customDetails: Record<string, unknown>;
 
     if (isResourceAlert) {
         dedupKey = `sorokeep:${event.network}:${event.contractId}:resource:${event.resource.type}`;
