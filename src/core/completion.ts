@@ -62,17 +62,19 @@ complete -F _sorokeep_complete sorokeep
 }
 
 export function renderZshCompletionScript(): string {
-  return `#compdef sorokeep
-
-_sorokeep() {
-  local -a suggestions
-  local -a words
-  
-  local current_word=\${words[CURRENT]}
-  suggestions=( \${(f)"\$(sorokeep completion --query --cursor "\$CURRENT" "\${words[@]}")"} )
-  _describe 'values' suggestions
-}
-
-compdef _sorokeep sorokeep
-`;
+  return [
+    "#compdef sorokeep",
+    "",
+    "_sorokeep() {",
+    "  local -a suggestions",
+    "  local -a words",
+    "",
+    '  local current_word=${words[CURRENT]}',
+    '  suggestions=( ${(f)"$(sorokeep completion --query --cursor "$CURRENT" "${words[@]}")"} )',
+    "  _describe 'values' suggestions",
+    "}",
+    "",
+    "compdef _sorokeep sorokeep",
+    "",
+  ].join("\n");
 }
