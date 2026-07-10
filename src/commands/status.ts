@@ -56,7 +56,7 @@ export function registerStatusCommand(program: Command): void {
 
                 console.log();
             } catch (error: unknown) {
-                if (error instanceof ContractNotFoundError || error?.name === "ContractNotFoundError") {
+                if (error instanceof ContractNotFoundError || (error instanceof Error && error.name === "ContractNotFoundError")) {
                     if (options.json) {
                         console.log(JSON.stringify({
                             success: false,
