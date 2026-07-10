@@ -14,20 +14,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Check for version change
         id: version
         run: |
           CURRENT=$(node -p "require('./package.json').version")
-          git show HEAD~1:package.json > /tmp/prev-package.json 2>/dev/null || echo '{"version":"0.0.0"}' > /tmp/prev-package.json
-          PREVIOUS=$(node -p "require('/tmp/prev-package.json').version")
+          TAG="v$CURRENT"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-          echo "previous=$PREVIOUS" >> "$GITHUB_OUTPUT"
-          if [ "$CURRENT" != "$PREVIOUS" ]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
+          # Release if the tag doesn't already exist
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists, skipping release"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG does not exist, creating release"
           fi
 
       - name: Create GitHub Release
