@@ -80,6 +80,49 @@ export interface ExtensionResult {
     anomalyDetails?: string;
 }
 
+/**
+ * A group of ledger-key XDRs for the same contract that can share one
+ * ExtendFootprintTTLOp because they all target the same TTL.
+ */
+export interface ExtensionBatchGroup {
+    contractId: string;
+    targetTtl: number;
+    entryKeyXdrs: string[];
+}
+
+/**
+ * Group entries due for extension by contract and target TTL.
+ *
+ * Entries with different target TTLs **cannot** share a single
+ * ExtendFootprintTTLOp (the operation extends its whole footprint to
+ * one TTL), so they are separated into distinct groups. Each group
+ * should be submitted as one transaction.
+ *
+ * @param entries - Array of objects with contractId, entryKeyXdr, and targetTtl.
+ * @returns An array of groups, each ready for batch submission.
+ */
+export function groupEntriesByTargetTtl(
+    entries: Array<{ contractId: string; entryKeyXdr: string; targetTtl: number }>,
+): ExtensionBatchGroup[] {
+    const groupMap = new Map<string, ExtensionBatchGroup>();
+
+    for (const entry of entries) {
+        const key = `${entry.contractId}::${entry.targetTtl}`;
+        let group = groupMap.get(key);
+        if (!group) {
+            group = {
+                contractId: entry.contractId,
+                targetTtl: entry.targetTtl,
+                entryKeyXdrs: [],
+            };
+            groupMap.set(key, group);
+        }
+        group.entryKeyXdrs.push(entry.entryKeyXdr);
+    }
+
+    return Array.from(groupMap.values());
+}
+
 export interface AutoExtensionResult {
     contractsChecked: number;
     contractsExtended: number;
@@ -372,69 +415,88 @@ export async function runAutoExtensions(
                 return;
             }
 
-            const entryKeys = needsExtension.map(e => e.entry_key_xdr);
+            // ── Group entries by target TTL for batch submission ────────────
+            // Entries with different target TTLs can't share one ExtendFootprintTTLOp.
+            const groups = groupEntriesByTargetTtl(
+                needsExtension.map(e => ({
+                    contractId: contract.id,
+                    entryKeyXdr: e.entry_key_xdr,
+                    targetTtl: policy.target_ttl_ledgers,
+                })),
+            );
 
             logger.info(
-                `Auto-extending ${entryKeys.length} entries for ${contract.id} ` +
-                `(below ${policy.extend_when_below_ledgers}, target ${policy.target_ttl_ledgers})`,
+                `Auto-extending ${groups.reduce((s, g) => s + g.entryKeyXdrs.length, 0)} entries ` +
+                `for ${contract.id} in ${groups.length} batch(es) ` +
+                `(below ${policy.extend_when_below_ledgers})`,
             );
 
             try {
                 const billingCycle = new Date().toISOString().slice(0, 7);
                 const budget = getBudget(db, contract.id, billingCycle);
-                let estimatedFeeXlm = 0;
 
-                if (budget) {
-                    const { Keypair } = await import("@stellar/stellar-sdk");
-                    const pubKey = Keypair.fromSecret(secretKey).publicKey();
-                    const simResult = await simulateExtension(db, contract.id, entryKeys, policy.target_ttl_ledgers, pubKey, rpcUrl);
-                    
-                    if (!simResult.success) {
-                        throw new Error(`Simulation failed: ${simResult.error}`);
-                    }
-                    
-                    estimatedFeeXlm = (simResult.estimatedFee || 0) / 10000000;
-                    if (budget.spent_xlm + estimatedFeeXlm > budget.limit_xlm) {
-                        throw new Error(`budget limit exceeded. Estimated cost: ${estimatedFeeXlm} XLM, Remaining: ${budget.limit_xlm - budget.spent_xlm} XLM`);
-                    }
-                }
+                for (const group of groups) {
+                    let estimatedFeeXlm = 0;
 
-                const extResult = await extendEntries(
-                    db,
-                    contract.id,
-                    entryKeys,
-                    policy.target_ttl_ledgers,
-                    secretKey,
-                    rpcUrl,
-                    sponsorSecret,
-                );
-
-                if (extResult.success) {
-                    if (budget && estimatedFeeXlm > 0) {
-                        const actualFeeXlm = extResult.feeCharged !== undefined ? extResult.feeCharged / 10000000 : estimatedFeeXlm;
-                        addBudgetSpent(db, contract.id, billingCycle, actualFeeXlm);
-                    }
-
-                    if (!extResult.txHash || extResult.ledger == null) {
-                        result.errors.push(
-                            `Contract ${contract.id}: Extension succeeded but RPC returned no txHash or ledger`,
+                    if (budget) {
+                        const { Keypair } = await import("@stellar/stellar-sdk");
+                        const pubKey = Keypair.fromSecret(secretKey).publicKey();
+                        const simResult = await simulateExtension(
+                            db, contract.id, group.entryKeyXdrs, group.targetTtl, pubKey, rpcUrl,
                         );
-                    } else {
-                        result.contractsExtended++;
-                        result.entriesExtended += extResult.entriesExtended;
-                        result.extensions.push({
-                            contractId: contract.id,
-                            txHash: extResult.txHash,
-                            entriesExtended: extResult.entriesExtended,
-                            ledger: extResult.ledger,
-                            isAnomaly: extResult.isAnomaly,
-                            anomalyDetails: extResult.anomalyDetails,
-                        });
+
+                        if (!simResult.success) {
+                            throw new Error(`Simulation failed for batch target ${group.targetTtl}: ${simResult.error}`);
+                        }
+
+                        estimatedFeeXlm = (simResult.estimatedFee || 0) / 10000000;
+                        if (budget.spent_xlm + estimatedFeeXlm > budget.limit_xlm) {
+                            throw new Error(
+                                `budget limit exceeded. Estimated cost: ${estimatedFeeXlm} XLM, ` +
+                                `Remaining: ${budget.limit_xlm - budget.spent_xlm} XLM`,
+                            );
+                        }
                     }
-                } else {
-                    result.errors.push(
-                        `Contract ${contract.id}: Extension failed — ${extResult.error}`,
+
+                    const extResult = await extendEntries(
+                        db,
+                        contract.id,
+                        group.entryKeyXdrs,
+                        group.targetTtl,
+                        secretKey,
+                        rpcUrl,
+                        sponsorSecret,
                     );
+
+                    if (extResult.success) {
+                        if (budget && estimatedFeeXlm > 0) {
+                            const actualFeeXlm = extResult.feeCharged !== undefined
+                                ? extResult.feeCharged / 10000000
+                                : estimatedFeeXlm;
+                            addBudgetSpent(db, contract.id, billingCycle, actualFeeXlm);
+                        }
+
+                        if (!extResult.txHash || extResult.ledger == null) {
+                            result.errors.push(
+                                `Contract ${contract.id}: Extension batch succeeded but RPC returned no txHash or ledger`,
+                            );
+                        } else {
+                            result.contractsExtended++;
+                            result.entriesExtended += extResult.entriesExtended;
+                            result.extensions.push({
+                                contractId: contract.id,
+                                txHash: extResult.txHash,
+                                entriesExtended: extResult.entriesExtended,
+                                ledger: extResult.ledger,
+                                isAnomaly: extResult.isAnomaly,
+                                anomalyDetails: extResult.anomalyDetails,
+                            });
+                        }
+                    } else {
+                        result.errors.push(
+                            `Contract ${contract.id}: Extension batch failed — ${extResult.error}`,
+                        );
+                    }
                 }
             } finally {
                 if (slot && pool) pool.release(slot.publicKey);

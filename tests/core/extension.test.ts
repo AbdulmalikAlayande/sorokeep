@@ -34,7 +34,7 @@ vi.mock("../../src/rpc/client.js", () => {
 });
 
 // Import after mocking
-const { extendEntries, restoreEntries, simulateExtension, simulateRestore, runAutoExtensions } = await import(
+const { extendEntries, restoreEntries, simulateExtension, simulateRestore, runAutoExtensions, groupEntriesByTargetTtl } = await import(
     "../../src/core/extension.js"
 );
 
@@ -497,7 +497,71 @@ describe("Core Extension Logic", () => {
     });
 
     // =========================================================================
-    // 4. runAutoExtensions
+    // 5. groupEntriesByTargetTtl (batching logic)
+    // =========================================================================
+    describe("groupEntriesByTargetTtl", () => {
+        it("groups entries from the same contract with the same target TTL into one batch", () => {
+            const entries = [
+                { contractId: "contract-a", entryKeyXdr: "key-1", targetTtl: 100000 },
+                { contractId: "contract-a", entryKeyXdr: "key-2", targetTtl: 100000 },
+                { contractId: "contract-a", entryKeyXdr: "key-3", targetTtl: 100000 },
+            ];
+
+            const groups = groupEntriesByTargetTtl(entries);
+
+            expect(groups).toHaveLength(1);
+            expect(groups[0]!.contractId).toBe("contract-a");
+            expect(groups[0]!.targetTtl).toBe(100000);
+            expect(groups[0]!.entryKeyXdrs).toEqual(["key-1", "key-2", "key-3"]);
+        });
+
+        it("separates entries with different target TTLs into different batches even on same contract", () => {
+            const entries = [
+                { contractId: "contract-a", entryKeyXdr: "key-1", targetTtl: 50000 },
+                { contractId: "contract-a", entryKeyXdr: "key-2", targetTtl: 100000 },
+                { contractId: "contract-a", entryKeyXdr: "key-3", targetTtl: 50000 },
+            ];
+
+            const groups = groupEntriesByTargetTtl(entries);
+
+            expect(groups).toHaveLength(2);
+            const group50000 = groups.find(g => g.targetTtl === 50000);
+            const group100000 = groups.find(g => g.targetTtl === 100000);
+            expect(group50000!.entryKeyXdrs).toEqual(["key-1", "key-3"]);
+            expect(group100000!.entryKeyXdrs).toEqual(["key-2"]);
+        });
+
+        it("separates entries from different contracts even with same target TTL", () => {
+            const entries = [
+                { contractId: "contract-a", entryKeyXdr: "key-a1", targetTtl: 100000 },
+                { contractId: "contract-b", entryKeyXdr: "key-b1", targetTtl: 100000 },
+            ];
+
+            const groups = groupEntriesByTargetTtl(entries);
+
+            expect(groups).toHaveLength(2);
+            expect(groups[0]!.contractId).not.toBe(groups[1]!.contractId);
+        });
+
+        it("returns empty array when no entries provided", () => {
+            const groups = groupEntriesByTargetTtl([]);
+            expect(groups).toHaveLength(0);
+        });
+
+        it("handles a single entry", () => {
+            const entries = [
+                { contractId: "contract-a", entryKeyXdr: "key-1", targetTtl: 100000 },
+            ];
+
+            const groups = groupEntriesByTargetTtl(entries);
+
+            expect(groups).toHaveLength(1);
+            expect(groups[0]!.entryKeyXdrs).toEqual(["key-1"]);
+        });
+    });
+
+    // =========================================================================
+    // 6. runAutoExtensions
     // =========================================================================
     describe("runAutoExtensions", () => {
         it("skips contracts without extension policies", async () => {
@@ -597,6 +661,152 @@ describe("Core Extension Logic", () => {
             expect(result.contractsChecked).toBe(1);
             expect(result.contractsExtended).toBe(0);
             expect(mockSubmitExtension).not.toHaveBeenCalled();
+        });
+
+        it("submits multiple entries on same contract with same target TTL in a single transaction", async () => {
+            const contractId = seedContract(db);
+
+            // Set both entries with low TTL so they trigger extension
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                label: "Contract Instance",
+                live_until_ledger: 2410000,
+                discovery_source: "deterministic",
+            });
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "wasm-key-xdr",
+                entry_type: "wasm",
+                label: "WASM Code",
+                live_until_ledger: 2415000,
+                discovery_source: "deterministic",
+            });
+
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 100000,
+                extend_when_below_ledgers: 20000,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "batched-tx",
+                ledger: 2400100,
+                cpuInsns: 15000,
+                memBytes: 2048,
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [
+                    {
+                        entryKeyXdr: "instance-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2500100,
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 100000,
+                    },
+                    {
+                        entryKeyXdr: "wasm-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2500100,
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 100000,
+                    },
+                ],
+            });
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            expect(result.contractsExtended).toBe(1);
+            expect(result.entriesExtended).toBe(2);
+            // Should be one transaction call with BOTH entry keys
+            expect(mockSubmitExtension).toHaveBeenCalledTimes(1);
+            const callArgs = mockSubmitExtension.mock.calls[0];
+            expect(callArgs[0]).toEqual(
+                expect.arrayContaining(["instance-key-xdr", "wasm-key-xdr"]),
+            );
+        });
+
+        it("records correct extension_history with same tx_hash for all entries in a batch", async () => {
+            const contractId = seedContract(db);
+
+            // Both entries need extension
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                live_until_ledger: 2410000,
+                discovery_source: "deterministic",
+            });
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "wasm-key-xdr",
+                entry_type: "wasm",
+                live_until_ledger: 2415000,
+                discovery_source: "deterministic",
+            });
+
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 100000,
+                extend_when_below_ledgers: 20000,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "shared-tx-hash",
+                ledger: 2400100,
+                cpuInsns: 15000,
+                memBytes: 2048,
+                feeCharged: 50000,
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [
+                    {
+                        entryKeyXdr: "instance-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2500100,
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 100000,
+                    },
+                    {
+                        entryKeyXdr: "wasm-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2500100,
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 100000,
+                    },
+                ],
+            });
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            const history = getExtensionHistory(db, contractId);
+            expect(history).toHaveLength(2);
+            // Both history entries must share the same tx_hash
+            expect(history[0]!.tx_hash).toBe("shared-tx-hash");
+            expect(history[1]!.tx_hash).toBe("shared-tx-hash");
+            // Both must have the same resource usage
+            expect(history[0]!.cpu_insns).toBe(15000);
+            expect(history[1]!.cpu_insns).toBe(15000);
+            expect(history[0]!.mem_bytes).toBe(2048);
+            expect(history[1]!.mem_bytes).toBe(2048);
         });
 
         it("reports error when keypair cannot be resolved", async () => {
