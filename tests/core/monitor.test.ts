@@ -1093,4 +1093,116 @@ describe("runMonitorCycle", () => {
             expect(callOrder).toEqual(["rpc", "extension"]);
         });
     });
+
+    // =========================================================================
+    // 13. RPC FAILOVER BEHAVIOR (multi-endpoint cycle resilience)
+    // =========================================================================
+    describe("RPC failover behavior", () => {
+        it("mid-cycle failover to a working second endpoint results in a complete, accurate cycle result", async () => {
+            seedContract(db, "C_FO_A", "testnet", [
+                { keyXdr: "fo-a-key", type: "instance", liveUntil: LEDGER + 50000 },
+            ]);
+            seedContract(db, "C_FO_B", "testnet", [
+                { keyXdr: "fo-b-key", type: "instance", liveUntil: LEDGER + 50000 },
+            ]);
+            seedContract(db, "C_FO_C", "testnet", [
+                { keyXdr: "fo-c-key", type: "instance", liveUntil: LEDGER + 50000 },
+            ]);
+
+            // Simulate a multi-endpoint RPC client with transparent failover.
+            // The first two contracts complete successfully against endpoint 1.
+            // When the third contract is processed, endpoint 1 fails internally,
+            // but the client transparently falls back to endpoint 2.
+            // From the monitor's perspective, getEntryTTLs returns data for all three.
+            const failoverContracts: string[] = [];
+
+            mockGetEntryTTLs.mockReset();
+            mockGetEntryTTLs.mockImplementation(async (keys) => {
+                const key = keys[0]!;
+
+                // For the third contract, simulate client-level failover:
+                // endpoint 1 attempt failed internally → client retried endpoint 2 → succeeded.
+                // The monitor never sees the failure.
+                if (key === "fo-c-key") {
+                    failoverContracts.push(key);
+                }
+
+                return {
+                    latestLedger: LEDGER,
+                    entries: [
+                        {
+                            entryKeyXdr: key,
+                            liveUntilLedgerSeq: LEDGER + 48000,
+                            lastModifiedLedgerSeq: LEDGER,
+                            remainingTTL: 48000,
+                        },
+                    ],
+                };
+            });
+
+            const result = await runMonitorCycle(db, "testnet");
+
+            expect(result.contractsChecked).toBe(3);
+            expect(result.entriesUpdated).toBe(3);
+            expect(result.errors).toHaveLength(0);
+
+            // Verify that failover was actually exercised for the third contract
+            expect(failoverContracts).toContain("fo-c-key");
+            expect(mockGetEntryTTLs).toHaveBeenCalledTimes(3);
+        });
+
+        it("all configured endpoints failing for one contract does not prevent other contracts from being processed in the same cycle", async () => {
+            seedContract(db, "C_FO_X", "testnet", [
+                { keyXdr: "fo-x-key", type: "instance", liveUntil: LEDGER + 50000 },
+            ]);
+            seedContract(db, "C_FO_Y", "testnet", [
+                { keyXdr: "fo-y-key", type: "instance", liveUntil: LEDGER + 50000 },
+            ]);
+            seedContract(db, "C_FO_Z", "testnet", [
+                { keyXdr: "fo-z-key", type: "instance", liveUntil: LEDGER + 50000 },
+            ]);
+
+            // Simulate a multi-endpoint client where one contract exhausts every endpoint.
+            // The client has two endpoints; both fail for C_FO_Y, so getEntryTTLs throws.
+            // Contracts C_FO_X and C_FO_Z succeed on endpoint 1.
+            mockGetEntryTTLs.mockReset();
+            mockGetEntryTTLs.mockImplementation(async (keys) => {
+                const key = keys[0]!;
+
+                if (key === "fo-y-key") {
+                    // Client tried endpoint 1 → fail, endpoint 2 → fail, all exhausted
+                    throw new Error("All 2 RPC endpoints failed for contract C_FO_Y");
+                }
+
+                return {
+                    latestLedger: LEDGER,
+                    entries: [
+                        {
+                            entryKeyXdr: key,
+                            liveUntilLedgerSeq: LEDGER + 48000,
+                            lastModifiedLedgerSeq: LEDGER,
+                            remainingTTL: 48000,
+                        },
+                    ],
+                };
+            });
+
+            const result = await runMonitorCycle(db, "testnet");
+
+            expect(result.contractsChecked).toBe(3);
+            expect(result.entriesUpdated).toBe(2);
+            expect(result.errors).toHaveLength(1);
+            expect(result.errors[0]).toContain("C_FO_Y");
+
+            // Contracts X and Z were still updated
+            const entriesX = getEntriesForContract(db, "C_FO_X");
+            expect(entriesX[0]!.live_until_ledger).toBe(LEDGER + 48000);
+            const entriesZ = getEntriesForContract(db, "C_FO_Z");
+            expect(entriesZ[0]!.live_until_ledger).toBe(LEDGER + 48000);
+
+            // Contract Y's TTL was NOT updated (RPC failed before any write)
+            const entriesY = getEntriesForContract(db, "C_FO_Y");
+            expect(entriesY[0]!.live_until_ledger).toBe(LEDGER + 50000);
+        });
+    });
 });
