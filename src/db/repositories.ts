@@ -235,6 +235,26 @@ export function getEntriesForContract(db: Database.Database, contractId: string)
 }
 
 // ---------------------------- Database Access Functions For Other Schema: ExtensionPolicy----------------------------
+/**
+ * A single row from guard_policy_history.
+ * old_* columns are NULL when the row represents the very first insert for a contract.
+ */
+export interface GuardPolicyHistoryRecord {
+    id: number;
+    contract_id: string;
+    old_enabled: number | null;
+    old_target_ttl_ledgers: number | null;
+    old_extend_when_below_ledgers: number | null;
+    old_keypair_public: string | null;
+    old_keypair_source: string | null;
+    new_enabled: number;
+    new_target_ttl_ledgers: number;
+    new_extend_when_below_ledgers: number;
+    new_keypair_public: string | null;
+    new_keypair_source: string | null;
+    changed_at: string;
+}
+
 export function upsertExtensionPolicy(db: Database.Database, policy: {
   contract_id: string;
   enabled?: boolean;
@@ -243,27 +263,111 @@ export function upsertExtensionPolicy(db: Database.Database, policy: {
   keypair_public?: string;
   keypair_source?: string;
 }): void {
-  db.prepare(`
-    INSERT INTO extension_policies (contract_id, enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source)
-    VALUES (@contract_id, @enabled, @target_ttl_ledgers, @extend_when_below_ledgers, @keypair_public, @keypair_source)
-    ON CONFLICT(contract_id) DO UPDATE SET
-      enabled = @enabled,
-      target_ttl_ledgers = @target_ttl_ledgers,
-      extend_when_below_ledgers = @extend_when_below_ledgers,
-      keypair_public = @keypair_public,
-      keypair_source = @keypair_source
-  `).run({
-    contract_id: policy.contract_id,
-    enabled: policy.enabled !== false ? 1 : 0,
-    target_ttl_ledgers: policy.target_ttl_ledgers,
-    extend_when_below_ledgers: policy.extend_when_below_ledgers,
-    keypair_public: policy.keypair_public ?? null,
-    keypair_source: policy.keypair_source ?? null,
+  const newEnabled = policy.enabled !== false ? 1 : 0;
+  const newTarget = policy.target_ttl_ledgers;
+  const newThreshold = policy.extend_when_below_ledgers;
+  const newKeypairPublic = policy.keypair_public ?? null;
+  const newKeypairSource = policy.keypair_source ?? null;
+
+  const upsertAndHistory = db.transaction(() => {
+    // Ensure the history table exists (graceful for DBs that haven't run migration 002).
+    // This is a no-op once the table is present.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS guard_policy_history (
+        id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+        contract_id                     TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+        old_enabled                     INTEGER,
+        old_target_ttl_ledgers          INTEGER,
+        old_extend_when_below_ledgers   INTEGER,
+        old_keypair_public              TEXT,
+        old_keypair_source              TEXT,
+        new_enabled                     INTEGER NOT NULL,
+        new_target_ttl_ledgers          INTEGER NOT NULL,
+        new_extend_when_below_ledgers   INTEGER NOT NULL,
+        new_keypair_public              TEXT,
+        new_keypair_source              TEXT,
+        changed_at                      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      )
+    `);
+
+    // Capture the prior values before overwriting them
+    const prior = db
+      .prepare("SELECT enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source FROM extension_policies WHERE contract_id = ?")
+      .get(policy.contract_id) as {
+        enabled: number;
+        target_ttl_ledgers: number;
+        extend_when_below_ledgers: number;
+        keypair_public: string | null;
+        keypair_source: string | null;
+      } | undefined;
+
+    // Upsert the policy row
+    db.prepare(`
+      INSERT INTO extension_policies (contract_id, enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source)
+      VALUES (@contract_id, @enabled, @target_ttl_ledgers, @extend_when_below_ledgers, @keypair_public, @keypair_source)
+      ON CONFLICT(contract_id) DO UPDATE SET
+        enabled = @enabled,
+        target_ttl_ledgers = @target_ttl_ledgers,
+        extend_when_below_ledgers = @extend_when_below_ledgers,
+        keypair_public = @keypair_public,
+        keypair_source = @keypair_source
+    `).run({
+      contract_id: policy.contract_id,
+      enabled: newEnabled,
+      target_ttl_ledgers: newTarget,
+      extend_when_below_ledgers: newThreshold,
+      keypair_public: newKeypairPublic,
+      keypair_source: newKeypairSource,
+    });
+
+    // Write the history row (old_* are NULL when there was no prior policy)
+    db.prepare(`
+      INSERT INTO guard_policy_history (
+        contract_id,
+        old_enabled, old_target_ttl_ledgers, old_extend_when_below_ledgers, old_keypair_public, old_keypair_source,
+        new_enabled, new_target_ttl_ledgers, new_extend_when_below_ledgers, new_keypair_public, new_keypair_source
+      ) VALUES (
+        @contract_id,
+        @old_enabled, @old_target_ttl_ledgers, @old_extend_when_below_ledgers, @old_keypair_public, @old_keypair_source,
+        @new_enabled, @new_target_ttl_ledgers, @new_extend_when_below_ledgers, @new_keypair_public, @new_keypair_source
+      )
+    `).run({
+      contract_id: policy.contract_id,
+      old_enabled: prior?.enabled ?? null,
+      old_target_ttl_ledgers: prior?.target_ttl_ledgers ?? null,
+      old_extend_when_below_ledgers: prior?.extend_when_below_ledgers ?? null,
+      old_keypair_public: prior?.keypair_public ?? null,
+      old_keypair_source: prior?.keypair_source ?? null,
+      new_enabled: newEnabled,
+      new_target_ttl_ledgers: newTarget,
+      new_extend_when_below_ledgers: newThreshold,
+      new_keypair_public: newKeypairPublic,
+      new_keypair_source: newKeypairSource,
+    });
   });
+
+  upsertAndHistory();
 }
 
 export function getExtensionPolicy(db: Database.Database, contractId: string): ExtensionPolicy | undefined {
   return db.prepare("SELECT * FROM extension_policies WHERE contract_id = ?").get(contractId) as ExtensionPolicy | undefined;
+}
+
+/**
+ * Return the full change log for a contract's extension policy, ordered
+ * chronologically (oldest change first).
+ */
+export function getGuardPolicyHistory(
+  db: Database.Database,
+  contractId: string,
+): GuardPolicyHistoryRecord[] {
+  return db
+    .prepare(`
+      SELECT * FROM guard_policy_history
+      WHERE contract_id = ?
+      ORDER BY changed_at ASC, id ASC
+    `)
+    .all(contractId) as GuardPolicyHistoryRecord[];
 }
 
 // ---------------------------- Database Access Functions For Other Schema: AlertConfig----------------------------

@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
 import { getDatabase } from "../db/database.js";
-import { getContract, getEntriesForContract, upsertExtensionPolicy, getExtensionPolicy } from "../db/repositories.js";
+import { getContract, getEntriesForContract, upsertExtensionPolicy, getExtensionPolicy, getGuardPolicyHistory } from "../db/repositories.js";
 import { simulateExtension, extendEntries, resolveSecretKey } from "../core/extension.js";
 import { formatContractID, formatTimeToCloseLedger, formatBytes, formatCpuInsns } from "../utils/formatting.js";
 import { getLogger } from "../logging/index.js";
@@ -10,9 +10,81 @@ import { getLogger } from "../logging/index.js";
 const logger = getLogger().child({ component: "GuardCommand" });
 
 export function registerGuardCommand(program: Command): void {
-    program
-        .command("guard <contractId>")
-        .description("Configure auto-extension policy for a contract")
+    const guard = program
+        .command("guard")
+        .description("Configure auto-extension policy for a contract, or view policy history");
+
+    // ── guard history ──────────────────────────────────────────────────────────
+    guard
+        .command("history")
+        .description("Show the change log for a contract's guard (auto-extension) policy")
+        .requiredOption("--contract <contractId>", "Contract ID to show history for")
+        .action(async (options) => {
+            try {
+                const db = getDatabase();
+                const contract = getContract(db, options.contract);
+
+                if (!contract) {
+                    console.error(chalk.red(`Contract ${formatContractID(options.contract)} not found. Run 'sorokeep watch' first.`));
+                    process.exit(1);
+                    return;
+                }
+
+                const history = getGuardPolicyHistory(db, options.contract);
+
+                if (history.length === 0) {
+                    console.log(chalk.dim(`\nNo policy change history found for ${contract.name ?? formatContractID(options.contract)}.`));
+                    console.log(chalk.dim("Policy changes are recorded whenever 'sorokeep guard' is run."));
+                    return;
+                }
+
+                console.log(`\nGuard policy change history for ${chalk.bold(contract.name ?? formatContractID(options.contract))}:`);
+                console.log(chalk.dim(`${"─".repeat(80)}`));
+
+                for (const row of history) {
+                    const date = row.changed_at.replace("T", " ").replace(/\.\d+Z$/, " UTC");
+
+                    const enabledLabel = (v: number) => v ? chalk.green("ENABLED") : chalk.yellow("DISABLED");
+                    const enabledChange = row.old_enabled === null
+                        ? `${enabledLabel(row.new_enabled)} (initial)`
+                        : row.old_enabled === row.new_enabled
+                            ? enabledLabel(row.new_enabled)
+                            : `${enabledLabel(row.old_enabled)} → ${enabledLabel(row.new_enabled)}`;
+
+                    const numChange = (oldVal: number | null, newVal: number) =>
+                        oldVal === null
+                            ? `${newVal.toLocaleString()} ledgers`
+                            : oldVal === newVal
+                                ? `${newVal.toLocaleString()} ledgers`
+                                : `${oldVal.toLocaleString()} → ${newVal.toLocaleString()} ledgers`;
+
+                    console.log(`\n  ${chalk.dim(date)}`);
+                    console.log(`  Status:    ${enabledChange}`);
+                    console.log(`  Target:    ${numChange(row.old_target_ttl_ledgers, row.new_target_ttl_ledgers)}`);
+                    console.log(`  Threshold: ${numChange(row.old_extend_when_below_ledgers, row.new_extend_when_below_ledgers)}`);
+
+                    if (row.new_keypair_public) {
+                        console.log(`  Funded by: ${row.new_keypair_public.slice(0, 8)}...${row.new_keypair_public.slice(-4)}`);
+                    }
+                    if (row.new_keypair_source) {
+                        console.log(`  Key source: ${row.new_keypair_source}`);
+                    }
+                }
+
+                console.log(chalk.dim(`\n${"─".repeat(80)}`));
+                console.log(chalk.dim(`  ${history.length} change${history.length === 1 ? "" : "s"} total`));
+
+            } catch (error: unknown) {
+                const msg = error instanceof Error ? error.message : String(error);
+                logger.error("Guard history command failed", { error: msg });
+                console.error(chalk.red(`Error: ${msg}`));
+                process.exit(1);
+            }
+        });
+
+    // ── guard <contractId>  (policy configure / show) ──────────────────────────
+    guard
+        .argument("[contractId]", "Contract ID to configure or inspect")
         .option("--target-ttl <ledgers>", "Target TTL in ledgers after extension", "100000")
         .option("--threshold <ledgers>", "Extend when TTL drops below this many ledgers", "20000")
         .option("--keypair <secret>", "Stellar secret key for signing extension transactions")
@@ -21,7 +93,13 @@ export function registerGuardCommand(program: Command): void {
         .option("--auto-extend", "Enable auto-extension (the daemon will extend automatically)")
         .option("--dry-run", "Simulate the extension without submitting")
         .option("--disable", "Disable auto-extension for this contract")
-        .action(async (contractId: string, options) => {
+        .action(async (contractId: string | undefined, options) => {
+            // If no contractId is provided and no subcommand matched, show help
+            if (!contractId) {
+                guard.help();
+                return;
+            }
+
             try {
                 const db = getDatabase();
                 const contract = getContract(db, contractId);
