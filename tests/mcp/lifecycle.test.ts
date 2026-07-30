@@ -3,6 +3,7 @@ import { PassThrough } from "stream";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createMcpServer } from "../../src/mcp/server.js";
 import { getDatabaseForTesting } from "../../src/db/database.js";
+import type { SorokeepConfig } from "../../src/utils/config.js";
 
 describe("MCP Server Lifecycle", () => {
     let mockDb: any;
@@ -15,7 +16,12 @@ describe("MCP Server Lifecycle", () => {
         const stdin = new PassThrough();
         const stdout = new PassThrough();
 
-        const server = createMcpServer(() => mockDb);
+        const config: SorokeepConfig = {
+            network: "testnet",
+            pollingIntervalSeconds: 300,
+        };
+
+        const server = createMcpServer(() => mockDb, config);
         const transport = new StdioServerTransport(stdin, stdout);
 
         await server.connect(transport);
@@ -64,7 +70,12 @@ describe("MCP Server Lifecycle", () => {
         const stdin = new PassThrough();
         const stdout = new PassThrough();
 
-        const server = createMcpServer(() => mockDb);
+        const config: SorokeepConfig = {
+            network: "testnet",
+            pollingIntervalSeconds: 300,
+        };
+
+        const server = createMcpServer(() => mockDb, config);
         const transport = new StdioServerTransport(stdin, stdout);
 
         await server.connect(transport);

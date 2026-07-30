@@ -11,6 +11,7 @@ import {
 } from "../../src/db/repositories";
 import { createMcpServer } from "../../src/mcp/server";
 import { GET_EXTENSION_COSTS_TOOL_NAME } from "../../src/mcp/tools/get-extension-costs";
+import type { SorokeepConfig } from "../../src/utils/config";
 
 const CONTRACT_ID = "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6";
 
@@ -46,7 +47,13 @@ describe("get_extension_costs MCP tool", () => {
         entryId = getEntriesForContract(mockDb, CONTRACT_ID)[0]!.id;
 
         const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-        server = createMcpServer();
+        
+        const config: SorokeepConfig = {
+            network: "testnet",
+            pollingIntervalSeconds: 300,
+        };
+        
+        server = createMcpServer(() => mockDb, config);
         client = new Client({ name: "test-client", version: "1.0.0" });
 
         await server.connect(serverTransport);

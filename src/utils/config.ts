@@ -47,6 +47,9 @@ export interface SorokeepConfig {
      */
     feeSponsorSecret?: string;
 
+    /** Authentication token for MCP server access. Env var SOROKEEP_MCP_TOKEN takes precedence. */
+    mcpAuthToken?: string;
+
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
@@ -104,6 +107,7 @@ export function loadConfig(customPath?: string): SorokeepConfig {
 
             vault,
             feeSponsorSecret: typeof parsed.feeSponsorSecret === "string" ? parsed.feeSponsorSecret : undefined,
+            mcpAuthToken: typeof parsed.mcpAuthToken === "string" ? parsed.mcpAuthToken : undefined,
 
         };
     } catch (err: unknown) {

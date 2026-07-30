@@ -5,6 +5,11 @@ import { registerGetExtensionCostsTool } from "./tools/get-extension-costs.js";
 import { getAllContracts, getEntriesForContract } from "../db/repositories.js";
 import { classifyTTL } from "../utils/formatting.js";
 import type { TTLStatus } from "../utils/formatting.js";
+import type { SorokeepConfig } from "../utils/config.js";
+import { resolveToken, verifyRequest } from "./auth.js";
+import { getLogger } from "../logging/index.js";
+
+const logger = getLogger().child({ component: "MCPServer" });
 
 export async function invokeListWatchedContracts(db: Database.Database) {
     const contracts = getAllContracts(db);
@@ -38,7 +43,10 @@ export async function invokeListWatchedContracts(db: Database.Database) {
     };
 }
 
-export function createMcpServer(getDb: () => Database.Database): McpServer {
+export function createMcpServer(
+    getDb: () => Database.Database,
+    config: SorokeepConfig,
+): McpServer {
     const server = new McpServer(
         {
             name: "sorokeep",
@@ -52,6 +60,21 @@ export function createMcpServer(getDb: () => Database.Database): McpServer {
                 "Sorokeep MCP server exposes Soroban contract operations data for AI-assisted development.",
         },
     );
+
+    // Resolve authentication token
+    const configuredToken = resolveToken(config);
+    
+    if (configuredToken === null) {
+        logger.warn(
+            "MCP server running without authentication — set SOROKEEP_MCP_TOKEN or mcpAuthToken in config to restrict access",
+        );
+    } else {
+        logger.debug("MCP server authentication enabled: token configured");
+    }
+
+    // Store configured token in server context for middleware
+    const serverWithAuth = server as McpServer & { __configuredToken?: string | null };
+    serverWithAuth.__configuredToken = configuredToken;
 
     registerGetContractStatusTool(server, getDb);
     registerGetExtensionCostsTool(server);
