@@ -988,14 +988,14 @@ describe("runMonitorCycle", () => {
             await runMonitorCycle(db, "testnet");
 
             expect(mockRunAutoExtensions).toHaveBeenCalledTimes(1);
-            expect(mockRunAutoExtensions).toHaveBeenCalledWith(db, "testnet", undefined, undefined);
+            expect(mockRunAutoExtensions).toHaveBeenCalledWith(db, "testnet", undefined, undefined, undefined);
         });
 
         it("passes the rpcUrl through to runAutoExtensions", async () => {
             const rpcUrl = "https://rpc.example.com";
             await runMonitorCycle(db, "testnet", rpcUrl);
 
-            expect(mockRunAutoExtensions).toHaveBeenCalledWith(db, "testnet", rpcUrl, undefined);
+            expect(mockRunAutoExtensions).toHaveBeenCalledWith(db, "testnet", rpcUrl, undefined, undefined);
         });
 
         it("calls runAutoExtensions even when there are no contracts", async () => {

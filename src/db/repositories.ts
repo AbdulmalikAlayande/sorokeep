@@ -36,6 +36,8 @@ export interface ExtensionPolicy {
     keypair_public: string | null;
     keypair_source: string | null;
     created_at: Date;
+    /** Number of daemon cycles ahead to project TTL crossing. 0 = disabled. */
+    predictive_cycles: number;
 }
 
 export interface AlertConfig {
@@ -242,28 +244,67 @@ export function upsertExtensionPolicy(db: Database.Database, policy: {
   extend_when_below_ledgers: number;
   keypair_public?: string;
   keypair_source?: string;
+  /** Number of daemon cycles ahead to project TTL crossing. 0 = disabled (default). */
+  predictive_cycles?: number;
 }): void {
-  db.prepare(`
-    INSERT INTO extension_policies (contract_id, enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source)
-    VALUES (@contract_id, @enabled, @target_ttl_ledgers, @extend_when_below_ledgers, @keypair_public, @keypair_source)
-    ON CONFLICT(contract_id) DO UPDATE SET
-      enabled = @enabled,
-      target_ttl_ledgers = @target_ttl_ledgers,
-      extend_when_below_ledgers = @extend_when_below_ledgers,
-      keypair_public = @keypair_public,
-      keypair_source = @keypair_source
-  `).run({
-    contract_id: policy.contract_id,
-    enabled: policy.enabled !== false ? 1 : 0,
-    target_ttl_ledgers: policy.target_ttl_ledgers,
-    extend_when_below_ledgers: policy.extend_when_below_ledgers,
-    keypair_public: policy.keypair_public ?? null,
-    keypair_source: policy.keypair_source ?? null,
-  });
+  // Detect whether the predictive_cycles column exists (added via live migration).
+  // Databases loaded directly from schema.sql (e.g. in some tests) may not have it yet.
+  const hasPredictiveCycles = (() => {
+    try {
+      const info = db.prepare("PRAGMA table_info(extension_policies)").all() as Array<{ name: string }>;
+      return info.some(col => col.name === "predictive_cycles");
+    } catch {
+      return false;
+    }
+  })();
+
+  if (hasPredictiveCycles) {
+    db.prepare(`
+      INSERT INTO extension_policies (contract_id, enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source, predictive_cycles)
+      VALUES (@contract_id, @enabled, @target_ttl_ledgers, @extend_when_below_ledgers, @keypair_public, @keypair_source, @predictive_cycles)
+      ON CONFLICT(contract_id) DO UPDATE SET
+        enabled = @enabled,
+        target_ttl_ledgers = @target_ttl_ledgers,
+        extend_when_below_ledgers = @extend_when_below_ledgers,
+        keypair_public = @keypair_public,
+        keypair_source = @keypair_source,
+        predictive_cycles = @predictive_cycles
+    `).run({
+      contract_id: policy.contract_id,
+      enabled: policy.enabled !== false ? 1 : 0,
+      target_ttl_ledgers: policy.target_ttl_ledgers,
+      extend_when_below_ledgers: policy.extend_when_below_ledgers,
+      keypair_public: policy.keypair_public ?? null,
+      keypair_source: policy.keypair_source ?? null,
+      predictive_cycles: policy.predictive_cycles ?? 0,
+    });
+  } else {
+    // Fallback for databases that don't have the predictive_cycles column yet.
+    db.prepare(`
+      INSERT INTO extension_policies (contract_id, enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source)
+      VALUES (@contract_id, @enabled, @target_ttl_ledgers, @extend_when_below_ledgers, @keypair_public, @keypair_source)
+      ON CONFLICT(contract_id) DO UPDATE SET
+        enabled = @enabled,
+        target_ttl_ledgers = @target_ttl_ledgers,
+        extend_when_below_ledgers = @extend_when_below_ledgers,
+        keypair_public = @keypair_public,
+        keypair_source = @keypair_source
+    `).run({
+      contract_id: policy.contract_id,
+      enabled: policy.enabled !== false ? 1 : 0,
+      target_ttl_ledgers: policy.target_ttl_ledgers,
+      extend_when_below_ledgers: policy.extend_when_below_ledgers,
+      keypair_public: policy.keypair_public ?? null,
+      keypair_source: policy.keypair_source ?? null,
+    });
+  }
 }
 
 export function getExtensionPolicy(db: Database.Database, contractId: string): ExtensionPolicy | undefined {
-  return db.prepare("SELECT * FROM extension_policies WHERE contract_id = ?").get(contractId) as ExtensionPolicy | undefined;
+  const row = db.prepare("SELECT * FROM extension_policies WHERE contract_id = ?").get(contractId) as Omit<ExtensionPolicy, "predictive_cycles"> & { predictive_cycles?: number } | undefined;
+  if (!row) return undefined;
+  // Ensure predictive_cycles has a default when the column doesn't exist in older schema.
+  return { ...row, predictive_cycles: row.predictive_cycles ?? 0 };
 }
 
 // ---------------------------- Database Access Functions For Other Schema: AlertConfig----------------------------
@@ -1327,3 +1368,75 @@ export function getLatestResourceUsageLog(
     `).get(contractId) as ResourceUsageLog | undefined;
 }
 
+
+// ─── TTL Samples (issue #492 — predictive scheduling) ────────────────────────
+
+/**
+ * Maximum number of TTL samples retained per contract entry.
+ * Older samples beyond this limit are pruned on each insert.
+ */
+export const MAX_TTL_SAMPLES = 10;
+
+export interface TTLSampleRow {
+    id: number;
+    entry_id: number;
+    sampledAtLedger: number;
+    liveUntilLedger: number;
+    recorded_at: string;
+}
+
+/**
+ * Persist a single TTL reading for a contract entry.
+ * Call `pruneOldTTLSamples` after inserting to keep the window bounded.
+ */
+export function insertTTLSample(
+    db: Database.Database,
+    entryId: number,
+    sampledAtLedger: number,
+    liveUntilLedger: number,
+): void {
+    db.prepare(`
+        INSERT INTO ttl_samples (entry_id, sampled_at_ledger, live_until_ledger)
+        VALUES (?, ?, ?)
+    `).run(entryId, sampledAtLedger, liveUntilLedger);
+}
+
+/**
+ * Return up to `limit` TTL samples for an entry, newest first.
+ * Defaults to MAX_TTL_SAMPLES.
+ */
+export function getTTLSamples(
+    db: Database.Database,
+    entryId: number,
+    limit = MAX_TTL_SAMPLES,
+): Array<{ sampledAtLedger: number; liveUntilLedger: number }> {
+    return db.prepare(`
+        SELECT sampled_at_ledger AS sampledAtLedger,
+               live_until_ledger AS liveUntilLedger
+        FROM ttl_samples
+        WHERE entry_id = ?
+        ORDER BY sampled_at_ledger DESC
+        LIMIT ?
+    `).all(entryId, limit) as Array<{ sampledAtLedger: number; liveUntilLedger: number }>;
+}
+
+/**
+ * Delete samples beyond MAX_TTL_SAMPLES for the given entry, keeping the
+ * newest MAX_TTL_SAMPLES rows.  Call this after every insert.
+ */
+export function pruneOldTTLSamples(
+    db: Database.Database,
+    entryId: number,
+    keep = MAX_TTL_SAMPLES,
+): void {
+    db.prepare(`
+        DELETE FROM ttl_samples
+        WHERE entry_id = ?
+          AND id NOT IN (
+              SELECT id FROM ttl_samples
+              WHERE entry_id = ?
+              ORDER BY sampled_at_ledger DESC
+              LIMIT ?
+          )
+    `).run(entryId, entryId, keep);
+}

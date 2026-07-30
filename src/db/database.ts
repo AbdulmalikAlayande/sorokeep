@@ -51,6 +51,21 @@ export function getDatabase(customPath?: string): Database.Database {
     // ALTER TABLE is idempotent-safe here: we catch the "duplicate column" error
     // that SQLite throws when the column already exists. This handles existing
     // sorokeep.db files created before these columns were added to schema.sql.
+    applyLiveMigrations(db);
+
+    migrateAlertConfigsChannelTypeCheck(db);
+    relaxChannelTypeChecks(db);
+
+    return db;
+}
+
+/**
+ * Apply idempotent live migrations (ALTER TABLE statements and lightweight
+ * CREATE TABLE IF NOT EXISTS) to any database handle.  Called by both
+ * `getDatabase()` (production) and `getDatabaseForTesting()` (in-memory)
+ * so that both always reflect the same schema.
+ */
+function applyLiveMigrations(db: Database.Database): void {
     const migrations = [
         `ALTER TABLE alerts_fired ADD COLUMN delivered INTEGER NOT NULL DEFAULT 0`,
         `ALTER TABLE alerts_fired ADD COLUMN delivered_at TEXT`,
@@ -70,15 +85,12 @@ export function getDatabase(customPath?: string): Database.Database {
         )`,
         `ALTER TABLE contracts ADD COLUMN last_introspected_at DATETIME`,
         `ALTER TABLE contracts ADD COLUMN active INTEGER NOT NULL DEFAULT 1`,
+        // issue #492 — predictive scheduling: add predictive_cycles to extension_policies
+        `ALTER TABLE extension_policies ADD COLUMN predictive_cycles INTEGER NOT NULL DEFAULT 0`,
     ];
     for (const sql of migrations) {
         try { db.exec(sql); } catch { /* column already exists — no-op */ }
     }
-
-    migrateAlertConfigsChannelTypeCheck(db);
-    relaxChannelTypeChecks(db);
-
-    return db;
 }
 
 function migrateAlertConfigsChannelTypeCheck(db: Database.Database): void {
@@ -223,6 +235,9 @@ export function getDatabaseForTesting(): Database.Database {
     const migrationsDir = path.join(__dirname, 'migrations');
     const migrator = new Migrator(db, migrationsDir);
     migrator.run();
+
+    // Apply the same live migrations as getDatabase() so tests see identical schema.
+    applyLiveMigrations(db);
 
     return db;
 }

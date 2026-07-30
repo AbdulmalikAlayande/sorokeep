@@ -19,6 +19,7 @@ export function registerGuardCommand(program: Command): void {
         .option("--keypair-env <var>", "Environment variable containing the secret key")
         .option("--keypair-vault <path>", "HashiCorp Vault secret path (e.g. secret/data/stellar/mykey)")
         .option("--auto-extend", "Enable auto-extension (the daemon will extend automatically)")
+        .option("--predictive <cycles>", "Enable predictive mode: extend N cycles before threshold is projected to be crossed (requires --auto-extend)", "0")
         .option("--dry-run", "Simulate the extension without submitting")
         .option("--disable", "Disable auto-extension for this contract")
         .action(async (contractId: string, options) => {
@@ -102,12 +103,17 @@ export function registerGuardCommand(program: Command): void {
                         extend_when_below_ledgers: threshold,
                         keypair_public: kp.publicKey(),
                         keypair_source: keypairSource!,
+                        predictive_cycles: parseInt(options.predictive ?? "0", 10) || 0,
                     });
 
+                    const predictiveCycles = parseInt(options.predictive ?? "0", 10) || 0;
                     console.log(chalk.green(`\nAuto-extension enabled for ${contract.name ?? formatContractID(contractId)}`));
                     console.log(`  Target TTL:  ${targetTTL.toLocaleString()} ledgers (${formatTimeToCloseLedger(targetTTL)})`);
                     console.log(`  Threshold:   ${threshold.toLocaleString()} ledgers (${formatTimeToCloseLedger(threshold)})`);
                     console.log(`  Funded by:   ${kp.publicKey().slice(0, 8)}...${kp.publicKey().slice(-4)}`);
+                    if (predictiveCycles > 0) {
+                        console.log(`  Predictive:  ${predictiveCycles} cycle(s) ahead`);
+                    }
                     console.log(chalk.dim("\n  The daemon will auto-extend when TTL drops below the threshold."));
                     console.log(chalk.dim("  Run 'sorokeep daemon --network " + contract.network + "' to start monitoring."));
                     return;
@@ -199,6 +205,9 @@ export function registerGuardCommand(program: Command): void {
                     }
                     if (policy.keypair_source) {
                         console.log(`  Key source: ${policy.keypair_source}`);
+                    }
+                    if (policy.predictive_cycles > 0) {
+                        console.log(`  Predictive: ${policy.predictive_cycles} cycle(s) ahead`);
                     }
                 } else {
                     console.log(chalk.dim("\nNo extension policy configured for this contract."));

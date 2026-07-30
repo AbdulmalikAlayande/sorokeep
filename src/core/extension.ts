@@ -13,8 +13,9 @@ import {
     getBudget,
     addBudgetSpent,
     countExtensionsInLastHour,
-
+    getTTLSamples,
 } from "../db/repositories.js";
+import { computeDecayRate, projectCrossingLedger } from "./predictive.js";
 import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
 import { formatSecretKey } from "../utils/formatting.js";
@@ -93,6 +94,25 @@ export interface AutoExtensionResult {
         isAnomaly?: boolean;
         anomalyDetails?: string;
     }>;
+}
+
+/**
+ * Options for predictive TTL extension scheduling (issue #492).
+ * When `predictiveCycles` > 0, entries whose projected crossing ledger falls
+ * within the next `predictiveCycles` daemon cycles are extended proactively,
+ * even if their current TTL is still above the reactive threshold.
+ */
+export interface PredictiveOptions {
+    /**
+     * Number of daemon cycles ahead to project TTL crossing.
+     * 0 or undefined disables predictive mode.
+     */
+    predictiveCycles?: number;
+    /**
+     * Approximate ledger interval between daemon cycles.
+     * Defaults to 60 ledgers (~5 minutes at 5 s/ledger).
+     */
+    ledgersPerCycle?: number;
 }
 
 export interface RestoreResult {
@@ -294,6 +314,7 @@ export async function runAutoExtensions(
     network: string,
     rpcUrl?: string,
     sponsorSecret?: string,
+    predictiveOpts?: PredictiveOptions,
 ): Promise<AutoExtensionResult> {
     const result: AutoExtensionResult = {
         contractsChecked: 0,
@@ -331,7 +352,37 @@ export async function runAutoExtensions(
             const needsExtension = entries.filter(e => {
                 if (!e.live_until_ledger) return false;
                 const remaining = e.live_until_ledger - latestLedger;
-                return remaining >= 0 && remaining < policy.extend_when_below_ledgers;
+
+                // Reactive path: TTL already below threshold.
+                if (remaining >= 0 && remaining < policy.extend_when_below_ledgers) return true;
+
+                // Predictive path (opt-in): trigger early when projected crossing
+                // falls within the next N daemon cycles.
+                const cycles = predictiveOpts?.predictiveCycles ?? policy.predictive_cycles ?? 0;
+                if (cycles > 0 && remaining >= policy.extend_when_below_ledgers) {
+                    const ledgersPerCycle = predictiveOpts?.ledgersPerCycle ?? 60;
+                    const horizonLedgers = latestLedger + cycles * ledgersPerCycle;
+
+                    const samples = getTTLSamples(db, e.id);
+                    const decayRate = computeDecayRate(samples);
+                    const projectedCrossing = projectCrossingLedger(
+                        decayRate,
+                        remaining,
+                        policy.extend_when_below_ledgers,
+                        latestLedger,
+                    );
+
+                    if (projectedCrossing !== null && projectedCrossing <= horizonLedgers) {
+                        logger.info(
+                            `Predictive extension triggered for ${e.entry_key_xdr} ` +
+                            `(contract ${e.contract_id}): projected crossing at ledger ${projectedCrossing}, ` +
+                            `horizon ${horizonLedgers}`,
+                        );
+                        return true;
+                    }
+                }
+
+                return false;
             });
 
             if (needsExtension.length === 0) return;

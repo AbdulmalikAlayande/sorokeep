@@ -48,6 +48,8 @@ describe("get_contract_status MCP tool", () => {
                     remainingTTL: 5_000,
                     approximateTimeRemaining: "~7h 38m",
                     status: "warning",
+                    projectedCrossingLedger: null,
+                    projectedCrossingAt: null,
                 },
             ],
         });
