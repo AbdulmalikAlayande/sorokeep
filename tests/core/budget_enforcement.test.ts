@@ -10,6 +10,7 @@ import {
     upsertBudget, 
     getBudget 
 } from '../../src/db/repositories';
+import { Migrator } from '../../src/db/migrator.js';
 
 // Mock dependencies
 vi.mock('../../src/rpc/client', () => {
@@ -59,6 +60,11 @@ describe('Budget Enforcement', () => {
         db = new Database(':memory:');
         const schema = fs.readFileSync(path.resolve(__dirname, '../../src/db/schema.sql'), 'utf8');
         db.exec(schema);
+
+        // Run migrations to create entry_type_policies table
+        const migrationsDir = path.resolve(__dirname, '../../src/db/migrations');
+        const migrator = new Migrator(db, migrationsDir);
+        migrator.run();
 
         insertContract(db, { id: 'contract_1', network: 'testnet' });
         upsertExtensionPolicy(db, {

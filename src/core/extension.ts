@@ -5,6 +5,7 @@ import {
     getContract,
     getEntriesForContract,
     getExtensionPolicy,
+    getEffectivePolicy,
     getChannelAccounts,
     recordExtension,
     upsertEntry,
@@ -323,16 +324,32 @@ export async function runAutoExtensions(
     result.contractsChecked = eligibleContracts.length;
 
     await Promise.all(eligibleContracts.map(async contract => {
-        const policy = getExtensionPolicy(db, contract.id)!;
-
         try {
             const entries = getEntriesForContract(db, contract.id);
 
-            const needsExtension = entries.filter(e => {
-                if (!e.live_until_ledger) return false;
-                const remaining = e.live_until_ledger - latestLedger;
-                return remaining >= 0 && remaining < policy.extend_when_below_ledgers;
-            });
+            // Filter entries that need extension, considering per-entry-type policies
+            const needsExtension: Array<typeof entries[0] & { effectivePolicy: ReturnType<typeof getEffectivePolicy> }> = [];
+            
+            for (const entry of entries) {
+                if (!entry.live_until_ledger) continue;
+                
+                // Resolve effective policy for this entry's type
+                const effectivePolicy = getEffectivePolicy(
+                    db,
+                    contract.id,
+                    entry.entry_type as "instance" | "wasm" | "persistent" | "temporary"
+                );
+                
+                if (!effectivePolicy) {
+                    // No policy (neither type override nor contract default)
+                    continue;
+                }
+                
+                const remaining = entry.live_until_ledger - latestLedger;
+                if (remaining >= 0 && remaining < effectivePolicy.extend_when_below_ledgers) {
+                    needsExtension.push({ ...entry, effectivePolicy });
+                }
+            }
 
             if (needsExtension.length === 0) return;
 
@@ -362,21 +379,30 @@ export async function runAutoExtensions(
             }
 
             if (!secretKey) {
-                secretKey = await resolveSecretKey(policy.keypair_source);
+                // Use the first entry's policy to get keypair_source (all same contract)
+                const firstPolicy = getEffectivePolicy(
+                    db,
+                    contract.id,
+                    needsExtension[0]!.entry_type as "instance" | "wasm" | "persistent" | "temporary"
+                );
+                secretKey = firstPolicy ? await resolveSecretKey(firstPolicy.keypair_source) : null;
             }
 
             if (!secretKey) {
                 result.errors.push(
-                    `Contract ${contract.id}: Cannot resolve keypair from source "${pool ? "channel pool" : formatSecretKey(policy.keypair_source)}"`,
+                    `Contract ${contract.id}: Cannot resolve keypair from source "${pool ? "channel pool" : "policy"}"`
                 );
                 return;
             }
 
             const entryKeys = needsExtension.map(e => e.entry_key_xdr);
+            // Use the first entry's target for logging (all entries in same contract)
+            const firstTarget = needsExtension[0]!.effectivePolicy?.target_ttl_ledgers ?? 0;
+            const firstThreshold = needsExtension[0]!.effectivePolicy?.extend_when_below_ledgers ?? 0;
 
             logger.info(
                 `Auto-extending ${entryKeys.length} entries for ${contract.id} ` +
-                `(below ${policy.extend_when_below_ledgers}, target ${policy.target_ttl_ledgers})`,
+                `(below ${firstThreshold}, target ${firstTarget})`
             );
 
             try {
@@ -387,7 +413,7 @@ export async function runAutoExtensions(
                 if (budget) {
                     const { Keypair } = await import("@stellar/stellar-sdk");
                     const pubKey = Keypair.fromSecret(secretKey).publicKey();
-                    const simResult = await simulateExtension(db, contract.id, entryKeys, policy.target_ttl_ledgers, pubKey, rpcUrl);
+                    const simResult = await simulateExtension(db, contract.id, entryKeys, firstTarget, pubKey, rpcUrl);
                     
                     if (!simResult.success) {
                         throw new Error(`Simulation failed: ${simResult.error}`);
@@ -403,7 +429,7 @@ export async function runAutoExtensions(
                     db,
                     contract.id,
                     entryKeys,
-                    policy.target_ttl_ledgers,
+                    firstTarget,
                     secretKey,
                     rpcUrl,
                     sponsorSecret,

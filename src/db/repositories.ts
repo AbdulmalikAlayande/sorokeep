@@ -272,6 +272,102 @@ export function getExtensionPolicy(db: Database.Database, contractId: string): E
   return db.prepare("SELECT * FROM extension_policies WHERE contract_id = ?").get(contractId) as ExtensionPolicy | undefined;
 }
 
+/**
+ * Resolves the effective TTL policy for a specific entry type.
+ *
+ * Resolution order:
+ * 1. entry_type_policies row for (contractId, entryType) if exists
+ * 2. extension_policies row for contractId (contract-level default)
+ * 3. null if neither exists
+ *
+ * @param db - The SQLite database connection.
+ * @param contractId - The contract ID.
+ * @param entryType - The entry type: 'instance', 'wasm', 'persistent', or 'temporary'.
+ * @returns The effective policy for this entry type, or null if no policy exists.
+ */
+export function getEffectivePolicy(
+  db: Database.Database,
+  contractId: string,
+  entryType: "instance" | "wasm" | "persistent" | "temporary",
+): ExtensionPolicy | null {
+  // Try type-specific override first
+  const override = db.prepare(`
+    SELECT target_ttl_ledgers, extend_when_below_ledgers
+    FROM entry_type_policies
+    WHERE contract_id = ? AND entry_type = ?
+  `).get(contractId, entryType) as Omit<ExtensionPolicy, "id" | "contract_id" | "keypair_public" | "keypair_source" | "enabled" | "created_at"> | undefined;
+
+  if (override) {
+    return {
+      id: 0,
+      contract_id: contractId,
+      enabled: 1,
+      target_ttl_ledgers: override.target_ttl_ledgers,
+      extend_when_below_ledgers: override.extend_when_below_ledgers,
+      keypair_public: null,
+      keypair_source: null,
+      created_at: new Date(),
+    };
+  }
+
+  // Fall back to contract-level default
+  const defaultPolicy = getExtensionPolicy(db, contractId);
+  return defaultPolicy ?? null;
+}
+
+/**
+ * Sets or updates a per-entry-type policy override.
+ * Uses UPSERT to handle both create and update (idempotent).
+ *
+ * @param db - The SQLite database connection.
+ * @param contractId - The contract ID.
+ * @param entryType - The entry type to override.
+ * @param policy - The policy override (target_ttl_ledgers and extend_when_below_ledgers).
+ */
+export function setEntryTypePolicy(
+  db: Database.Database,
+  contractId: string,
+  entryType: "instance" | "wasm" | "persistent" | "temporary",
+  policy: {
+    target_ttl_ledgers: number;
+    extend_when_below_ledgers: number;
+  },
+): void {
+  db.prepare(`
+    INSERT INTO entry_type_policies (contract_id, entry_type, target_ttl_ledgers, extend_when_below_ledgers, created_at, updated_at)
+    VALUES (@contract_id, @entry_type, @target_ttl_ledgers, @extend_when_below_ledgers, datetime('now'), datetime('now'))
+    ON CONFLICT(contract_id, entry_type) DO UPDATE SET
+      target_ttl_ledgers = excluded.target_ttl_ledgers,
+      extend_when_below_ledgers = excluded.extend_when_below_ledgers,
+      updated_at = datetime('now')
+  `).run({
+    contract_id: contractId,
+    entry_type: entryType,
+    target_ttl_ledgers: policy.target_ttl_ledgers,
+    extend_when_below_ledgers: policy.extend_when_below_ledgers,
+  });
+}
+
+/**
+ * Removes a per-entry-type policy override.
+ * After removal, the contract-level default applies again.
+ * Idempotent — safe to call even if override doesn't exist.
+ *
+ * @param db - The SQLite database connection.
+ * @param contractId - The contract ID.
+ * @param entryType - The entry type to remove the override for.
+ */
+export function deleteEntryTypePolicy(
+  db: Database.Database,
+  contractId: string,
+  entryType: string,
+): void {
+  db.prepare(`
+    DELETE FROM entry_type_policies
+    WHERE contract_id = ? AND entry_type = ?
+  `).run(contractId, entryType);
+}
+
 // ---------------------------- Database Access Functions For Other Schema: AlertConfig----------------------------
 export function insertAlertConfig(db: Database.Database, config: {
   contract_id: string;

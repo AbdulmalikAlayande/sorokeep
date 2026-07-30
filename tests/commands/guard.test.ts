@@ -303,4 +303,154 @@ describe("Guard Command --auto-extend integration", () => {
         delete process.env.STELLAR_TEST_KEY;
 
     });
+
+    it("--entry-type flag validates against valid types", async () => {
+        vi.restoreAllMocks();
+        const mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
+        const mockError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+        const program = new Command();
+        registerGuardCommand(program);
+        await program.parseAsync([
+            "node", "sorokeep",
+            "guard", TEST_CONTRACT_ID,
+            "--entry-type", "invalid-type",
+            "--keypair-env", "STELLAR_TEST_KEY",
+            "--auto-extend",
+        ]);
+
+        expect(mockExit).toHaveBeenCalledWith(1);
+        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("Invalid --entry-type"));
+        expect(mockError).toHaveBeenCalledWith(expect.stringContaining("instance, wasm, persistent, temporary"));
+    });
+
+    it("--entry-type flag with instance creates type-specific override", async () => {
+        process.env.STELLAR_TEST_KEY = VALID_TEST_SECRET;
+
+        const program = new Command();
+        registerGuardCommand(program);
+        await program.parseAsync([
+            "node", "sorokeep",
+            "guard", TEST_CONTRACT_ID,
+            "--entry-type", "instance",
+            "--keypair-env", "STELLAR_TEST_KEY",
+            "--auto-extend",
+            "--target-ttl", "50000",
+            "--threshold", "10000",
+        ]);
+
+        // Verify type-specific override was created
+        const { getEffectivePolicy } = await import("../../src/db/repositories.js");
+        const effective = getEffectivePolicy(sharedDb, TEST_CONTRACT_ID, "instance");
+        expect(effective).toBeDefined();
+        expect(effective?.target_ttl_ledgers).toBe(50000);
+        expect(effective?.extend_when_below_ledgers).toBe(10000);
+
+        delete process.env.STELLAR_TEST_KEY;
+    });
+
+    it("--entry-type flag with wasm creates type-specific override", async () => {
+        process.env.STELLAR_TEST_KEY = VALID_TEST_SECRET;
+
+        const program = new Command();
+        registerGuardCommand(program);
+        await program.parseAsync([
+            "node", "sorokeep",
+            "guard", TEST_CONTRACT_ID,
+            "--entry-type", "wasm",
+            "--keypair-env", "STELLAR_TEST_KEY",
+            "--auto-extend",
+            "--target-ttl", "75000",
+            "--threshold", "15000",
+        ]);
+
+        const { getEffectivePolicy } = await import("../../src/db/repositories.js");
+        const effective = getEffectivePolicy(sharedDb, TEST_CONTRACT_ID, "wasm");
+        expect(effective).toBeDefined();
+        expect(effective?.target_ttl_ledgers).toBe(75000);
+        expect(effective?.extend_when_below_ledgers).toBe(15000);
+
+        delete process.env.STELLAR_TEST_KEY;
+    });
+
+    it("--entry-type flag with persistent creates type-specific override", async () => {
+        process.env.STELLAR_TEST_KEY = VALID_TEST_SECRET;
+
+        const program = new Command();
+        registerGuardCommand(program);
+        await program.parseAsync([
+            "node", "sorokeep",
+            "guard", TEST_CONTRACT_ID,
+            "--entry-type", "persistent",
+            "--keypair-env", "STELLAR_TEST_KEY",
+            "--auto-extend",
+            "--target-ttl", "60000",
+            "--threshold", "12000",
+        ]);
+
+        const { getEffectivePolicy } = await import("../../src/db/repositories.js");
+        const effective = getEffectivePolicy(sharedDb, TEST_CONTRACT_ID, "persistent");
+        expect(effective).toBeDefined();
+        expect(effective?.target_ttl_ledgers).toBe(60000);
+        expect(effective?.extend_when_below_ledgers).toBe(12000);
+
+        delete process.env.STELLAR_TEST_KEY;
+    });
+
+    it("--entry-type flag with temporary creates type-specific override", async () => {
+        process.env.STELLAR_TEST_KEY = VALID_TEST_SECRET;
+
+        const program = new Command();
+        registerGuardCommand(program);
+        await program.parseAsync([
+            "node", "sorokeep",
+            "guard", TEST_CONTRACT_ID,
+            "--entry-type", "temporary",
+            "--keypair-env", "STELLAR_TEST_KEY",
+            "--auto-extend",
+            "--target-ttl", "30000",
+            "--threshold", "5000",
+        ]);
+
+        const { getEffectivePolicy } = await import("../../src/db/repositories.js");
+        const effective = getEffectivePolicy(sharedDb, TEST_CONTRACT_ID, "temporary");
+        expect(effective).toBeDefined();
+        expect(effective?.target_ttl_ledgers).toBe(30000);
+        expect(effective?.extend_when_below_ledgers).toBe(5000);
+
+        delete process.env.STELLAR_TEST_KEY;
+    });
+
+    it("without --entry-type flag creates contract-level default policy", async () => {
+        // Use a fresh contract ID for this test
+        const freshContractId = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSD";
+        insertContract(sharedDb, {
+            id: freshContractId,
+            name: "Fresh Contract",
+            network: "testnet",
+        });
+
+        process.env.STELLAR_TEST_KEY = VALID_TEST_SECRET;
+
+        const program = new Command();
+        registerGuardCommand(program);
+        await program.parseAsync([
+            "node", "sorokeep",
+            "guard", freshContractId,
+            "--keypair-env", "STELLAR_TEST_KEY",
+            "--auto-extend",
+            "--target-ttl", "100000",
+            "--threshold", "20000",
+        ]);
+
+        // Verify contract-level policy was created (not type-specific)
+        const policy = getExtensionPolicy(sharedDb, freshContractId);
+        expect(policy).toBeDefined();
+        expect(policy?.enabled).toBe(1);
+        expect(policy?.target_ttl_ledgers).toBe(100000);
+        expect(policy?.extend_when_below_ledgers).toBe(20000);
+        expect(policy?.keypair_source).toBe("env:STELLAR_TEST_KEY");
+
+        delete process.env.STELLAR_TEST_KEY;
+    });
 });

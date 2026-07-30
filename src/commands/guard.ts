@@ -2,7 +2,7 @@ import { Command } from "commander";
 import chalk from "chalk";
 import ora from "ora";
 import { getDatabase } from "../db/database.js";
-import { getContract, getEntriesForContract, upsertExtensionPolicy, getExtensionPolicy } from "../db/repositories.js";
+import { getContract, getEntriesForContract, upsertExtensionPolicy, getExtensionPolicy, setEntryTypePolicy } from "../db/repositories.js";
 import { simulateExtension, extendEntries, resolveSecretKey } from "../core/extension.js";
 import { formatContractID, formatTimeToCloseLedger, formatBytes, formatCpuInsns } from "../utils/formatting.js";
 import { getLogger } from "../logging/index.js";
@@ -21,6 +21,7 @@ export function registerGuardCommand(program: Command): void {
         .option("--auto-extend", "Enable auto-extension (the daemon will extend automatically)")
         .option("--dry-run", "Simulate the extension without submitting")
         .option("--disable", "Disable auto-extension for this contract")
+        .option("--entry-type <type>", "Apply policy to a specific entry type only (instance|wasm|persistent|temporary). Omit to set the contract-level default.", undefined)
         .action(async (contractId: string, options) => {
             try {
                 const db = getDatabase();
@@ -50,6 +51,15 @@ export function registerGuardCommand(program: Command): void {
 
                     console.error(chalk.red("--threshold must be less than --target-ttl"));
                     process.exit(1);
+                }
+
+                // Validate entry type if provided
+                if (options.entryType) {
+                    const validTypes = ['instance', 'wasm', 'persistent', 'temporary'];
+                    if (!validTypes.includes(options.entryType)) {
+                        console.error(chalk.red(`Invalid --entry-type: ${options.entryType}. Must be one of: ${validTypes.join(', ')}`));
+                        process.exit(1);
+                    }
                 }
 
                 // Handle --disable
@@ -95,16 +105,26 @@ export function registerGuardCommand(program: Command): void {
                     const { Keypair } = await import("@stellar/stellar-sdk");
                     const kp = Keypair.fromSecret(secretKey!);
 
-                    upsertExtensionPolicy(db, {
-                        contract_id: contractId,
-                        enabled: true,
-                        target_ttl_ledgers: targetTTL,
-                        extend_when_below_ledgers: threshold,
-                        keypair_public: kp.publicKey(),
-                        keypair_source: keypairSource!,
-                    });
+                    if (options.entryType) {
+                        // Set type-specific override
+                        setEntryTypePolicy(db, contractId, options.entryType, {
+                            target_ttl_ledgers: targetTTL,
+                            extend_when_below_ledgers: threshold,
+                        });
+                        console.log(chalk.green(`\nAuto-extension enabled for ${contract.name ?? formatContractID(contractId)} (${options.entryType})`));
+                    } else {
+                        // Set contract-level default
+                        upsertExtensionPolicy(db, {
+                            contract_id: contractId,
+                            enabled: true,
+                            target_ttl_ledgers: targetTTL,
+                            extend_when_below_ledgers: threshold,
+                            keypair_public: kp.publicKey(),
+                            keypair_source: keypairSource!,
+                        });
+                        console.log(chalk.green(`\nAuto-extension enabled for ${contract.name ?? formatContractID(contractId)}`));
+                    }
 
-                    console.log(chalk.green(`\nAuto-extension enabled for ${contract.name ?? formatContractID(contractId)}`));
                     console.log(`  Target TTL:  ${targetTTL.toLocaleString()} ledgers (${formatTimeToCloseLedger(targetTTL)})`);
                     console.log(`  Threshold:   ${threshold.toLocaleString()} ledgers (${formatTimeToCloseLedger(threshold)})`);
                     console.log(`  Funded by:   ${kp.publicKey().slice(0, 8)}...${kp.publicKey().slice(-4)}`);

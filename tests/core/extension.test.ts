@@ -8,6 +8,7 @@ import {
     getEntriesForContract,
     recordExtension,
     getExtensionHistory,
+    setEntryTypePolicy,
 } from "../../src/db/repositories.js";
 
 // ─── Mock RPC client ────────────────────────────────────────────────────────
@@ -811,4 +812,352 @@ describe("Core Extension Logic", () => {
             expect(anomaly!.is_anomaly).toBe(1);
         });
     });
+
+    describe("runAutoExtensions — per-entry-type policy resolution", () => {
+        it("uses instance override for instance entries", async () => {
+            const contractId = seedContract(db);
+
+            // Set contract default: target=1000
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 1000,
+                extend_when_below_ledgers: 100,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            // Set instance override: target=2000
+            setEntryTypePolicy(db, contractId, "instance", {
+                target_ttl_ledgers: 2000,
+                extend_when_below_ledgers: 300,
+            });
+
+            // Instance entry with low TTL
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                live_until_ledger: 2400500, // remaining = 500, below 300 threshold
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "instance-override-tx",
+                ledger: 2400100,
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [{
+                    entryKeyXdr: "instance-key-xdr",
+                    latestLedger: 2400100,
+                    liveUntilLedgerSeq: 2502100,
+                    lastModifiedLedgerSeq: 2400100,
+                    remainingTTL: 2000,
+                }],
+            });
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            // Should have extended with instance override target (2000)
+            expect(result.contractsExtended).toBe(1);
+            expect(result.extensions[0]!.txHash).toBe("instance-override-tx");
+
+            // Verify entry was extended to the override target
+            const updatedEntries = getEntriesForContract(db, contractId);
+            const instanceEntry = updatedEntries.find(e => e.entry_key_xdr === "instance-key-xdr");
+            expect(instanceEntry?.live_until_ledger).toBe(2502100);
+        });
+
+        it("uses persistent override for persistent entries", async () => {
+            const contractId = seedContract(db);
+
+            // Set contract default: target=1000
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 1000,
+                extend_when_below_ledgers: 100,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            // Set persistent override: target=500
+            setEntryTypePolicy(db, contractId, "persistent", {
+                target_ttl_ledgers: 500,
+                extend_when_below_ledgers: 50,
+            });
+
+            // Persistent entry with low TTL
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "persistent-key-xdr",
+                entry_type: "persistent",
+                live_until_ledger: 2400075, // remaining = 75, below 50 threshold
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "persistent-override-tx",
+                ledger: 2400100,
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [{
+                    entryKeyXdr: "persistent-key-xdr",
+                    latestLedger: 2400100,
+                    liveUntilLedgerSeq: 2400600,
+                    lastModifiedLedgerSeq: 2400100,
+                    remainingTTL: 500,
+                }],
+            });
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            expect(result.contractsExtended).toBe(1);
+            expect(result.extensions[0]!.txHash).toBe("persistent-override-tx");
+        });
+
+        it("falls back to contract default for entry types without override", async () => {
+            const contractId = seedContract(db);
+
+            // Set contract default: target=1000
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 1000,
+                extend_when_below_ledgers: 100,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            // Set instance override ONLY
+            setEntryTypePolicy(db, contractId, "instance", {
+                target_ttl_ledgers: 2000,
+                extend_when_below_ledgers: 300,
+            });
+
+            // Add a wasm entry (no override, should use contract default)
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "wasm-key-xdr",
+                entry_type: "wasm",
+                live_until_ledger: 2400050, // remaining = 50, below 100 threshold
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "wasm-default-tx",
+                ledger: 2400100,
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [{
+                    entryKeyXdr: "wasm-key-xdr",
+                    latestLedger: 2400100,
+                    liveUntilLedgerSeq: 2401100,
+                    lastModifiedLedgerSeq: 2400100,
+                    remainingTTL: 1000,
+                }],
+            });
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            expect(result.contractsExtended).toBe(1);
+            // Wasm should be extended to contract default (1000), not instance override (2000)
+            expect(result.extensions[0]!.txHash).toBe("wasm-default-tx");
+        });
+
+        it("does not extend entry when type override says extend_when_below is not met", async () => {
+            const contractId = seedContract(db);
+
+            // Set contract default
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 1000,
+                extend_when_below_ledgers: 100,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            // Set persistent override with HIGH threshold (1000)
+            setEntryTypePolicy(db, contractId, "persistent", {
+                target_ttl_ledgers: 500,
+                extend_when_below_ledgers: 1000,
+            });
+
+            // Persistent entry with TTL above override threshold
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "persistent-key-xdr",
+                entry_type: "persistent",
+                live_until_ledger: 2401500, // remaining = 1500, NOT below 1000 threshold
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            // Should NOT extend because TTL is above override threshold
+            expect(result.contractsExtended).toBe(0);
+            expect(mockSubmitExtension).not.toHaveBeenCalled();
+        });
+
+        it("rate limiting applies per-contract not per-policy-row", async () => {
+            const contractId = seedContract(db);
+
+            // Set contract default
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 1000,
+                extend_when_below_ledgers: 100,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            // Set type overrides for both instance and wasm
+            setEntryTypePolicy(db, contractId, "instance", {
+                target_ttl_ledgers: 2000,
+                extend_when_below_ledgers: 300,
+            });
+            setEntryTypePolicy(db, contractId, "wasm", {
+                target_ttl_ledgers: 3000,
+                extend_when_below_ledgers: 400,
+            });
+
+            // Add both entry types with low TTLs
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                live_until_ledger: 2400200,
+            });
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "wasm-key-xdr",
+                entry_type: "wasm",
+                live_until_ledger: 2400200,
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            // Mock rate limit: simulate 5 extensions already made in last hour
+            db.prepare(`
+                INSERT INTO extension_history (
+                    contract_id, contract_entry_id, old_ttl_ledgers, new_ttl_ledgers,
+                    tx_hash, executed_at_ledger, executed_at
+                ) VALUES
+                (?, 1, 100, 1000, 'h1', 100, datetime('now', '-30 minutes')),
+                (?, 1, 100, 1000, 'h2', 100, datetime('now', '-30 minutes')),
+                (?, 1, 100, 1000, 'h3', 100, datetime('now', '-30 minutes')),
+                (?, 1, 100, 1000, 'h4', 100, datetime('now', '-30 minutes')),
+                (?, 1, 100, 1000, 'h5', 100, datetime('now', '-30 minutes'))
+            `).run(contractId, contractId, contractId, contractId, contractId);
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            // Rate limit should block ALL entries for this contract, not just one type
+            expect(result.contractsExtended).toBe(0);
+            expect(result.errors.length).toBeGreaterThan(0);
+            expect(result.errors[0]).toContain("rate limit");
+            expect(mockSubmitExtension).not.toHaveBeenCalled();
+        });
+
+        it("instance and wasm entries with different overrides both extended correctly", async () => {
+            const contractId = seedContract(db);
+
+            // Set contract default
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 1000,
+                extend_when_below_ledgers: 100,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            // Set instance override: target=2000
+            setEntryTypePolicy(db, contractId, "instance", {
+                target_ttl_ledgers: 2000,
+                extend_when_below_ledgers: 300,
+            });
+
+            // Set wasm override: target=3000
+            setEntryTypePolicy(db, contractId, "wasm", {
+                target_ttl_ledgers: 3000,
+                extend_when_below_ledgers: 400,
+            });
+
+            // Update entries to be below their respective overrides
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                live_until_ledger: 2400200, // below 300
+            });
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "wasm-key-xdr",
+                entry_type: "wasm",
+                live_until_ledger: 2400350, // below 400
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+
+            let callCount = 0;
+            mockSubmitExtension.mockImplementation(async (keys: string[]) => {
+                callCount++;
+                return {
+                    success: true,
+                    txHash: `tx-${callCount}`,
+                    ledger: 2400100,
+                };
+            });
+
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [
+                    {
+                        entryKeyXdr: "instance-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2402100, // extended to 2000 from 2400100
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 2000,
+                    },
+                    {
+                        entryKeyXdr: "wasm-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2403100, // extended to 3000 from 2400100
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 3000,
+                    },
+                ],
+            });
+
+            const result = await runAutoExtensions(db, "testnet");
+
+            expect(result.contractsExtended).toBe(1);
+            expect(result.entriesExtended).toBe(2);
+
+            // Verify entries were extended to their respective override targets
+            const entries = getEntriesForContract(db, contractId);
+            const instanceEntry = entries.find(e => e.entry_key_xdr === "instance-key-xdr");
+            const wasmEntry = entries.find(e => e.entry_key_xdr === "wasm-key-xdr");
+
+            expect(instanceEntry?.live_until_ledger).toBe(2402100);
+            expect(wasmEntry?.live_until_ledger).toBe(2403100);
+        });
+    });
 });
+
