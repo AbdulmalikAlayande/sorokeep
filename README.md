@@ -244,6 +244,7 @@ sorokeep guard <contract-id> [options]
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `--preset <name>` | Named policy preset: `conservative`, `balanced`, or `aggressive`. Mutually exclusive with `--target-ttl` and `--threshold`. | — |
 | `--target-ttl <ledgers>` | TTL to extend entries to | `100000` |
 | `--threshold <ledgers>` | Extend when TTL drops below this | `20000` |
 | `--keypair <secret>` | Stellar secret key (for one-time extension) | — |
@@ -252,20 +253,43 @@ sorokeep guard <contract-id> [options]
 | `--dry-run` | Simulate extension and show estimated fee | — |
 | `--disable` | Disable auto-extension for this contract | — |
 
+#### Extension Policy Presets
+
+Rather than picking raw ledger numbers, you can use `--preset` to choose a named policy. Each preset is a fixed, documented `target-ttl` / `threshold` pair:
+
+| Preset | Target TTL | Threshold | Safety Margin | Cost | Best For |
+|--------|-----------|-----------|---------------|------|----------|
+| `conservative` | 518,400 (~30 days) | 103,680 (~6 days) | Wide — 6-day buffer | Higher — fewer but larger intervals | Production contracts where downtime is unacceptable |
+| `balanced` | 100,000 (~5.8 days) | 20,000 (~1.2 days) | Medium | Moderate | Staging and most mainnet contracts |
+| `aggressive` | 51,840 (~3 days) | 8,640 (~12 hours) | Narrow — 12-hour buffer | Lower — more frequent, smaller extensions | Testnet and actively monitored contracts where cost matters |
+
+**How to choose:**
+
+- **conservative** — Maximum safety. Extends TTL to 30 days and triggers 6 days before expiry. Best for production contracts where you cannot afford an archival event. Tolerates several days of daemon downtime or RPC outages without risk.
+- **balanced** — Matches the historical defaults. A good middle ground for most contracts. Suitable for staging environments and non-critical production deployments.
+- **aggressive** — Minimizes extension cost. Extends to only 3 days and triggers 12 hours before expiry. Only suitable if you are actively monitoring the contract and the daemon is reliably running. Not recommended for production without additional alerting.
+
+`--preset` and explicit `--target-ttl` / `--threshold` are **mutually exclusive**. Passing both will result in an error.
+
 **Usage modes:**
 
 ```bash
 # Check current policy
 sorokeep guard <contract-id>
 
+# Use a preset — no need to specify individual TTL values
+sorokeep guard <contract-id> --preset conservative --keypair-env STELLAR_SECRET_KEY --auto-extend
+sorokeep guard <contract-id> --preset balanced --keypair-env STELLAR_SECRET_KEY --auto-extend
+sorokeep guard <contract-id> --preset aggressive --keypair-env STELLAR_SECRET_KEY --auto-extend
+
 # Dry run — see estimated fee without submitting
 sorokeep guard <contract-id> --keypair S... --dry-run
 
-# One-time immediate extension
-sorokeep guard <contract-id> --keypair S...
+# One-time immediate extension with custom values
+sorokeep guard <contract-id> --keypair S... --target-ttl 200000 --threshold 30000
 
-# Enable auto-extension for the daemon
-sorokeep guard <contract-id> --keypair-env STELLAR_SECRET_KEY --auto-extend
+# Enable auto-extension for the daemon with custom values
+sorokeep guard <contract-id> --keypair-env STELLAR_SECRET_KEY --auto-extend --target-ttl 100000 --threshold 20000
 
 # Disable auto-extension
 sorokeep guard <contract-id> --disable

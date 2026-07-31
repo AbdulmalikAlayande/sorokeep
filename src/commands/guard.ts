@@ -6,6 +6,7 @@ import { getContract, getEntriesForContract, upsertExtensionPolicy, getExtension
 import { simulateExtension, extendEntries, resolveSecretKey } from "../core/extension.js";
 import { formatContractID, formatTimeToCloseLedger, formatBytes, formatCpuInsns } from "../utils/formatting.js";
 import { getLogger } from "../logging/index.js";
+import { getPreset, PRESET_NAMES } from "../core/guard-presets.js";
 
 const logger = getLogger().child({ component: "GuardCommand" });
 
@@ -13,8 +14,12 @@ export function registerGuardCommand(program: Command): void {
     program
         .command("guard <contractId>")
         .description("Configure auto-extension policy for a contract")
-        .option("--target-ttl <ledgers>", "Target TTL in ledgers after extension", "100000")
-        .option("--threshold <ledgers>", "Extend when TTL drops below this many ledgers", "20000")
+        .option(
+            "--preset <name>",
+            `Use a named policy preset (${PRESET_NAMES.join(" | ")}). Mutually exclusive with --target-ttl and --threshold.`,
+        )
+        .option("--target-ttl <ledgers>", "Target TTL in ledgers after extension")
+        .option("--threshold <ledgers>", "Extend when TTL drops below this many ledgers")
         .option("--keypair <secret>", "Stellar secret key for signing extension transactions")
         .option("--keypair-env <var>", "Environment variable containing the secret key")
         .option("--keypair-vault <path>", "HashiCorp Vault secret path (e.g. secret/data/stellar/mykey)")
@@ -31,6 +36,56 @@ export function registerGuardCommand(program: Command): void {
                     process.exit(1);
                 }
 
+                // ── Preset resolution ──────────────────────────────────────────────
+                // When --preset is supplied it owns the TTL values.
+                // Mixing it with explicit --target-ttl or --threshold is an error
+                // because the intent is ambiguous.
+                if (options.preset !== undefined) {
+                    const preset = getPreset(options.preset);
+                    if (!preset) {
+                        console.error(
+                            chalk.red(
+                                `Unknown preset "${options.preset}". Valid presets: ${PRESET_NAMES.join(", ")}`,
+                            ),
+                        );
+                        process.exit(1);
+                    }
+
+                    // Reject explicit --target-ttl alongside --preset.
+                    // options.targetTtl is undefined when the flag was not passed
+                    // (defaults were removed from .option() so undefined means "not set").
+                    // _explicitTargetTtl is a test-only sentinel used in unit tests
+                    // where options are constructed directly (not via parseAsync).
+                    if (options.targetTtl !== undefined || options._explicitTargetTtl) {
+                        console.error(
+                            chalk.red(
+                                "--preset and --target-ttl are mutually exclusive. " +
+                                "Use --preset to pick a named policy or --target-ttl to set a custom value, not both.",
+                            ),
+                        );
+                        process.exit(1);
+                    }
+
+                    // Reject explicit --threshold alongside --preset.
+                    if (options.threshold !== undefined || options._explicitThreshold) {
+                        console.error(
+                            chalk.red(
+                                "--preset and --threshold are mutually exclusive. " +
+                                "Use --preset to pick a named policy or --threshold to set a custom value, not both.",
+                            ),
+                        );
+                        process.exit(1);
+                    }
+
+                    // Override option values with the preset's fixed constants
+                    options.targetTtl = String(preset.targetTtl);
+                    options.threshold = String(preset.threshold);
+                }
+
+                // Apply defaults when neither --preset nor explicit flag was given
+                if (options.targetTtl === undefined) options.targetTtl = "100000";
+                if (options.threshold === undefined) options.threshold = "20000";
+
                 const targetTTL = parseInt(options.targetTtl, 10);
                 const threshold = parseInt(options.threshold, 10);
 
@@ -44,10 +99,7 @@ export function registerGuardCommand(program: Command): void {
                      process.exit(1);
                  }
 
-                 console.log("DEBUG: options:", JSON.stringify(options));
-
                  if (threshold >= targetTTL) {
-
                     console.error(chalk.red("--threshold must be less than --target-ttl"));
                     process.exit(1);
                 }
