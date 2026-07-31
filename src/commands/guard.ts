@@ -3,7 +3,8 @@ import chalk from "chalk";
 import ora from "ora";
 import { getDatabase } from "../db/database.js";
 import { getContract, getEntriesForContract, upsertExtensionPolicy, getExtensionPolicy } from "../db/repositories.js";
-import { simulateExtension, extendEntries, resolveSecretKey } from "../core/extension.js";
+import { simulateExtension, extendEntries, resolveSecretKey, groupEntriesBySmartTargetTtl, DEFAULT_SMART_TTL_BOUNDS } from "../core/extension.js";
+import { StellarRpcClient } from "../rpc/client.js";
 import { formatContractID, formatTimeToCloseLedger, formatBytes, formatCpuInsns } from "../utils/formatting.js";
 import { getLogger } from "../logging/index.js";
 
@@ -21,6 +22,12 @@ export function registerGuardCommand(program: Command): void {
         .option("--auto-extend", "Enable auto-extension (the daemon will extend automatically)")
         .option("--dry-run", "Simulate the extension without submitting")
         .option("--disable", "Disable auto-extension for this contract")
+        .option(
+            "--smart-ttl",
+            "Scale --target-ttl by observed entry access frequency (last_modified_ledger staleness): " +
+            "cold entries get a higher effective target, hot entries stay within bounds. " +
+            "Applies to dry-run simulation and one-time manual extension.",
+        )
         .action(async (contractId: string, options) => {
             try {
                 const db = getDatabase();
@@ -130,6 +137,31 @@ export function registerGuardCommand(program: Command): void {
                      const { Keypair } = await import("@stellar/stellar-sdk");
                      const kp = Keypair.fromSecret(secretKey);
 
+                     if (options.smartTtl) {
+                         spinner.stop();
+                         const client = new StellarRpcClient(contract.network);
+                         const currentLedger = await client.getCurrentLedger();
+                         const groups = groupEntriesBySmartTargetTtl(
+                             entries,
+                             targetTTL,
+                             currentLedger,
+                             DEFAULT_SMART_TTL_BOUNDS,
+                         );
+
+                         console.log(chalk.dim(`\n  --smart-ttl: ${groups.size} distinct target(s) across ${entries.length} entries (baseline ${targetTTL.toLocaleString()}):`));
+
+                         for (const [smartTarget, entryKeys] of groups) {
+                             const groupSpinner = ora(`Simulating ${entryKeys.length} entries at target ${smartTarget.toLocaleString()}...`).start();
+                             const result = await simulateExtension(db, contractId, entryKeys, smartTarget, kp.publicKey());
+                             if (result?.success) {
+                                 groupSpinner.succeed(chalk.green(`Target ${smartTarget.toLocaleString()}: ${entryKeys.length} entries, est. fee ${(result.estimatedFee! / 10_000_000).toFixed(7)} XLM`));
+                             } else {
+                                 groupSpinner.fail(chalk.red(`Target ${smartTarget.toLocaleString()}: simulation failed — ${result.error}`));
+                             }
+                         }
+                         return;
+                     }
+
                      const result = await simulateExtension(
                          db,
                          contractId,
@@ -167,6 +199,35 @@ export function registerGuardCommand(program: Command): void {
                     }
 
                     const spinner = ora("Extending TTL...").start();
+
+                    if (options.smartTtl) {
+                        spinner.stop();
+                        const client = new StellarRpcClient(contract.network);
+                        const currentLedger = await client.getCurrentLedger();
+                        const groups = groupEntriesBySmartTargetTtl(
+                            entries,
+                            targetTTL,
+                            currentLedger,
+                            DEFAULT_SMART_TTL_BOUNDS,
+                        );
+
+                        console.log(chalk.dim(`\n  --smart-ttl: ${groups.size} distinct target(s) across ${entries.length} entries (baseline ${targetTTL.toLocaleString()}):`));
+
+                        let anyFailed = false;
+                        for (const [smartTarget, entryKeys] of groups) {
+                            const groupSpinner = ora(`Extending ${entryKeys.length} entries to target ${smartTarget.toLocaleString()}...`).start();
+                            const result = await extendEntries(db, contractId, entryKeys, smartTarget, secretKey);
+                            if (result.success) {
+                                groupSpinner.succeed(chalk.green(`Target ${smartTarget.toLocaleString()}: ${entryKeys.length} entries extended (tx ${result.txHash})`));
+                            } else {
+                                groupSpinner.fail(chalk.red(`Target ${smartTarget.toLocaleString()}: extension failed — ${result.error}`));
+                                anyFailed = true;
+                            }
+                        }
+                        if (anyFailed) process.exit(1);
+                        return;
+                    }
+
                     const result = await extendEntries(
                         db,
                         contractId,

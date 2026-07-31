@@ -23,6 +23,149 @@ import { loadConfig } from "../utils/config.js";
 
 const logger = getLogger().child({ component: "Extension" });
 
+// ─── Smart TTL (issue #502) ────────────────────────────────────────────────
+//
+// A fixed target_ttl_ledgers treats a hot, frequently-written entry the same
+// as a cold one that's barely touched. Frequently-written entries get their
+// TTL bumped by on-chain writes anyway, so sorokeep's extension budget is
+// best spent on entries that *don't* get that free bump.
+//
+// Signal: `contract_entries.last_modified_ledger` (already populated by
+// monitor.ts) vs. the current ledger. A large gap means the entry has gone
+// a long time without an on-chain write — a proxy for "cold". This uses a
+// single observed delta rather than a multi-sample history table, since
+// scope for this issue is deliberately limited to reading
+// `last_modified_ledger` as-is (no new schema / repositories.ts changes) —
+// see the "Design note" in the PR description for the sibling-history-table
+// alternative that was considered and left out of scope.
+//
+// The scoring is a simple, inspectable linear interpolation — not ML:
+//   staleness <= hotThresholdLedgers  -> baseline (clamped to bounds)
+//   staleness >= coldThresholdLedgers -> ceilingLedgers
+//   in between                        -> linear ramp from baseline to ceiling
+//
+// `floorLedgers` is an explicit safety floor: no matter what the scoring
+// computes, the result is never allowed below it.
+
+export interface SmartTtlBounds {
+    /** Hard safety floor. The computed target TTL can never go below this,
+     *  regardless of how "hot" an entry looks. */
+    floorLedgers: number;
+    /** Ceiling a fully "cold" entry can be scaled up to. */
+    ceilingLedgers: number;
+    /** Staleness (in ledgers since last_modified_ledger) at or below which
+     *  an entry is considered "hot" — no upward adjustment applied. */
+    hotThresholdLedgers: number;
+    /** Staleness at or above which an entry is considered fully "cold" —
+     *  scaled all the way up to `ceilingLedgers`. */
+    coldThresholdLedgers: number;
+}
+
+/**
+ * Default smart-TTL bounds. `floorLedgers` matches a conservative one-day
+ * safety margin (assuming ~5s ledgers, ~17280 ledgers/day) so smart-ttl can
+ * never compute a target TTL an operator would consider unsafely short.
+ */
+export const DEFAULT_SMART_TTL_BOUNDS: SmartTtlBounds = {
+    floorLedgers: 17_280,
+    ceilingLedgers: 500_000,
+    hotThresholdLedgers: 17_280,
+    coldThresholdLedgers: 259_200,
+};
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Computes the smart-ttl-adjusted target TTL for a single entry.
+ *
+ * Pure function — no I/O, no DB access — so it's directly unit-testable and
+ * safe to call from both the `guard --smart-ttl` CLI path and (in future)
+ * the auto-extension daemon path without any side effects.
+ *
+ * @param baselineTargetTtlLedgers - The target TTL that would apply without
+ *   smart-ttl (e.g. from `extension_policies.target_ttl_ledgers`, or an
+ *   already per-entry-type-adjusted value from the sibling policy feature —
+ *   smart-ttl only ever scales this baseline, it never replaces it).
+ * @param lastModifiedLedger - The entry's `last_modified_ledger`, or `null`
+ *   if never observed. `null` is treated as "no signal" and returns the
+ *   baseline (clamped to bounds) rather than assuming maximal coldness,
+ *   since a missing value isn't evidence either way.
+ * @param currentLedger - The current ledger sequence, used to derive the
+ *   staleness delta.
+ * @param bounds - Configurable bounds; defaults to `DEFAULT_SMART_TTL_BOUNDS`.
+ */
+export function computeSmartTargetTtl(
+    baselineTargetTtlLedgers: number,
+    lastModifiedLedger: number | null | undefined,
+    currentLedger: number,
+    bounds: SmartTtlBounds = DEFAULT_SMART_TTL_BOUNDS,
+): number {
+    const floor = Math.max(0, bounds.floorLedgers);
+    const ceiling = Math.max(floor, bounds.ceilingLedgers);
+    const baseline = clamp(Math.round(baselineTargetTtlLedgers), floor, ceiling);
+
+    if (lastModifiedLedger == null || currentLedger <= lastModifiedLedger) {
+        // No signal, or the entry was just modified this instant — hottest
+        // possible case. Use the baseline as-is (still floor-clamped).
+        return baseline;
+    }
+
+    const staleness = currentLedger - lastModifiedLedger;
+    const hot = Math.max(0, bounds.hotThresholdLedgers);
+    const cold = Math.max(hot + 1, bounds.coldThresholdLedgers); // avoid div-by-zero
+
+    const t = clamp((staleness - hot) / (cold - hot), 0, 1);
+    const scaled = baseline + t * (ceiling - baseline);
+
+    return Math.max(floor, Math.round(scaled));
+}
+
+/** A `contract_entries` row's minimal shape needed for smart-ttl scoring. */
+export interface SmartTtlEntryInput {
+    entry_key_xdr: string;
+    last_modified_ledger: number | null;
+}
+
+/**
+ * Groups entries by their smart-ttl-adjusted target, rounded to the nearest
+ * `roundToLedgers` so callers issue one extension transaction per distinct
+ * target rather than one per entry. Rounding is a pragmatic batching
+ * concession, not part of the scoring math itself.
+ */
+export function groupEntriesBySmartTargetTtl(
+    entries: SmartTtlEntryInput[],
+    baselineTargetTtlLedgers: number,
+    currentLedger: number,
+    bounds: SmartTtlBounds = DEFAULT_SMART_TTL_BOUNDS,
+    roundToLedgers = 1_000,
+): Map<number, string[]> {
+    const groups = new Map<number, string[]>();
+
+    for (const entry of entries) {
+        const raw = computeSmartTargetTtl(
+            baselineTargetTtlLedgers,
+            entry.last_modified_ledger,
+            currentLedger,
+            bounds,
+        );
+        const rounded = Math.max(
+            bounds.floorLedgers,
+            Math.round(raw / roundToLedgers) * roundToLedgers,
+        );
+
+        const bucket = groups.get(rounded);
+        if (bucket) {
+            bucket.push(entry.entry_key_xdr);
+        } else {
+            groups.set(rounded, [entry.entry_key_xdr]);
+        }
+    }
+
+    return groups;
+}
+
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
 
