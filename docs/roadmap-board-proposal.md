@@ -4,7 +4,7 @@
 
 Create a GitHub Projects (v2) board for `AbdulmalikAlayande/sorokeep` that surfaces
 all `phase-*`-labeled issues in a single grouped view, giving contributors and
-maintainers an at-a-glance picture of progress across 15 phases (~300 issues).
+maintainers an at-a-glance picture of progress across 15 phases.
 
 ---
 
@@ -45,7 +45,7 @@ maintainers an at-a-glance picture of progress across 15 phases (~300 issues).
 3. **Field name:** `Phase` — add an option for each phase label (`phase-1` through `phase-15`), matching the label names.
 4. Rename the default view tab to **"By Phase"**.
 5. Click the **Group by** dropdown (top right of the board) and select **Phase**.
-6. In the **Sort** dropdown, select **Phase** → the field's defined order (add options in `phase-1` → `phase-15` sequence so numeric phase ordering is preserved).
+6. In the **Sort** dropdown, select **Label name** → **A → Z** (so phases appear in natural order).
 7. Add a **filter** to only show issues with `phase-*` labels: click the filter bar and enter `has:label,phase-`.
 8. The board will now show columns for each phase option.
 
@@ -72,7 +72,7 @@ with GitHub Actions).
 2. Click **Add workflow** → select **"Auto-add to project"**.
 3. Configure the trigger:
    - **Repository:** `AbdulmalikAlayande/sorokeep`
-   - **Filters:** `is:issue label:phase-1,phase-2,phase-3,phase-4,phase-5,phase-6,phase-7,phase-8,phase-9,phase-10,phase-11,phase-12,phase-13,phase-14,phase-15`
+   - **Filters:** Issues with any `phase-*` label (e.g. enter `label:phase-1` or use the label filter criteria to match all 15 phase labels)
    - **Action:** Add the issue to this project.
 4. Click **Save** and enable the workflow.
 

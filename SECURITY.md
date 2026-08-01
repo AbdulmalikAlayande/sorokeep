@@ -55,3 +55,7 @@ These are the invariants any PR touching secret-key code paths must preserve:
 4. Transaction simulation (via RPC `simulateTransaction`) happens before submission for both extension and restore operations — never submit blind.
 
 If a PR changes any code path touching secret keys or transaction submission, call this out explicitly in the PR description so reviewers know to scrutinize it.
+
+## Postmortem Template
+
+After any security incident involving sorokeep (secret-key leak, webhook bypass, RPC trust-boundary abuse, etc.), file a postmortem using the [incident postmortem template](docs/postmortem-template.md). The template includes sorokeep-specific diagnostic prompts for daemon logs, alert history, and cost analysis.
