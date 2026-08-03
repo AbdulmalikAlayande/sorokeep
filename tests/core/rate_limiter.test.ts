@@ -91,14 +91,14 @@ function insertRecentExtensions(
     entryId: number,
     n: number,
 ): void {
-    const now = new Date().toISOString();
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     for (let i = 0; i < n; i++) {
         db.prepare(`
             INSERT INTO extension_history
                 (contract_id, contract_entry_id, old_ttl_ledgers, new_ttl_ledgers,
                  tx_hash, executed_at_ledger, executed_at)
             VALUES (?, ?, 1000, 100000, 'txhash-' || hex(randomblob(4)), 100, ?)
-        `).run(contractId, entryId, now);
+        `).run(contractId, entryId, tenMinutesAgo);
     }
 }
 
