@@ -6,6 +6,7 @@ import {
     getEntriesForContract,
     getExtensionPolicy,
     getChannelAccounts,
+    getAlertConfigsForContract,
     recordExtension,
     upsertEntry,
     updateLastCheckedLedger,
@@ -13,6 +14,7 @@ import {
     getBudget,
     addBudgetSpent,
     countExtensionsInLastHour,
+    getExtensionHistory,
 
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
@@ -20,6 +22,8 @@ import { getLogger } from "../logging/index.js";
 import { formatSecretKey } from "../utils/formatting.js";
 import { VaultResolver } from "./vault.js";
 import { loadConfig } from "../utils/config.js";
+import { deliverSingleAlert } from "../alerts/dispatcher.js";
+import { buildAlertEvent } from "../alerts/types.js";
 
 const logger = getLogger().child({ component: "Extension" });
 
@@ -31,6 +35,25 @@ const logger = getLogger().child({ component: "Extension" });
  * Prevents runaway fee submissions under extreme network load (issue #142).
  */
 export const HOURLY_RATE_LIMIT = 5;
+
+/**
+ * Minimum time (in milliseconds) that must pass between two consecutive
+ * extensions of the same contract entry.  Prevents the same entry being
+ * extended twice in quick succession when the threshold is very tight
+ * relative to the target TTL.
+ *
+ * Default 5 minutes — slightly below the typical polling interval so it
+ * does not interfere with normal operation.
+ */
+export const EXTENSION_COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
+ * Minimum XLM balance a channel account must hold before Sorokeep will submit
+ * an extension transaction through it.  Covers the base reserve (1 XLM) plus
+ * a safety margin for transaction fees.  Accounts below this threshold are
+ * skipped and an alert is fired rather than attempting a failing transaction.
+ */
+export const MINIMUM_BALANCE_XLM = 5;
 
 /**
  * Check whether the given contract has reached its hourly auto-extension rate limit.
@@ -358,6 +381,44 @@ export async function runAutoExtensions(
                 return;
             }
 
+            // ── Cooldown check per entry (issue #510) ──────────────────────
+            // Filter out entries that were extended within the cooldown window
+            // to prevent redundant back-to-back extensions of the same entry.
+            const recentHistory = getExtensionHistory(db, contract.id, 1);
+            const lastExtendedAt = new Map<number, Date>();
+            for (const record of recentHistory) {
+                const entryId = record.contract_entry_id;
+                // executed_at is stored as UTC (SQLite CURRENT_TIMESTAMP); append
+                // "Z" so the timestamp is parsed as UTC regardless of the host
+                // machine's timezone.
+                const executedAt = new Date(record.executed_at + "Z");
+                const existing = lastExtendedAt.get(entryId);
+                if (!existing || executedAt > existing) {
+                    lastExtendedAt.set(entryId, executedAt);
+                }
+            }
+
+            const cooldownEligible = needsExtension.filter(e => {
+                const lastExt = lastExtendedAt.get(e.id);
+                if (!lastExt) return true; // never extended → eligible
+                const elapsed = Date.now() - lastExt.getTime();
+                if (elapsed < EXTENSION_COOLDOWN_MS) {
+                    logger.info(
+                        `Entry ${e.entry_key_xdr} for ${contract.id} was extended ` +
+                        `${Math.round(elapsed / 1000)}s ago — skipping (cooldown: ${EXTENSION_COOLDOWN_MS / 1000}s)`,
+                    );
+                    return false;
+                }
+                return true;
+            });
+
+            if (cooldownEligible.length === 0) {
+                logger.info(
+                    `All ${needsExtension.length} entries for ${contract.id} are within cooldown — skipping`,
+                );
+                return;
+            }
+
             // Resolve secret key: prefer channel pool, fall back to policy keypair
             let secretKey: string | null = null;
             let slot: import("./channels.js").ChannelSlot | null = null;
@@ -382,7 +443,65 @@ export async function runAutoExtensions(
                 return;
             }
 
-            const entryKeys = needsExtension.map(e => e.entry_key_xdr);
+            // ── Minimum-balance check (issue #504) ──────────────────────────
+            // If using a channel account, verify it has enough XLM to cover the
+            // transaction fee and base reserve before attempting submission.
+            if (slot) {
+                const accounts = getChannelAccounts(db, network);
+                const channelAccount = accounts.find(a => a.public_key === slot!.publicKey);
+                const balance = channelAccount?.balance_xlm;
+
+                if (balance === null || balance === undefined) {
+                    const msg = `Contract ${contract.id}: Channel account ${slot.publicKey} balance is unknown — skipping extension. Run 'sorokeep channels list' to refresh balances.`;
+                    logger.warn(msg);
+                    result.errors.push(msg);
+                    pool!.release(slot.publicKey);
+                    return;
+                }
+
+                if (balance < MINIMUM_BALANCE_XLM) {
+                    const msg = `Contract ${contract.id}: Channel account ${slot.publicKey} balance ${balance} XLM is below minimum ${MINIMUM_BALANCE_XLM} XLM — skipping extension.`;
+                    logger.warn(msg);
+                    result.errors.push(msg);
+
+                    // Fire alert through the contract's configured alert channels
+                    // using the first entry that needed extension as context
+                    const sampleEntry = needsExtension[0]!;
+                    const contractRecord = getContract(db, contract.id);
+                    const alertConfigs = getAlertConfigsForContract(db, contract.id);
+                    for (const config of alertConfigs) {
+                        const event = buildAlertEvent({
+                            type: "threshold_crossed",
+                            contractId: contract.id,
+                            contractName: contractRecord?.name ?? null,
+                            network,
+                            entryKeyXdr: sampleEntry.entry_key_xdr,
+                            entryType: sampleEntry.entry_type,
+                            entryLabel: sampleEntry.label,
+                            configuredLedgers: MINIMUM_BALANCE_XLM,
+                            remainingTTL: sampleEntry.live_until_ledger
+                                ? Math.max(0, sampleEntry.live_until_ledger - latestLedger)
+                                : 0,
+                            firedAtLedger: latestLedger,
+                        });
+                        deliverSingleAlert(
+                            config.channel_type,
+                            config.channel_target,
+                            event,
+                            config.webhook_secret,
+                        ).catch((err: unknown) => {
+                            logger.warn(
+                                `Low-balance alert delivery failed for channel ${config.channel_type}: ${err instanceof Error ? err.message : String(err)}`,
+                            );
+                        });
+                    }
+
+                    pool!.release(slot.publicKey);
+                    return;
+                }
+            }
+
+            const entryKeys = cooldownEligible.map(e => e.entry_key_xdr);
 
             logger.info(
                 `Auto-extending ${entryKeys.length} entries for ${contract.id} ` +
