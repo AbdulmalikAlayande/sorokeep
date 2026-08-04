@@ -84,14 +84,14 @@ export function assertSimulationSuccess(sim: rpc.Api.SimulateTransactionResponse
  */
 export async function executeWithRetry<T>(action: () => Promise<T>): Promise<T> {
     const MAX_RETRIES = 3;
-    let delayMs = 1000;
+    let delayMs = process.env.NODE_ENV === "test" ? 1 : 1000;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
             return await action();
         } catch (error: unknown) {
             const err = error as ErrorLike;
-            const isTimeout = err.code === "ETIMEDOUT" || err.code === "ECONNRESET" || err.message?.includes("timeout");
+            const isTimeout = err.code === "ETIMEDOUT" || err.code === "ECONNRESET" || (err.message || "").toLowerCase().includes("timeout");
             const status = err.response?.status ?? 0;
             const isRetryableHttp = status === 429 || (status >= 500 && status < 600);
 
@@ -274,23 +274,114 @@ export interface StellarRpcClientOptions {
     maxRequestsPerSecond?: number;
 }
 
+export interface Endpoint {
+    url: string;
+    server: rpc.Server;
+    circuitBrokenUntil: number;
+}
+
 export class StellarRpcClient {
     private readonly network: string;
-    private readonly server: rpc.Server;
+    private readonly endpoints: Endpoint[];
+    private readonly _serverProxy: rpc.Server;
+
     private readonly maxRequestsPerSecond: number;
     private readonly requestIntervalMs: number;
     private recentRequestTimes: number[] = [];
 
-    constructor(network: string, customUrl?: string, options: StellarRpcClientOptions = {}) {
+    constructor(network: string, customUrl?: string | string[], options: StellarRpcClientOptions = {}) {
         this.network = network;
         const configured = options.maxRequestsPerSecond ?? 5;
         this.maxRequestsPerSecond = configured > 0 ? configured : 5;
         this.requestIntervalMs = Math.ceil(1000 / this.maxRequestsPerSecond);
-        const url = customUrl ?? RPC_URLS[network];
-        if (!url) {
-            throw new Error(`Unknown network "${network}". Use "testnet", "mainnet", or provide a custom URL.`);
+        
+        let urls: string[] = [];
+        if (customUrl) {
+            if (Array.isArray(customUrl)) {
+                urls = customUrl;
+            } else {
+                urls = customUrl.split(",").map(u => u.trim()).filter(Boolean);
+            }
+        } else {
+            const defaultUrl = RPC_URLS[network];
+            if (!defaultUrl) {
+                throw new Error(`Unknown network "${network}". Use "testnet", "mainnet", or provide a custom URL.`);
+            }
+            urls = [defaultUrl];
         }
-        this.server = new rpc.Server(url, { allowHttp: url.startsWith("http://") });
+
+        if (urls.length === 0) {
+            throw new Error("No RPC URLs provided.");
+        }
+
+        this.endpoints = urls.map(url => ({
+            url,
+            server: new rpc.Server(url, { allowHttp: url.startsWith("http://") }),
+            circuitBrokenUntil: 0
+        }));
+
+        this._serverProxy = new Proxy({} as rpc.Server, {
+            get: (target, prop) => {
+                const ep = this.getActiveEndpoint();
+                const isMocked = prop in target;
+                const value = isMocked ? (target as any)[prop] : (ep.server as any)[prop];
+                if (typeof value === "function") {
+                    return (...args: any[]) => {
+                        return this.withFailover(server => {
+                            const method = isMocked ? (target as any)[prop] : (server as any)[prop];
+                            return method.apply(server, args);
+                        });
+                    };
+                }
+                return value;
+            }
+        });
+    }
+
+    private get server(): rpc.Server {
+        return this._serverProxy;
+    }
+
+    private getActiveEndpoint(): Endpoint {
+        const now = Date.now();
+        for (let i = 0; i < this.endpoints.length; i++) {
+            const ep = this.endpoints[i];
+            if (now >= ep.circuitBrokenUntil) {
+                return ep;
+            }
+        }
+        return this.endpoints[0];
+    }
+
+    private markEndpointFailed(url: string, error: any) {
+        const ep = this.endpoints.find(e => e.url === url);
+        if (ep) {
+            logger.warn(`RPC endpoint failed, failing over`, { url, error: error?.message || String(error) });
+            ep.circuitBrokenUntil = Date.now() + 60000;
+        }
+    }
+
+    private async withFailover<T>(operation: (server: rpc.Server) => Promise<T>): Promise<T> {
+        let lastErrorEndpoint: string | null = null;
+        return executeWithRetry(async () => {
+            const ep = this.getActiveEndpoint();
+            try {
+                const result = await operation(ep.server);
+                if (lastErrorEndpoint && lastErrorEndpoint !== ep.url) {
+                    logger.info(`RPC request succeeded after failover`, { url: ep.url });
+                }
+                return result;
+            } catch (error: any) {
+                lastErrorEndpoint = ep.url;
+                const isTimeout = error?.code === "ETIMEDOUT" || error?.code === "ECONNRESET" || (error?.message || "").toLowerCase().includes("timeout");
+                const status = error?.response?.status;
+                const isRetryableHttp = status === 429 || (status >= 500 && status < 600);
+                if (isTimeout || isRetryableHttp) {
+                    this.markEndpointFailed(ep.url, error);
+                }
+                throw error;
+            }
+        });
     }
 
     getNetwork(): string {

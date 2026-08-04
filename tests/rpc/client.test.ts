@@ -360,19 +360,19 @@ describe("StellarRpcClient", () => {
 
         it("submitExtension handles simulation error (expired sequence number)", async () => {
             const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-seq.com");
-            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "txBadSeq" });
+            simFailClient["endpoints"][0].server.simulateTransaction = vi.fn().mockResolvedValue({ error: "txBadSeq" });
             await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Expired sequence number");
         });
 
         it("submitExtension handles simulation error (insufficient balance)", async () => {
             const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-bal.com");
-            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "txInsufficientBalance" });
+            simFailClient["endpoints"][0].server.simulateTransaction = vi.fn().mockResolvedValue({ error: "txInsufficientBalance" });
             await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Insufficient wallet balance");
         });
 
         it("submitExtension handles simulation error (invalid footprint)", async () => {
             const simFailClient = new StellarRpcClient("testnet", "https://sim-fail-key.com");
-            simFailClient["server"].simulateTransaction = vi.fn().mockResolvedValue({ error: "invalid footprint" });
+            simFailClient["endpoints"][0].server.simulateTransaction = vi.fn().mockResolvedValue({ error: "invalid footprint" });
             await expect(simFailClient.submitExtension([dummyKey], 1000, secretKey)).rejects.toThrow("Invalid footprint key");
         });
 
@@ -396,13 +396,62 @@ describe("StellarRpcClient", () => {
 
         it("pollTransaction handles NOT_FOUND and timeout", async () => {
             const mockClient = new StellarRpcClient("testnet", "https://testnet.stellar.org");
-            mockClient.server.getTransaction = vi.fn().mockResolvedValue({ status: "NOT_FOUND" });
+            mockClient["endpoints"][0].server.getTransaction = vi.fn().mockResolvedValue({ status: "NOT_FOUND" });
             const result = await mockClient["pollTransaction"]("missing", 2, 10);
             expect(result.success).toBe(false);
             expect(result.error).toContain("Transaction polling timed out after 2 attempts");
         });
     });
 
+    describe("RPC Failover and Circuit Breaker", () => {
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it("falls back to the second endpoint when the first fails", async () => {
+            const multiClient = new StellarRpcClient("testnet", "https://timeout.com,https://healthy.com");
+            const promise = multiClient.checkHealth();
+            await vi.runAllTimersAsync();
+            const health = await promise;
+            expect(health.status).toBe("healthy");
+        });
+
+        it("temporarily skips a repeatedly failing endpoint (circuit breaker)", async () => {
+            const multiClient = new StellarRpcClient("testnet", "https://timeout.com,https://healthy.com");
+            
+            // First call fails over to healthy.com
+            const promise1 = multiClient.checkHealth();
+            await vi.runAllTimersAsync();
+            await promise1;
+            
+            // Second call should skip timeout.com and go straight to healthy.com
+            const endpoints = (multiClient as any).endpoints;
+            expect(endpoints).toBeDefined();
+            
+            const spyFirst = vi.spyOn(endpoints[0].server, "getHealth");
+            const spySecond = vi.spyOn(endpoints[1].server, "getHealth");
+            
+            const promise2 = multiClient.checkHealth();
+            await vi.runAllTimersAsync();
+            await promise2;
+            
+            expect(spyFirst).not.toHaveBeenCalled();
+            expect(spySecond).toHaveBeenCalledTimes(1);
+            
+            // Fast forward past cooldown (60 seconds)
+            vi.advanceTimersByTime(60000);
+            
+            const promise3 = multiClient.checkHealth().catch(() => {});
+            await vi.runAllTimersAsync();
+            await promise3;
+            
+            expect(spyFirst).toHaveBeenCalled();
+        });
+    });
 
     describe("RPC rate limiting", () => {
         it("does not exceed the configured requests per second", async () => {
@@ -418,7 +467,7 @@ describe("StellarRpcClient", () => {
             };
 
             const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
-            (rateLimitedClient as any).server = server;
+            (rateLimitedClient as any).endpoints[0].server = server;
 
             const requests = [1, 2, 3, 4].map(() => rateLimitedClient.checkHealth());
 
@@ -443,7 +492,7 @@ describe("StellarRpcClient", () => {
             };
 
             const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
-            (rateLimitedClient as any).server = server;
+            (rateLimitedClient as any).endpoints[0].server = server;
 
             const requests = [1, 2, 3, 4].map(() => rateLimitedClient.checkHealth());
 
@@ -472,7 +521,7 @@ describe("StellarRpcClient", () => {
             };
 
             const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 2 });
-            (rateLimitedClient as any).server = server;
+            (rateLimitedClient as any).endpoints[0].server = server;
 
             const requests = [1, 2, 3, 4, 5, 6].map(() => rateLimitedClient.checkHealth());
 
@@ -500,7 +549,7 @@ describe("StellarRpcClient", () => {
             };
 
             const rateLimitedClient = new StellarRpcClient("testnet", undefined, { maxRequestsPerSecond: 1 });
-            (rateLimitedClient as any).server = server;
+            (rateLimitedClient as any).endpoints[0].server = server;
 
             const firstPromise = rateLimitedClient.checkHealth();
             firstPromise.catch(() => {}); // prevent unhandled rejection during runAllTimersAsync
@@ -542,8 +591,8 @@ describe("StellarRpcClient", () => {
         });
 
         it("submitExtension simulates the footprint before assembling and sending", async () => {
-            const simulateSpy = vi.spyOn(client["server"] as any, "simulateTransaction");
-            const sendSpy = vi.spyOn(client["server"] as any, "sendTransaction");
+            const simulateSpy = vi.spyOn(client["endpoints"][0].server as any, "simulateTransaction");
+            const sendSpy = vi.spyOn(client["endpoints"][0].server as any, "sendTransaction");
 
             await client.submitExtension([dummyKey], 100000, secretKey);
 
@@ -563,22 +612,22 @@ describe("StellarRpcClient", () => {
         it("submitExtension returns feeCharged as undefined when not present in result", async () => {
             // Override getTransaction to omit feeCharged
             const mockClient = new StellarRpcClient("testnet", "https://testnet.stellar.org");
-            mockClient["server"].getTransaction = vi.fn().mockResolvedValue({
+            mockClient["endpoints"][0].server.getTransaction = vi.fn().mockResolvedValue({
                 status: "SUCCESS",
                 resultMetaXdr: "mock-result-meta-xdr",
                 // no feeCharged field
             });
-            mockClient["server"].getAccount = vi.fn().mockResolvedValue(
+            mockClient["endpoints"][0].server.getAccount = vi.fn().mockResolvedValue(
                 new (await import("@stellar/stellar-sdk")).Account(
                     Keypair.fromSecret(secretKey).publicKey(), "1"
                 )
             );
-            mockClient["server"].simulateTransaction = vi.fn().mockResolvedValue({
+            mockClient["endpoints"][0].server.simulateTransaction = vi.fn().mockResolvedValue({
                 cost: { cpuInsns: "1000", memBytes: "100" },
                 transactionData: new (await import("@stellar/stellar-sdk")).SorobanDataBuilder().build(),
                 minResourceFee: "100",
             });
-            mockClient["server"].sendTransaction = vi.fn().mockResolvedValue({
+            mockClient["endpoints"][0].server.sendTransaction = vi.fn().mockResolvedValue({
                 status: "PENDING",
                 hash: "tx-no-fee",
             });
