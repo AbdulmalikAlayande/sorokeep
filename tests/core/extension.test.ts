@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import { getDatabaseForTesting } from "../../src/db/database.js";
 import {
     insertContract,
+    insertAlertConfig,
     upsertEntry,
     upsertExtensionPolicy,
     getEntriesForContract,
@@ -877,6 +878,273 @@ describe("Core Extension Logic", () => {
             expect(duration).toBeGreaterThanOrEqual(270);
 
             randomSpy.mockRestore();
+        });
+
+        // =====================================================================
+        // TTL Drift Alerting (issue #495)
+        // =====================================================================
+
+        it("does not fire a drift alert when actual TTL is within tolerance", async () => {
+            const contractId = seedContract(db);
+
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                live_until_ledger: 2410000,
+                discovery_source: "deterministic",
+            });
+
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 100000,
+                extend_when_below_ledgers: 20000,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            insertAlertConfig(db, {
+                contract_id: contractId,
+                channel_type: "webhook",
+                channel_target: "https://example.com/hook",
+                threshold_ledgers: 20000,
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "drift-within-tx",
+                ledger: 2400100,
+            });
+
+            // Actual TTL = 100050 — within 100-ledger tolerance of target 100000
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [{
+                    entryKeyXdr: "instance-key-xdr",
+                    latestLedger: 2400100,
+                    liveUntilLedgerSeq: 2500150,
+                    lastModifiedLedgerSeq: 2400100,
+                    remainingTTL: 100050,
+                }],
+            });
+
+            const mockChannel = { send: vi.fn().mockResolvedValue(undefined) };
+            const result = await runAutoExtensions(db, "testnet", undefined, undefined, 100, { webhook: mockChannel });
+
+            expect(result.contractsExtended).toBe(1);
+            expect(mockChannel.send).not.toHaveBeenCalled();
+            expect(result.extensions[0]!.driftLedgers).toBe(50);
+        });
+
+        it("fires exactly one drift alert per extension when actual TTL exceeds tolerance", async () => {
+            const contractId = seedContract(db);
+
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                live_until_ledger: 2410000,
+                discovery_source: "deterministic",
+            });
+
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 100000,
+                extend_when_below_ledgers: 20000,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            insertAlertConfig(db, {
+                contract_id: contractId,
+                channel_type: "webhook",
+                channel_target: "https://example.com/hook",
+                threshold_ledgers: 20000,
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "drift-outside-tx",
+                ledger: 2400100,
+            });
+
+            // Actual TTL = 98000 — drift = -2000, outside 100-ledger tolerance
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [{
+                    entryKeyXdr: "instance-key-xdr",
+                    latestLedger: 2400100,
+                    liveUntilLedgerSeq: 2498100,
+                    lastModifiedLedgerSeq: 2400100,
+                    remainingTTL: 98000,
+                }],
+            });
+
+            const mockChannel = { send: vi.fn().mockResolvedValue(undefined) };
+            const result = await runAutoExtensions(db, "testnet", undefined, undefined, 100, { webhook: mockChannel });
+
+            expect(result.contractsExtended).toBe(1);
+            expect(result.extensions[0]!.driftLedgers).toBe(-2000);
+            expect(mockChannel.send).toHaveBeenCalledTimes(1);
+            expect(mockChannel.send).toHaveBeenCalledWith(
+                "https://example.com/hook",
+                expect.objectContaining({
+                    type: "ttl_drift",
+                    driftLedgers: -2000,
+                    targetTTLLedgers: 100000,
+                    actualTTLLedgers: 98000,
+                }),
+                null,
+            );
+        });
+
+        it("stores per-entry drift in history and uses largest-absolute-value for the alert", async () => {
+            // Two entries: instance drifts -2000, wasm drifts +500.
+            // The alert should use -2000 (larger absolute), but both rows persist their own drift.
+            const contractId = seedContract(db);
+
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                live_until_ledger: 2410000,
+                discovery_source: "deterministic",
+            });
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "wasm-key-xdr",
+                entry_type: "wasm",
+                live_until_ledger: 2410000,
+                discovery_source: "deterministic",
+            });
+
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 100000,
+                extend_when_below_ledgers: 20000,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            insertAlertConfig(db, {
+                contract_id: contractId,
+                channel_type: "webhook",
+                channel_target: "https://example.com/hook",
+                threshold_ledgers: 20000,
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "mixed-drift-tx",
+                ledger: 2400100,
+            });
+
+            // instance: remainingTTL=98000 → drift=-2000; wasm: remainingTTL=100500 → drift=+500
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [
+                    {
+                        entryKeyXdr: "instance-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2498100,
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 98000,
+                    },
+                    {
+                        entryKeyXdr: "wasm-key-xdr",
+                        latestLedger: 2400100,
+                        liveUntilLedgerSeq: 2500600,
+                        lastModifiedLedgerSeq: 2400100,
+                        remainingTTL: 100500,
+                    },
+                ],
+            });
+
+            const mockChannel = { send: vi.fn().mockResolvedValue(undefined) };
+            const result = await runAutoExtensions(db, "testnet", undefined, undefined, 100, { webhook: mockChannel });
+
+            expect(result.contractsExtended).toBe(1);
+            // Alert uses largest-absolute-value drift (-2000 > +500 in abs terms)
+            expect(result.extensions[0]!.driftLedgers).toBe(-2000);
+            expect(mockChannel.send).toHaveBeenCalledTimes(1);
+            expect(mockChannel.send).toHaveBeenCalledWith(
+                "https://example.com/hook",
+                expect.objectContaining({ type: "ttl_drift", driftLedgers: -2000 }),
+                null,
+            );
+
+            // Both history rows persist their own per-entry drift
+            const history = getExtensionHistory(db, contractId);
+            const instanceRow = history.find(h => h.tx_hash === "mixed-drift-tx" && h.new_ttl_ledgers === 98000);
+            const wasmRow = history.find(h => h.tx_hash === "mixed-drift-tx" && h.new_ttl_ledgers === 100500);
+            expect((instanceRow as any).drift_ledgers).toBe(-2000);
+            expect((wasmRow as any).drift_ledgers).toBe(500);
+        });
+
+        it("extension is still reported as successful when drift alert delivery is rejected", async () => {
+            const contractId = seedContract(db);
+
+            upsertEntry(db, {
+                contract_id: contractId,
+                entry_key_xdr: "instance-key-xdr",
+                entry_type: "instance",
+                live_until_ledger: 2410000,
+                discovery_source: "deterministic",
+            });
+
+            upsertExtensionPolicy(db, {
+                contract_id: contractId,
+                enabled: true,
+                target_ttl_ledgers: 100000,
+                extend_when_below_ledgers: 20000,
+                keypair_source: "env:TEST_SECRET_KEY",
+            });
+
+            insertAlertConfig(db, {
+                contract_id: contractId,
+                channel_type: "webhook",
+                channel_target: "https://example.com/hook",
+                threshold_ledgers: 20000,
+            });
+
+            setEnv("TEST_SECRET_KEY", "SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+            mockGetCurrentLedger.mockResolvedValue(2400000);
+            mockSubmitExtension.mockResolvedValue({
+                success: true,
+                txHash: "drift-reject-tx",
+                ledger: 2400100,
+            });
+
+            // drift = -2000, outside tolerance — alert will be attempted
+            mockGetEntryTTLs.mockResolvedValue({
+                latestLedger: 2400100,
+                entries: [{
+                    entryKeyXdr: "instance-key-xdr",
+                    latestLedger: 2400100,
+                    liveUntilLedgerSeq: 2498100,
+                    lastModifiedLedgerSeq: 2400100,
+                    remainingTTL: 98000,
+                }],
+            });
+
+            // Alert channel rejects — should NOT surface as an extension failure
+            const mockChannel = { send: vi.fn().mockRejectedValue(new Error("webhook timeout")) };
+            const result = await runAutoExtensions(db, "testnet", undefined, undefined, 100, { webhook: mockChannel });
+
+            // Extension itself must still be counted as successful
+            expect(result.contractsExtended).toBe(1);
+            expect(result.entriesExtended).toBeGreaterThanOrEqual(1);
+            expect(result.extensions).toHaveLength(1);
+            expect(result.extensions[0]!.txHash).toBe("drift-reject-tx");
+            expect(result.extensions[0]!.driftLedgers).toBe(-2000);
+            // No extension-level error from the delivery failure
+            expect(result.errors).toHaveLength(0);
         });
     });
 });

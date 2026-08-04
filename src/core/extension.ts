@@ -13,15 +13,24 @@ import {
     getBudget,
     addBudgetSpent,
     countExtensionsInLastHour,
-
+    getAlertConfigsForContract,
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
 import { getLogger } from "../logging/index.js";
 import { formatSecretKey } from "../utils/formatting.js";
 import { VaultResolver } from "./vault.js";
 import { loadConfig } from "../utils/config.js";
+import { buildTTLDriftAlertEvent, type AlertChannel } from "../alerts/types.js";
+import { deliverSingleAlert } from "../alerts/dispatcher.js";
 
 const logger = getLogger().child({ component: "Extension" });
+
+/**
+ * Default tolerance (in ledgers) used when comparing the actual post-extension
+ * TTL against the policy's target_ttl_ledgers. If the absolute delta is within
+ * this tolerance no drift alert is fired.
+ */
+export const DEFAULT_DRIFT_TOLERANCE_LEDGERS = 100;
 
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
@@ -78,6 +87,8 @@ export interface ExtensionResult {
 
     isAnomaly?: boolean;
     anomalyDetails?: string;
+    /** Signed ledger delta: actual post-extension TTL minus policy target_ttl_ledgers. */
+    driftLedgers?: number;
 }
 
 export interface AutoExtensionResult {
@@ -92,6 +103,7 @@ export interface AutoExtensionResult {
         ledger: number;
         isAnomaly?: boolean;
         anomalyDetails?: string;
+        driftLedgers?: number;
     }>;
 }
 
@@ -239,6 +251,10 @@ export async function extendEntries(
     const entries = getEntriesForContract(db, contractId);
     const entryMap = new Map(entries.map(e => [e.entry_key_xdr, e]));
 
+    // Track per-entry drift. The extension-level driftLedgers for the alert is
+    // the signed value with the largest absolute deviation from the target.
+    let driftLedgers: number | undefined;
+
     const updateDb = db.transaction(() => {
         for (const freshEntry of freshTTLs.entries) {
             const dbEntry = entryMap.get(freshEntry.entryKeyXdr);
@@ -247,6 +263,13 @@ export async function extendEntries(
             const oldTTL = dbEntry.live_until_ledger
                 ? dbEntry.live_until_ledger - freshTTLs.latestLedger
                 : 0;
+
+            const entryDrift = freshEntry.remainingTTL - extendToLedgers;
+
+            // Keep the signed drift with the largest absolute value for the alert.
+            if (driftLedgers === undefined || Math.abs(entryDrift) > Math.abs(driftLedgers)) {
+                driftLedgers = entryDrift;
+            }
 
             recordExtension(db, {
                 contract_id: contractId,
@@ -258,6 +281,7 @@ export async function extendEntries(
                 mem_bytes: txResult.memBytes,
                 is_anomaly: isAnomaly,
                 executed_at_ledger: freshTTLs.latestLedger,
+                drift_ledgers: entryDrift,
             });
 
             upsertEntry(db, {
@@ -286,6 +310,7 @@ export async function extendEntries(
         memBytes: txResult.memBytes,
         isAnomaly,
         anomalyDetails,
+        driftLedgers,
     };
 }
 
@@ -294,6 +319,8 @@ export async function runAutoExtensions(
     network: string,
     rpcUrl?: string,
     sponsorSecret?: string,
+    driftToleranceLedgers: number = DEFAULT_DRIFT_TOLERANCE_LEDGERS,
+    channels?: Record<string, AlertChannel>,
 ): Promise<AutoExtensionResult> {
     const result: AutoExtensionResult = {
         contractsChecked: 0,
@@ -430,6 +457,47 @@ export async function runAutoExtensions(
                             `Contract ${contract.id}: Extension succeeded but RPC returned no txHash or ledger`,
                         );
                     } else {
+                        // ── TTL drift check (issue #495) ─────────────────────────────
+                        const driftLedgers = extResult.driftLedgers;
+
+                        try {
+                            if (driftLedgers !== undefined && Math.abs(driftLedgers) > driftToleranceLedgers) {
+                                logger.warn(
+                                    `TTL drift detected for ${contract.id}: ` +
+                                    `target=${policy.target_ttl_ledgers}, actual=${policy.target_ttl_ledgers + driftLedgers}, ` +
+                                    `drift=${driftLedgers} (tolerance=${driftToleranceLedgers})`,
+                                );
+
+                                const driftEvent = buildTTLDriftAlertEvent({
+                                    contractId: contract.id,
+                                    contractName: contract.name ?? null,
+                                    network,
+                                    targetTTLLedgers: policy.target_ttl_ledgers,
+                                    actualTTLLedgers: policy.target_ttl_ledgers + driftLedgers,
+                                    driftLedgers,
+                                    toleranceLedgers: driftToleranceLedgers,
+                                    txHash: extResult.txHash,
+                                    detectedAtLedger: extResult.ledger,
+                                });
+
+                                const alertConfigs = getAlertConfigsForContract(db, contract.id);
+                                await Promise.all(
+                                    alertConfigs.map(cfg =>
+                                        deliverSingleAlert(
+                                            cfg.channel_type,
+                                            cfg.channel_target,
+                                            driftEvent,
+                                            cfg.webhook_secret,
+                                            channels,
+                                        ),
+                                    ),
+                                );
+                            }
+                        } catch (driftErr: unknown) {
+                            const driftMsg = driftErr instanceof Error ? driftErr.message : String(driftErr);
+                            logger.warn(`TTL drift alert delivery failed for ${contract.id}: ${driftMsg}`);
+                        }
+
                         result.contractsExtended++;
                         result.entriesExtended += extResult.entriesExtended;
                         result.extensions.push({
@@ -439,6 +507,7 @@ export async function runAutoExtensions(
                             ledger: extResult.ledger,
                             isAnomaly: extResult.isAnomaly,
                             anomalyDetails: extResult.anomalyDetails,
+                            driftLedgers,
                         });
                     }
                 } else {

@@ -30,8 +30,11 @@ export function getTemplateContext(event: AlertEvent) {
     if (isResourceAlert) {
         resourceLabel = event.resource.type === "cpu" ? "CPU" : "Memory";
         resourceUnit = event.resource.type === "cpu" ? "instructions" : "bytes";
-    } else {
+    } else if (event.type !== "ttl_drift") {
         entryLabel = event.entry.label ?? event.entry.type;
+    } else {
+        // ttl_drift has no entry — use a synthetic label from drift data
+        entryLabel = `drift:${event.driftLedgers > 0 ? "+" : ""}${event.driftLedgers}`;
     }
 
     const severityLevel = event.severity === "critical" ? "CRITICAL" : "Warning";
@@ -83,6 +86,20 @@ export function getTemplateContext(event: AlertEvent) {
             detectedAtLedger: event.detectedAtLedger,
             timestamp: event.timestamp,
         };
+    } else if (event.type === "ttl_drift") {
+        dedupKey = `sorokeep:${event.network}:${event.contractId}:ttl_drift:${event.txHash}`;
+        customDetails = {
+            contractId: event.contractId,
+            contractName: event.contractName,
+            network: event.network,
+            targetTTLLedgers: event.targetTTLLedgers,
+            actualTTLLedgers: event.actualTTLLedgers,
+            driftLedgers: event.driftLedgers,
+            toleranceLedgers: event.toleranceLedgers,
+            txHash: event.txHash,
+            detectedAtLedger: event.detectedAtLedger,
+            timestamp: event.timestamp,
+        };
     } else {
         dedupKey = `sorokeep:${event.network}:${event.contractId}:unknown`;
         customDetails = { contractId: event.contractId, timestamp: event.timestamp };
@@ -97,6 +114,7 @@ export function getTemplateContext(event: AlertEvent) {
         entryLabel,
         severityEmoji: isResolved ? "✅" : (event.severity === "critical" ? "🔴" : "⚠️"),
         isTTLAlert: event.type === "threshold_crossed" || event.type === "alert_resolved",
+        isDriftAlert: event.type === "ttl_drift",
         isResourceAlert,
         isResolved,
         isCritical: event.severity === "critical",

@@ -1,7 +1,7 @@
 import { formatTimeToCloseLedger } from "../utils/formatting.js";
 
 export type AlertSeverity = "critical" | "warning" | "info";
-export type AlertEventType = "threshold_crossed" | "alert_resolved" | "resource_alert" | "state_changed";
+export type AlertEventType = "threshold_crossed" | "alert_resolved" | "resource_alert" | "state_changed" | "ttl_drift";
 
 export interface TTLAlertEvent {
     type: "threshold_crossed" | "alert_resolved";
@@ -73,7 +73,7 @@ export interface StateChangeAlertEvent {
     timestamp: string;
 }
 
-export type AlertEvent = TTLAlertEvent | ResourceAlertEvent | StateChangeAlertEvent;
+export type AlertEvent = TTLAlertEvent | ResourceAlertEvent | StateChangeAlertEvent | TTLDriftAlertEvent;
 
 export interface AlertChannel {
     send(target: string, event: AlertEvent, secret?: string | null): Promise<void>;
@@ -192,6 +192,64 @@ export function buildStateChangeAlertEvent(opts: {
             oldValueXdr: opts.oldValueXdr,
             newValueXdr: opts.newValueXdr,
         },
+        detectedAtLedger: opts.detectedAtLedger,
+        timestamp: new Date().toISOString(),
+    };
+}
+
+/**
+ * Fired when the actual post-extension live_until_ledger diverges from the
+ * policy's target_ttl_ledgers by more than the configured tolerance.
+ */
+export interface TTLDriftAlertEvent {
+    type: "ttl_drift";
+    severity: AlertSeverity;
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    /** The TTL the policy requested. */
+    targetTTLLedgers: number;
+    /** The TTL that was actually observed after the extension. */
+    actualTTLLedgers: number;
+    /** Signed delta: actual − target (negative = fell short, positive = exceeded). */
+    driftLedgers: number;
+    /** Tolerance that was used for the comparison. */
+    toleranceLedgers: number;
+    /** The transaction that caused the drift. */
+    txHash: string;
+    /** Ledger at which the drift was detected. */
+    detectedAtLedger: number;
+    /** ISO 8601 timestamp. */
+    timestamp: string;
+}
+
+/**
+ * Build a TTL-drift AlertEvent.
+ * Fired when the actual post-extension TTL differs from the policy target by
+ * more than `toleranceLedgers`.
+ */
+export function buildTTLDriftAlertEvent(opts: {
+    contractId: string;
+    contractName: string | null;
+    network: string;
+    targetTTLLedgers: number;
+    actualTTLLedgers: number;
+    driftLedgers: number;
+    toleranceLedgers: number;
+    txHash: string;
+    detectedAtLedger: number;
+}): TTLDriftAlertEvent {
+    return {
+        type: "ttl_drift",
+        severity: "warning",
+        contractId: opts.contractId,
+        contractName: opts.contractName,
+        network: opts.network,
+        targetTTLLedgers: opts.targetTTLLedgers,
+        actualTTLLedgers: opts.actualTTLLedgers,
+        driftLedgers: opts.driftLedgers,
+        toleranceLedgers: opts.toleranceLedgers,
+        txHash: opts.txHash,
         detectedAtLedger: opts.detectedAtLedger,
         timestamp: new Date().toISOString(),
     };

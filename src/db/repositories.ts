@@ -407,16 +407,18 @@ export function recordExtension(db: Database.Database, record: {
   mem_bytes?: number | null;
   is_anomaly?: boolean;
   executed_at_ledger: number;
+  drift_ledgers?: number | null;
 }): void {
   db.prepare(`
-    INSERT INTO extension_history (contract_id, contract_entry_id, old_ttl_ledgers, new_ttl_ledgers, tx_hash, cost_xlm, cpu_insns, mem_bytes, is_anomaly, executed_at_ledger)
-    VALUES (@contract_id, @contract_entry_id, @old_ttl_ledgers, @new_ttl_ledgers, @tx_hash, @cost_xlm, @cpu_insns, @mem_bytes, @is_anomaly, @executed_at_ledger)
+    INSERT INTO extension_history (contract_id, contract_entry_id, old_ttl_ledgers, new_ttl_ledgers, tx_hash, cost_xlm, cpu_insns, mem_bytes, is_anomaly, executed_at_ledger, drift_ledgers)
+    VALUES (@contract_id, @contract_entry_id, @old_ttl_ledgers, @new_ttl_ledgers, @tx_hash, @cost_xlm, @cpu_insns, @mem_bytes, @is_anomaly, @executed_at_ledger, @drift_ledgers)
   `).run({
     ...record,
     cost_xlm: record.cost_xlm ?? null,
     cpu_insns: record.cpu_insns ?? null,
     mem_bytes: record.mem_bytes ?? null,
     is_anomaly: record.is_anomaly ? 1 : 0,
+    drift_ledgers: record.drift_ledgers ?? null,
   });
 }
 
