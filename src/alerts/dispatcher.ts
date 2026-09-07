@@ -5,6 +5,7 @@ import { registerBuiltinChannels } from "./builtins.js";
 import { listAlertChannels } from "./registry.js";
 import { getLogger } from "../logging/index.js";
 import { getAlertChannel } from "./registry.js";
+import { alertsDeliveredTotal, alertsFailedTotal, alertsAbandonedTotal, alertDeliveryDurationSeconds } from "../observability/metrics/alerts.js";
 import "./builtins.js"; // Ensure builtins are registered
 
 const logger = getLogger().child({ component: "AlertDispatcher" });
@@ -149,12 +150,14 @@ export async function deliverPendingAlerts(
             firedAtLedger: alert.firedAtLedger,
         });
 
+        const deliveryStart = process.hrtime.bigint();
         try {
             const channel = channels[alert.channelType];
             if (!channel) throw new Error(`Unknown channel type: ${alert.channelType}`);
             await channel.send(alert.channelTarget, event, alert.webhookSecret);
             markAlertDelivered(db, alert.alertFiredId);
             result.delivered++;
+            alertsDeliveredTotal.inc({ channel_type: alert.channelType });
             logger.info(
                 `Alert delivered — id: ${alert.alertFiredId}, channel: ${alert.channelType}, contract: ${alert.contractId}`,
             );
@@ -162,11 +165,13 @@ export async function deliverPendingAlerts(
             const message = err instanceof Error ? err.message : String(err);
             result.failed++;
             result.errors.push(message);
+            alertsFailedTotal.inc({ channel_type: alert.channelType });
             incrementRetryCount(db, alert.alertFiredId);
             const nextRetry = alert.retryCount + 1;
 
             if (nextRetry >= maxRetries) {
                 result.abandoned++;
+                alertsAbandonedTotal.inc({ channel_type: alert.channelType });
                 logger.error(
                     `Alert abandoned after ${MAX_RETRY_COUNT} retries — id: ${alert.alertFiredId}, channel: ${alert.channelType}, error: ${message}`,
                 );
@@ -175,6 +180,9 @@ export async function deliverPendingAlerts(
                     `Alert delivery failed (attempt ${nextRetry}/${MAX_RETRY_COUNT}) — id: ${alert.alertFiredId}, channel: ${alert.channelType}, error: ${message}`,
                 );
             }
+        } finally {
+            const durationSeconds = Number(process.hrtime.bigint() - deliveryStart) / 1e9;
+            alertDeliveryDurationSeconds.observe({ channel_type: alert.channelType }, durationSeconds);
         }
     }
 
@@ -192,13 +200,19 @@ export async function deliverSingleAlert(
     webhookSecret?: string | null,
     channels: Record<string, AlertChannel> = defaultChannels(),
 ): Promise<boolean> {
+    const deliveryStart = process.hrtime.bigint();
     try {
         const channel = channels[channelType];
         if (!channel) throw new Error(`Unknown channel type: ${channelType}`);
         await channel.send(channelTarget, event, webhookSecret ?? null);
+        alertsDeliveredTotal.inc({ channel_type: channelType });
         return true;
     } catch (error: unknown) {
+        alertsFailedTotal.inc({ channel_type: channelType });
         logger.warn(`Single alert delivery failed for ${channelType}: ${error instanceof Error ? error.message : String(error)}`);
         return false;
+    } finally {
+        const durationSeconds = Number(process.hrtime.bigint() - deliveryStart) / 1e9;
+        alertDeliveryDurationSeconds.observe({ channel_type: channelType }, durationSeconds);
     }
 }

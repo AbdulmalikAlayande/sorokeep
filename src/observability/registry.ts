@@ -24,6 +24,12 @@ register.registerMetric(entriesTrackedGauge);
 import { mcpToolInvocationsCounter } from "./metrics/mcp.js";
 register.registerMetric(mcpToolInvocationsCounter);
 
+import { alertsDeliveredTotal, alertsFailedTotal, alertsAbandonedTotal, alertDeliveryDurationSeconds } from "./metrics/alerts.js";
+register.registerMetric(alertsDeliveredTotal);
+register.registerMetric(alertsFailedTotal);
+register.registerMetric(alertsAbandonedTotal);
+register.registerMetric(alertDeliveryDurationSeconds);
+
 /**
  * Recompute every DB-backed metric from the live database. Called once per
  * `/metrics` scrape (see `observability/server.ts`) so gauges never emit

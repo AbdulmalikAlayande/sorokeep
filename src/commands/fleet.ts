@@ -8,6 +8,7 @@ import {
     formatContractID,
     paginateList,
     formatPaginationFooter,
+    formatFleetCSV,
     type TTLStatus,
 } from "../utils/formatting.js";
 
@@ -26,7 +27,8 @@ export function registerFleetCommand(program: Command): void {
         .description("Show aggregate health dashboard across all watched contracts")
         .option("--page <n>", "Page number", "1")
         .option("--page-size <n>", "Items per page", "25")
-        .action((_status: string, options: { page?: string; pageSize?: string } = {}) => {
+        .option("--format <format>", "Output format: table, csv", "table")
+        .action((_status: string, options: { page?: string; pageSize?: string; format?: string } = {}) => {
             const db = getDatabase();
             const contracts = getAllContracts(db);
 
@@ -68,6 +70,46 @@ export function registerFleetCommand(program: Command): void {
                     status: worstStatus,
                 };
             });
+
+            // ── CSV format ─────────────────────────────────────────────
+            const format = options.format ?? "table";
+            if (format === "csv") {
+                const csvRows: Array<{
+                    contractId: string;
+                    contractName: string | null;
+                    entryKeyXdr: string;
+                    entryType: string;
+                    remainingTTL: number;
+                    status: string;
+                }> = [];
+
+                for (const contract of contracts) {
+                    const entries = getEntriesForContract(db, contract.id);
+                    const lastChecked = contract.last_checked_ledger;
+
+                    for (const entry of entries) {
+                        let remainingTTL = 0;
+                        let status = "ok";
+
+                        if (entry.live_until_ledger != null && lastChecked != null) {
+                            remainingTTL = entry.live_until_ledger - lastChecked;
+                            status = classifyTTL(remainingTTL);
+                        }
+
+                        csvRows.push({
+                            contractId: contract.id,
+                            contractName: contract.name,
+                            entryKeyXdr: entry.entry_key_xdr,
+                            entryType: entry.entry_type,
+                            remainingTTL,
+                            status,
+                        });
+                    }
+                }
+
+                console.log(formatFleetCSV(csvRows));
+                return;
+            }
 
             // Summary: count contracts by severity (ordered worst → best)
             const counts: Record<TTLStatus, number> = {

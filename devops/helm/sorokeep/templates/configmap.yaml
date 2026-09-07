@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sorokeep.fullname" . }}-config
+  labels:
+    {{- include "sorokeep.labels" . | nindent 4 }}
+data:
+  # Non-sensitive fragment of ~/.sorokeep/config.yaml. Merged with the
+  # sensitive fragment (see the Secret and the merge-config init
+  # container in deployment.yaml) into the final config.yaml at pod
+  # startup — the application only knows how to read a single file, so
+  # this ConfigMap alone is not a valid config.yaml on its own.
+  config.yaml: |
+    network: {{ .Values.config.network | quote }}
+    pollingIntervalSeconds: {{ .Values.config.pollingIntervalSeconds }}
+    {{- if .Values.config.rpcUrl }}
+    rpcUrl: {{ .Values.config.rpcUrl | quote }}
+    {{- end }}
+    {{- if .Values.config.templatesPath }}
+    templatesPath: {{ .Values.config.templatesPath | quote }}
+    {{- end }}
+    {{- if .Values.config.monthlyBudgetXlm }}
+    monthlyBudgetXlm: {{ .Values.config.monthlyBudgetXlm }}
+    {{- end }}

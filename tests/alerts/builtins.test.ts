@@ -11,6 +11,7 @@ const mockSendTelegramAlert = vi.fn().mockResolvedValue(undefined);
 const mockSendOpsgenieAlert = vi.fn().mockResolvedValue(undefined);
 const mockSendMatrixAlert = vi.fn().mockResolvedValue(undefined);
 const mockSendTeamsAlert = vi.fn().mockResolvedValue(undefined);
+const mockSendSnsAlert = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("../../src/alerts/webhook.js", () => ({
     sendWebhookAlert: (...args: unknown[]) => mockSendWebhookAlert(...args),
@@ -44,6 +45,9 @@ vi.mock("../../src/alerts/matrix.js", () => ({
 vi.mock("../../src/alerts/teams.js", () => ({
     sendTeamsAlert: (...args: unknown[]) => mockSendTeamsAlert(...args),
 }));
+vi.mock("../../src/alerts/sns.js", () => ({
+    sendSnsAlert: (...args: unknown[]) => mockSendSnsAlert(...args),
+}));
 
 const mockSendEmailAlert = vi.fn().mockResolvedValue(undefined);
 vi.mock("../../src/alerts/email.js", () => ({
@@ -66,15 +70,15 @@ describe("registerBuiltinChannels", () => {
         registerBuiltinChannels();
     });
 
-    it("registers exactly the eleven built-in channel names", () => {
+    it("registers exactly the twelve built-in channel names", () => {
         const names = listAlertChannels().map((d) => d.name).sort();
-        expect(names).toEqual(["discord", "email", "googlechat", "matrix", "opsgenie", "pagerduty", "slack", "teams", "telegram", "webhook", "webhook2"]);
+        expect(names).toEqual(["discord", "email", "googlechat", "matrix", "opsgenie", "pagerduty", "slack", "sns", "teams", "telegram", "webhook", "webhook2"]);
     });
 
     it("is idempotent — calling it again does not throw", async () => {
         const { registerBuiltinChannels } = await import("../../src/alerts/builtins");
         expect(() => registerBuiltinChannels()).not.toThrow();
-        expect(listAlertChannels()).toHaveLength(11);
+        expect(listAlertChannels()).toHaveLength(12);
     });
 
     it("only webhook and webhook2 support HMAC signing", () => {
@@ -96,6 +100,7 @@ describe("registerBuiltinChannels", () => {
         ["teams", "url"],
         ["email", "channel"],
         ["googlechat", "url"],
+        ["sns", "url"],
     ] as const)("%s reads its target from --%s", (name, targetOption) => {
         expect(getAlertChannel(name)?.targetOption).toBe(targetOption);
     });
@@ -156,6 +161,11 @@ describe("registerBuiltinChannels", () => {
         expect(mockSendGoogleChatAlert).toHaveBeenCalledWith("https://chat.googleapis.com/v1/spaces/XXX/messages", event);
     });
 
+    it("sns definition delegates to sendSnsAlert", async () => {
+        await getAlertChannel("sns")!.channel.send("arn:aws:sns:us-east-1:123456789012:my-topic", event);
+        expect(mockSendSnsAlert).toHaveBeenCalledWith("arn:aws:sns:us-east-1:123456789012:my-topic", event);
+    });
+
     it("each missingTargetError message matches the historical CLI wording", () => {
         expect(getAlertChannel("webhook")?.missingTargetError).toBe(
             "Error: --url is required when --type is webhook.",
@@ -189,6 +199,9 @@ describe("registerBuiltinChannels", () => {
         );
         expect(getAlertChannel("googlechat")?.missingTargetError).toBe(
             "Error: --url is required when --type is googlechat.",
+        );
+        expect(getAlertChannel("sns")?.missingTargetError).toBe(
+            "Error: --url is required when --type is sns. Paste the full SNS topic ARN.",
         );
     });
 });

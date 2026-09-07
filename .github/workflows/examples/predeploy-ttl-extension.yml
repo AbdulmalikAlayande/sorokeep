@@ -1,0 +1,64 @@
+name: Pre-deploy TTL extension
+
+# Example workflow for a mainnet deploy gate.
+# Required repository/environment secrets:
+#   - STELLAR_RPC_URL: read-only RPC endpoint for mainnet (for example, a dedicated provider URL)
+#   - MAINNET_EXTENSION_KEY: funded Stellar secret key used only for one-time TTL extension
+#
+# Scope these secrets to a protected GitHub environment or to a deployment workflow
+# that is restricted to the main branch. Avoid broad repo-wide access when a
+# production environment can be limited to the deploy job instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      contract-id:
+        description: Soroban contract ID to extend before deploy
+        required: true
+      deploy-command:
+        description: Command to run after the TTL extension succeeds
+        required: false
+        default: ./scripts/deploy.sh
+
+permissions:
+  contents: read
+
+jobs:
+  extend-ttl-before-deploy:
+    name: Extend TTLs before mainnet deploy
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Refresh the contract in Sorokeep
+        env:
+          STELLAR_RPC_URL: ${{ secrets.STELLAR_RPC_URL }}
+        run: |
+          npx sorokeep watch "${{ inputs.contract-id }}" \
+            --network mainnet \
+            --rpc-url "$STELLAR_RPC_URL" \
+            --name "Mainnet Deploy Target"
+
+      - name: Extend TTLs for a one-time pre-deploy safety check
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.MAINNET_EXTENSION_KEY }}
+        run: |
+          npx sorokeep guard "${{ inputs.contract-id }}" \
+            --keypair-env STELLAR_SECRET_KEY \
+            --target-ttl 100000 \
+            --threshold 20000
+
+      - name: Deploy
+        run: ${{ inputs.deploy-command }}

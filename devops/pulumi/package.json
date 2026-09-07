@@ -1,0 +1,14 @@
+{
+  "name": "sorokeep-pulumi",
+  "version": "1.0.0",
+  "description": "Pulumi component for Sorokeep daemon deployment",
+  "main": "index.ts",
+  "dependencies": {
+    "@pulumi/aws": "^6.0.0",
+    "@pulumi/pulumi": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

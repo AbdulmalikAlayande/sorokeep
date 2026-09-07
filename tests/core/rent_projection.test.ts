@@ -130,6 +130,47 @@ describe("projectRentCost", () => {
         );
     });
 
+    it("short-circuits to zero for zero or negative inputs without dividing by zero", () => {
+        const invalidCases = [
+            { label: "zero bytes", input: { ...baseInput, entrySizeBytes: 0 } },
+            { label: "negative bytes", input: { ...baseInput, entrySizeBytes: -1 } },
+            { label: "negative days", input: { ...baseInput, days: -7 } },
+            { label: "zero fee", input: { ...baseInput, feePerRent1kb: 0 } },
+            { label: "negative fee", input: { ...baseInput, feePerRent1kb: -100 } },
+        ];
+
+        for (const { input } of invalidCases) {
+            const result = projectRentCost(input);
+            expect(result.estimatedFeeStroops).toBe(0);
+            expect(result.estimatedFeeXlm).toBe(0);
+            expect(Number.isFinite(result.estimatedFeeStroops)).toBe(true);
+            if (input.days <= 0) {
+                expect(result.ledgerCount).toBe(0);
+            }
+        }
+    });
+
+    it("prefers an explicit rentRateDenominator over the default persistent/temporary selection", () => {
+        const defaultPersistent = projectRentCost({
+            ...baseInput,
+            isPersistent: true,
+            rentRateDenominator: undefined,
+        });
+        const explicitOverride = projectRentCost({
+            ...baseInput,
+            isPersistent: true,
+            rentRateDenominator: 7777,
+        });
+
+        const expectedExplicit = Math.ceil(
+            (baseInput.entrySizeBytes * baseInput.feePerRent1kb! * Math.ceil(baseInput.days * LEDGERS_PER_DAY)) /
+            (1024 * 7777),
+        );
+
+        expect(explicitOverride.estimatedFeeStroops).toBe(expectedExplicit);
+        expect(explicitOverride.estimatedFeeStroops).not.toBe(defaultPersistent.estimatedFeeStroops);
+    });
+
     it("uses persistent denominator when isPersistent=true (no explicit denominator)", () => {
         // Call without an explicit rentRateDenominator so the function resolves it from isPersistent.
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -169,6 +210,33 @@ describe("projectRentWindows", () => {
         const result = projectRentWindows(baseInput);
         expect(result.entrySizeBytes).toBe(4096);
         expect(result.feePerRent1kb).toBe(DEFAULT_FEE_PER_RENT_1KB);
+    });
+
+    it("propagates feePerRent1kb and isCodeEntry to each window and keeps the 30/60/90 order", () => {
+        const feePerRent1kb = 2500;
+        const result = projectRentWindows({
+            ...baseInput,
+            feePerRent1kb,
+            isPersistent: false,
+            isCodeEntry: true,
+        });
+
+        expect(result.windows.map(w => w.days)).toEqual([30, 60, 90]);
+        expect(result.feePerRent1kb).toBe(feePerRent1kb);
+        expect(result.isCodeEntry).toBe(true);
+
+        for (const window of result.windows) {
+            const expected = projectRentCost({
+                ...baseInput,
+                entrySizeBytes: baseInput.entrySizeBytes,
+                days: window.days,
+                feePerRent1kb,
+                isPersistent: false,
+                isCodeEntry: true,
+            });
+            expect(window.estimatedFeeStroops).toBe(expected.estimatedFeeStroops);
+            expect(window.estimatedFeeXlm).toBe(expected.estimatedFeeXlm);
+        }
     });
 
     it("60-day projection is approximately double the 30-day projection", () => {

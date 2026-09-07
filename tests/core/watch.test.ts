@@ -318,6 +318,60 @@ describe("watchContract - Deep Coverage Suite", () => {
         expect(entries[0]!.live_until_ledger).toBe(1100);
     });
 
+    it("produces a warning when re-watching a contract ID with a different name but succeeds", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        // 1st Watch
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key",
+            latestLedger: 100,
+            liveUntilLedgerSeq: 1000,
+            remainingTTL: 900,
+        });
+        await watchContract(db, { contractId: VALID_CID, network: "testnet", name: "Old Name" });
+
+        // 2nd Watch
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key",
+            latestLedger: 200,
+            liveUntilLedgerSeq: 1100,
+            remainingTTL: 900,
+        });
+        const result = await watchContract(db, { contractId: VALID_CID, network: "testnet", name: "New Name", forceRefresh: true });
+
+        expect(result.success).toBe(true);
+
+        const contract = getContract(db, VALID_CID);
+        expect(contract!.name).toBe("New Name");
+
+        warnSpy.mockRestore();
+    });
+
+    it("produces no warning when re-watching the same contract ID with identical name/network", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        // 1st Watch
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key",
+            latestLedger: 100,
+            liveUntilLedgerSeq: 1000,
+            remainingTTL: 900,
+        });
+        await watchContract(db, { contractId: VALID_CID, network: "testnet", name: "Same Name" });
+
+        // 2nd Watch
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key",
+            latestLedger: 200,
+            liveUntilLedgerSeq: 1100,
+            remainingTTL: 900,
+        });
+        const result = await watchContract(db, { contractId: VALID_CID, network: "testnet", name: "Same Name", forceRefresh: true });
+
+        expect(result.success).toBe(true);
+        warnSpy.mockRestore();
+    });
+
     // --- 4. ERROR HANDLING ---
 
     it("fails with meaningful error when contract ID is invalid", async () => {
@@ -354,7 +408,8 @@ describe("watchContract - Deep Coverage Suite", () => {
 
     // --- 5. NETWORK SPECIFICITY ---
 
-    it("rejects re-watch on a different network for the same contract ID", async () => {
+    it("warns and allows re-watch on a different network for the same contract ID", async () => {
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
         mockGetContractInstanceEntry.mockResolvedValue({
             entryKeyXdr: "instance-key",
             latestLedger: 100,
@@ -364,14 +419,21 @@ describe("watchContract - Deep Coverage Suite", () => {
 
         await watchContract(db, { contractId: VALID_CID, network: "testnet" });
 
-        const result = await watchContract(db, { contractId: VALID_CID, network: "mainnet" });
+        mockGetContractInstanceEntry.mockResolvedValue({
+            entryKeyXdr: "instance-key",
+            latestLedger: 200,
+            liveUntilLedgerSeq: 1100,
+            remainingTTL: 900,
+        });
 
-        expect(result.success).toBe(false);
-        expect(result.error).toMatch(/already registered|different network/i);
+        const result = await watchContract(db, { contractId: VALID_CID, network: "mainnet", forceRefresh: true });
 
-        // Original registration is unchanged
+        expect(result.success).toBe(true);
+
+        // Network should be overwritten
         const contract = getContract(db, VALID_CID);
-        expect(contract!.network).toBe("testnet");
+        expect(contract!.network).toBe("mainnet");
+        warnSpy.mockRestore();
     });
 
     it("skips WASM discovery when noIntrospection is true", async () => {

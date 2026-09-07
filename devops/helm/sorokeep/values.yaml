@@ -1,0 +1,80 @@
+# Default values for the sorokeep chart.
+# See README.md for a full explanation of every field below.
+
+image:
+  # No sorokeep image is published to any registry today (repository CI
+  # only publishes npm packages — see README "Image prerequisite"). This
+  # placeholder is intentionally non-functional: build the image from the
+  # repo root Dockerfile, push it somewhere you control, and override this.
+  repository: "REPLACE_ME/sorokeep"
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# NOTE: there is deliberately no `replicaCount` (or similar) field here.
+# Exactly one daemon instance may run, full stop — see README "Exactly
+# one instance". The Deployment's replica count is hardcoded to 1 in
+# templates/deployment.yaml and is not wired to any value, so it cannot
+# be changed via --set/-f.
+
+# Non-sensitive fields written into the ConfigMap-backed part of
+# ~/.sorokeep/config.yaml. Mirrors src/utils/config.ts's SorokeepConfig.
+config:
+  # Stellar network to monitor: mainnet | testnet | standalone.
+  network: testnet
+  # Custom Soroban RPC endpoint. Leave empty to use the app's own
+  # per-network default (see src/rpc/client.ts).
+  rpcUrl: ""
+  # Polling interval, in SECONDS, matching config.yaml's native unit
+  # (src/utils/config.ts). Converted to milliseconds for the daemon's
+  # --interval flag, which the app requires to be >= 10 (10000ms).
+  pollingIntervalSeconds: 300
+  # Directory containing custom Handlebars alert templates, if any.
+  templatesPath: ""
+  # Monthly rent budget in XLM (optional; used by the `costs` command).
+  monthlyBudgetXlm: null
+
+# Sensitive fields, kept out of the ConfigMap and out of this file's
+# committed defaults. All default to "" here — do NOT put real values in
+# values.yaml; pass them at install time instead, e.g.:
+#   helm install sorokeep devops/helm/sorokeep \
+#     --set secrets.slackToken=xoxb-... \
+#     --set secrets.feeSponsorSecret=S...
+# or, better, via a separate, untracked -f secrets.yaml / an external
+# secrets manager. See README "Secret handling".
+secrets:
+  slackToken: ""
+  telegramBotToken: ""
+  feeSponsorSecret: ""
+
+persistence:
+  # A PersistentVolumeClaim is always created — SQLite storage is not
+  # optional for this chart (see README "Persistence").
+  size: 1Gi
+  # Leave empty to use the cluster's default StorageClass.
+  storageClassName: ""
+  # Must stay ReadWriteOnce: WAL-mode SQLite requires reliable POSIX file
+  # locking from a single writer, which ReadWriteMany/NFS-backed volumes
+  # do not safely provide. See README "Why SQLite/WAL prevents horizontal
+  # scaling".
+  accessMode: ReadWriteOnce
+
+# fsGroup applied to the pod so the container (whatever UID the sorokeep
+# image's non-root user ends up with — it's assigned dynamically by
+# `adduser -S` in the Dockerfile, not a fixed number) can write to the
+# PVC-backed data directory. See README "Persistence".
+podSecurityContext:
+  fsGroup: 1000
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}

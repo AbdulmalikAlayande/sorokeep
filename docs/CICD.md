@@ -30,6 +30,47 @@ Notes:
 - Use `npx sorokeep` to invoke the repository-installed CLI. If you build a distribution, replace with your build step.
 - The job will fail if `sorokeep` exits with a non-zero status, making it suitable for gating pull requests.
 
+### Pre-deploy TTL extension example
+
+For a mainnet deploy gate, use a one-time TTL extension immediately before the deploy job rather than enabling the daemon's persistent `--auto-extend` policy. See the example workflow at `.github/workflows/examples/predeploy-ttl-extension.yml`.
+
+```yaml
+name: Pre-deploy TTL extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      contract-id:
+        description: Soroban contract ID to extend before deploy
+        required: true
+
+jobs:
+  extend-ttl-before-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - name: Extend TTLs before deploy
+        env:
+          STELLAR_SECRET_KEY: ${{ secrets.MAINNET_EXTENSION_KEY }}
+        run: |
+          npx sorokeep guard "${{ inputs.contract-id }}" \
+            --keypair-env STELLAR_SECRET_KEY \
+            --target-ttl 100000 \
+            --threshold 20000
+```
+
+Required secrets and scoping:
+- `STELLAR_RPC_URL`: a read-only mainnet RPC URL for the contract/health check you want to validate before deploy.
+- `MAINNET_EXTENSION_KEY`: a funded Stellar secret key used only for the one-time extension transaction.
+- Prefer using a protected GitHub environment or branch-restricted workflow so the deploy secret cannot be used outside the mainnet release job.
+- Do not use `--auto-extend` here; that enables a long-lived daemon policy. This example is intentionally a one-off extension ahead of a ship event.
+
 ## GitLab CI
 
 Add the following to `.gitlab-ci.yml`:

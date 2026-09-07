@@ -25,6 +25,10 @@
   </p>
 </p>
 
+<p align="center">
+  <a href="https://railway.com/new"><img src="https://railway.com/button.svg" alt="Deploy on Railway" /></a>
+</p>
+
 <br />
 
 ## Why Sorokeep Exists
@@ -35,11 +39,17 @@ Soroban's storage model is uncommon among major smart contract platforms: **stat
 
 This is by design — state archival keeps Stellar lean and scalable. But it means **you must actively manage the lifecycle of your contract's state, or it dies.**
 
-There is currently no dedicated open-source tool that combines TTL monitoring, alerting, auto-extension, cost tracking, and restoration for Soroban contracts. Developers either use manual CLI commands, build ad-hoc scripts, or embed TTL extension logic directly in their contracts.
+There is currently no dedicated open-source tool that combines TTL monitoring, alerting, auto-extension, cost tracking, and restoration for Soroban contracts. Developers either use manual CLI commands, build ad-hoc scripts, or embed TTL extension logic directly in their contracts. (See our detailed [Comparison Guide: Sorokeep vs. Manual Scripts](docs/vs-manual-scripts.md) for an in-depth breakdown.)
 
 Sorokeep is the unified operations layer that handles all of this.
 
+> **Why not just use a cron script?** See [Sorokeep vs. Cron Script](docs/vs-cron-script.md) for a detailed comparison of failure handling, alerting, cost visibility, and maintenance burden.
+
 > Security auditors have started flagging TTL mismanagement as a risk area in Soroban contracts. [Veridise](https://veridise.com/audits/soroban/) includes TTL handling in their audit scope. The [LayerZero Stellar endpoint audit](https://code4rena.com/audits/2026-04-layerzero-stellar-endpoint) explicitly lists TTL expiration edge cases as a concern. [OpenZeppelin's Stellar contracts library](https://docs.openzeppelin.com/stellar-contracts) deliberately leaves instance storage TTL management to the application developer.
+
+## Security & SBOM
+
+Sorokeep generates a CycloneDX Software Bill of Materials (SBOM) for every release. You can find the `bom.json` file attached as a release asset on the [GitHub Releases page](https://github.com/AbdulmalikAlayande/sorokeep/releases).
 
 ## Features
 
@@ -88,6 +98,8 @@ npm install -g sorokeep
 
 ## Quick Start
 
+> **Migrating from custom scripts or cron jobs?** See the [Migration Guide](docs/migrating-from-cli-scripts.md) to map your existing `soroban-cli` / `stellar contract extend-ttl` scripts to Sorokeep.
+
 > **See it in action:** `scripts/demo.sh` runs the full Quick Start flow automatically. Record it with [asciinema](https://asciinema.org/) (`asciinema rec -c "bash scripts/demo.sh"`) and convert to an embeddable SVG with [svg-term-cli](https://github.com/marionebl/svg-term-cli) (`svg-term --in demo.cast --out docs/demo.svg --window`).
 >
 > Once a recording is captured, the SVG can be embedded here with:
@@ -114,6 +126,8 @@ sorokeep daemon --network testnet
 ```
 
 The daemon will check TTLs every 5 minutes, fire alerts when thresholds are crossed, send resolution notifications when TTLs recover, and auto-extend entries if guard policies are configured.
+
+For using Sorokeep with a Soroban naming service so alerts and `status` output show friendly contract names, see [Naming Services](docs/naming-services.md).
 
 ## Commands
 
@@ -263,15 +277,32 @@ Configure auto-extension policies. When enabled, the daemon automatically extend
 sorokeep guard <contract-id> [options]
 ```
 
-| Option                   | Description                                             | Default  |
-| ------------------------ | ------------------------------------------------------- | -------- |
-| `--target-ttl <ledgers>` | TTL to extend entries to                                | `100000` |
-| `--threshold <ledgers>`  | Extend when TTL drops below this                        | `20000`  |
-| `--keypair <secret>`     | Stellar secret key (for one-time extension)             | —        |
-| `--keypair-env <var>`    | Env var name containing the secret key                  | —        |
-| `--auto-extend`          | Enable daemon auto-extension (requires `--keypair-env`) | —        |
-| `--dry-run`              | Simulate extension and show estimated fee               | —        |
-| `--disable`              | Disable auto-extension for this contract                | —        |
+| Option                   | Description                                                             | Default  |
+| ------------------------ | ------------------------------------------------------------------------ | -------- |
+| `--preset <name>`        | Use a named policy preset (`conservative`\|`balanced`\|`aggressive`); mutually exclusive with `--target-ttl`/`--threshold` | —        |
+| `--target-ttl <ledgers>` | TTL to extend entries to                                                | `100000` |
+| `--threshold <ledgers>`  | Extend when TTL drops below this                                        | `20000`  |
+| `--keypair <secret>`     | Stellar secret key (for one-time extension)                             | —        |
+| `--keypair-env <var>`    | Env var name containing the secret key                                  | —        |
+| `--auto-extend`          | Enable daemon auto-extension (requires `--keypair-env`)                 | —        |
+| `--dry-run`              | Simulate extension and show estimated fee                               | —        |
+| `--disable`              | Disable auto-extension for this contract                                | —        |
+
+**Extension policy presets:**
+
+Instead of picking raw ledger numbers, `--preset` selects a named tradeoff between cost and safety margin:
+
+| Preset         | Target TTL      | Threshold      | Safety margin | Cost |
+| -------------- | --------------- | -------------- | -------------- | ---- |
+| `conservative` | 518,400 (~30d)  | 103,680 (~6d)  | Wide           | High |
+| `balanced`     | 100,000 (~5.8d) | 20,000 (~1.2d) | Medium         | Med  |
+| `aggressive`   | 51,840 (~3d)    | 8,640 (~12h)   | Narrow         | Low  |
+
+Use `conservative` for production contracts where downtime is unacceptable, `aggressive` for actively monitored testnet contracts where extension cost matters more than safety margin, and `balanced` (the historical default) otherwise. `--preset` cannot be combined with `--target-ttl` or `--threshold` — pick one or the other.
+
+```bash
+sorokeep guard <contract-id> --preset conservative --keypair-env STELLAR_SECRET_KEY --auto-extend
+```
 
 **Usage modes:**
 
@@ -449,7 +480,7 @@ Displays a table with contract ID (truncated), name, network, entry count, worst
 
 ## Alerting
 
-Sorokeep delivers alerts through multiple channels: **webhooks**, **Slack**, **Discord**, **Telegram**, **PagerDuty**, **Opsgenie**, **Microsoft Teams**, **Matrix**, **email**, **Google Chat**, and a second configurable **Webhook v2** channel. Each alert includes a severity level and rich context about the affected entry. Sorokeep uses a robust, decoupled detection and dispatch architecture with a database-backed queue.
+Sorokeep delivers alerts through multiple channels: **webhooks**, **Slack**, **Discord**, **Telegram**, **PagerDuty**, **Opsgenie**, **Microsoft Teams**, **Matrix**, **email**, **Google Chat**, **AWS SNS**, and a second configurable **Webhook v2** channel. Each alert includes a severity level and rich context about the affected entry. Sorokeep uses a robust, decoupled detection and dispatch architecture with a database-backed queue.
 
 ### Supported Channels Comparison
 
@@ -466,6 +497,7 @@ Sorokeep delivers alerts through multiple channels: **webhooks**, **Slack**, **D
 | **Matrix**          | Room ID                                                       | Homeserver-dependent                    | Matrix `m.room.message` event  | Medium           |
 | **Email**           | SMTP credentials (host/port/user/pass)                        | SMTP-provider dependent                 | Plain text + HTML              | Medium           |
 | **Google Chat**     | Webhook URL                                                   | Space-dependent                         | Google Chat card JSON          | Low              |
+| **AWS SNS**         | AWS IAM credentials (default credential chain)                | Topic-dependent (AWS account quota)     | Raw JSON (SNS `Message` field) | Medium           |
 
 > Need a channel not listed here? See [Adding an Alert Channel](docs/adding-an-alert-channel.md) to implement a custom channel plugin.
 
@@ -519,7 +551,15 @@ Webhook requests include an HMAC-SHA256 signature in the `X-Sorokeep-Signature` 
 X-Sorokeep-Signature: sha256=a1b2c3d4e5f6...
 ```
 
-To verify on your server:
+To verify on your server using `sorokeep`:
+
+```typescript
+import { verifyWebhookSignature } from "sorokeep";
+
+const isValid = verifyWebhookSignature(payload, signature, secret);
+```
+
+For non-Node receivers or without the `sorokeep` dependency, you can verify manually:
 
 ```javascript
 import { createHmac } from "node:crypto";
@@ -738,6 +778,16 @@ npx vitest
 
 All tests use in-memory SQLite databases and mocked RPC responses — no network calls, no filesystem side effects. TDD is practiced throughout.
 
+## Security & Provenance
+
+Sorokeep packages published to npm carry a [verified provenance statement](https://docs.npmjs.com/generating-provenance-statements). This provides a cryptographic, auditable link between the published npm package and the exact GitHub Actions run and commit that built it.
+
+To verify the provenance of your installed Sorokeep package, you can check the [npm registry page](https://www.npmjs.com/package/sorokeep) for the provenance badge, or run the following command to check npm audit signatures:
+
+```bash
+npm audit signatures
+```
+
 ## FAQ
 
 ### Why TypeScript, not Rust?
@@ -760,11 +810,55 @@ Each phase (monitor, deliver, auto-extend) is wrapped in isolated error handling
 
 ### What networks are supported?
 
-Testnet (`https://soroban-testnet.stellar.org`) and Mainnet (`https://mainnet.sorobanrpc.com`). You can also point Sorokeep at any custom RPC endpoint with `--rpc-url`.
+Testnet (`https://soroban-testnet.stellar.org`) and Mainnet (`https://mainnet.sorobanrpc.com`) are supported, and commands that make RPC calls accept a custom endpoint with `--rpc-url`. The selected network is stored with each watched contract, so keep the network and RPC endpoint aligned.
+
+### How do I register a contract for monitoring?
+
+Run `sorokeep watch <contract-id>` and provide the network and RPC options required for your deployment. Alert configurations require that the contract has already been registered; use `sorokeep status <contract-id>` to inspect its current state.
+
+### How can I verify an alert channel before going live?
+
+Create the alert configuration, then run `sorokeep alerts test --id <alert-config-id>`. The command sends a synthetic `threshold_crossed` event through the real delivery path; add `--dry-run` to print the payload without sending it.
+
+### Can one alert go to more than one destination?
+
+Yes. For TTL alerts, repeat `--target <type:target>` when running `sorokeep alerts add`, for example `--target webhook:https://... --target slack:alerts`. Resource alerts currently support only their primary target.
+
+### Why did an alert not arrive immediately?
+
+An alert may be deferred when its configured quiet-hours window is active; it remains pending without consuming a retry. Delivery failures are retried by the daemon, and a delivery is abandoned after the channel's retry limit is reached.
+
+### Which alert channels are available?
+
+The built-in registry currently includes Webhook, Webhook v2, Slack, PagerDuty, Google Chat, Discord, Telegram, Opsgenie, Microsoft Teams, Matrix, and email. Run `sorokeep alerts channels` to see the registered channels in the current installation, including channels supplied by plugins.
+
+### What happens when a contract entry has already expired?
+
+An expired entry is archived and cannot be extended until it is restored. Run `sorokeep restore <contract-id> --entry <key-xdr> --keypair-env <var>` (or use `--all`), then let the existing watch continue; restoration requires a signing key and XLM for network fees.
 
 ### What about email alerts?
 
-Email is not yet implemented. The CLI will reject `--type email` with a clear error message. Webhook and Slack are the supported channels today.
+Email alerts are supported. Configure SMTP credentials (host/port/user/pass) in `~/.sorokeep/config.yaml` or via the corresponding environment variables, and email deliveries use the same database-backed retry queue as the other channels. See the [Configuration Reference](docs/config-reference.md) for the exact field names.
+
+### How do I use a custom RPC endpoint?
+
+Pass `--rpc-url <url>` to `sorokeep watch` or `sorokeep daemon`, or set `rpcUrl` in `~/.sorokeep/config.yaml`. A custom endpoint overrides the default Testnet or Mainnet RPC URL for that command.
+
+### Can I run a monitoring pass without the daemon?
+
+Yes — `sorokeep check <contract-id> --fail-under <ledgers>` runs a single monitoring cycle ad hoc and exits with code 1 if any tracked entry is below that TTL. Use `--force` in CI when you want to report TTL health without failing the build.
+
+### How do I restore an archived entry?
+
+Run `sorokeep restore <contract-id> --keypair-env STELLAR_SECRET_KEY --all` to restore all tracked entries, or pass `--entry <base64-xdr>` to restore one specific entry. The command requires either `--keypair` or `--keypair-env`.
+
+### How do I see how much I've spent on extensions?
+
+Run `sorokeep costs <contract-id>` to see total extensions, total cost in XLM, a per-entry-type breakdown, and a 30-day projection. Use `--period <days>` to change the lookback window or `--all` for the complete history.
+
+### What does `sorokeep guard --dry-run` do?
+
+Run `sorokeep guard <contract-id> --keypair S... --dry-run` to simulate the extension transaction and see the estimated fee without submitting anything to the network. This is useful for checking cost before enabling auto-extension or performing a one-time extension.
 
 ## Roadmap
 

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { loadConfig, saveConfig } from "../../src/utils/config.js";
+import { getMcpMode, loadConfig, saveConfig } from "../../src/utils/config.js";
 
 const TEST_DIR = path.join(os.tmpdir(), "sorokeep-config-test-" + Date.now());
 const TEST_CONFIG_PATH = path.join(TEST_DIR, "config.yaml");
@@ -80,6 +80,44 @@ describe("Config", () => {
             const deepPath = path.join(TEST_DIR, "deep", "nested", "config.yaml");
             saveConfig({ network: "testnet", pollingIntervalSeconds: 300 }, deepPath);
             expect(fs.existsSync(deepPath)).toBe(true);
+        });
+    });
+
+    describe("MCP mode", () => {
+        it("defaults to read-only when the config file does not exist", () => {
+            const config = loadConfig("/nonexistent/path/config.yaml");
+            expect(config.mcp?.mode).toBe("read-only");
+            expect(getMcpMode(config)).toBe("read-only");
+        });
+
+        it("defaults to read-only when the mcp section is absent", () => {
+            fs.mkdirSync(TEST_DIR, { recursive: true });
+            fs.writeFileSync(TEST_CONFIG_PATH, "network: mainnet\n");
+
+            expect(getMcpMode(loadConfig(TEST_CONFIG_PATH))).toBe("read-only");
+        });
+
+        it("loads read-write when explicitly configured", () => {
+            fs.mkdirSync(TEST_DIR, { recursive: true });
+            fs.writeFileSync(TEST_CONFIG_PATH, ["mcp:", "  mode: read-write"].join("\n"));
+
+            expect(getMcpMode(loadConfig(TEST_CONFIG_PATH))).toBe("read-write");
+        });
+
+        it("falls back to read-only for an unrecognised mode", () => {
+            fs.mkdirSync(TEST_DIR, { recursive: true });
+            fs.writeFileSync(TEST_CONFIG_PATH, ["mcp:", "  mode: admin"].join("\n"));
+
+            expect(getMcpMode(loadConfig(TEST_CONFIG_PATH))).toBe("read-only");
+        });
+
+        it("round-trips through saveConfig", () => {
+            saveConfig(
+                { network: "testnet", pollingIntervalSeconds: 300, mcp: { mode: "read-write" } },
+                TEST_CONFIG_PATH,
+            );
+
+            expect(getMcpMode(loadConfig(TEST_CONFIG_PATH))).toBe("read-write");
         });
     });
 });

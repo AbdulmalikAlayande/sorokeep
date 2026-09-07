@@ -1129,4 +1129,117 @@ describe("alerts command", () => {
             expect(normalizeOutput(output)).toMatchSnapshot();
         });
     });
+
+    // =========================================================================
+    // alerts rotate-secret
+    // =========================================================================
+    describe("alerts rotate-secret", () => {
+        it("rotates a webhook alert's secret and prints the new value once", () => {
+            // Arrange – insert a webhook alert config with a known secret
+            const originalSecret = "aaaaaaaabbbbbbbbccccccccdddddddd";
+            const configId = insertAlertConfig(mockDb, {
+                contract_id: contractID,
+                channel_type: "webhook",
+                channel_target: "https://example.com/hook",
+                threshold_ledgers: 500,
+                webhook_secret: originalSecret,
+            });
+
+            // Act
+            parse(["alerts", "rotate-secret", "--id", String(configId)]);
+
+            // Assert – secret in DB has changed
+            const updated = getAlertConfigsForContract(mockDb, contractID)[0]!;
+            expect(updated.webhook_secret).not.toBe(originalSecret);
+            expect(updated.webhook_secret).toHaveLength(64); // 32 bytes → 64 hex chars
+
+            // Assert – other fields are untouched
+            expect(updated.channel_type).toBe("webhook");
+            expect(updated.channel_target).toBe("https://example.com/hook");
+            expect(updated.threshold_ledgers).toBe(500);
+
+            // Assert – new secret was printed
+            const output = consoleLogSpy.mock.calls.flat().join("\n");
+            expect(output).toContain(updated.webhook_secret!);
+        });
+
+        it("rotates a webhook2 alert's secret (also supports signing)", () => {
+            const originalSecret = "11111111222222223333333344444444";
+            const configId = insertAlertConfig(mockDb, {
+                contract_id: contractID,
+                channel_type: "webhook2",
+                channel_target: "https://example.com/hook2",
+                threshold_ledgers: 200,
+                webhook_secret: originalSecret,
+            });
+
+            parse(["alerts", "rotate-secret", "--id", String(configId)]);
+
+            const updated = getAlertConfigsForContract(mockDb, contractID)[0]!;
+            expect(updated.webhook_secret).not.toBe(originalSecret);
+            expect(updated.webhook_secret).toHaveLength(64);
+        });
+
+        it("rejects rotation for a slack alert with a clear error", () => {
+            const configId = insertAlertConfig(mockDb, {
+                contract_id: contractID,
+                channel_type: "slack",
+                channel_target: "#ops-alerts",
+                threshold_ledgers: 500,
+            });
+
+            parseExpectExit(["alerts", "rotate-secret", "--id", String(configId)]);
+
+            const errorOutput = consoleErrorSpy.mock.calls.flat().join("\n");
+            expect(errorOutput).toContain("does not support HMAC signing");
+
+            // DB must be unchanged
+            const config = getAlertConfigsForContract(mockDb, contractID)[0]!;
+            expect(config.webhook_secret).toBeNull();
+        });
+
+        it("rejects rotation for a pagerduty alert with a clear error", () => {
+            const configId = insertAlertConfig(mockDb, {
+                contract_id: contractID,
+                channel_type: "pagerduty",
+                channel_target: "pd-routing-key",
+                threshold_ledgers: 500,
+            });
+
+            parseExpectExit(["alerts", "rotate-secret", "--id", String(configId)]);
+
+            const errorOutput = consoleErrorSpy.mock.calls.flat().join("\n");
+            expect(errorOutput).toContain("does not support HMAC signing");
+        });
+
+        it("exits with an error when the alert config ID does not exist", () => {
+            parseExpectExit(["alerts", "rotate-secret", "--id", "999999"]);
+
+            const errorOutput = consoleErrorSpy.mock.calls.flat().join("\n");
+            expect(errorOutput).toContain("not found");
+        });
+
+        it("exits with an error when --id is not a number", () => {
+            parseExpectExit(["alerts", "rotate-secret", "--id", "abc"]);
+
+            const errorOutput = consoleErrorSpy.mock.calls.flat().join("\n");
+            expect(errorOutput).toContain("--id must be a number");
+        });
+
+        it("prints the 'save this secret' reminder alongside the new value", () => {
+            const configId = insertAlertConfig(mockDb, {
+                contract_id: contractID,
+                channel_type: "webhook",
+                channel_target: "https://example.com/hook",
+                threshold_ledgers: 500,
+                webhook_secret: "oldsecret",
+            });
+
+            parse(["alerts", "rotate-secret", "--id", String(configId)]);
+
+            const output = consoleLogSpy.mock.calls.flat().join("\n");
+            expect(output).toContain("Webhook secret:");
+            expect(output).toContain("Save this secret");
+        });
+    });
 });

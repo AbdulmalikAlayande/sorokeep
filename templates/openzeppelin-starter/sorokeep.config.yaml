@@ -1,0 +1,6 @@
+# Batch watch-registration manifest for `sorokeep watch --from-file sorokeep.config.yaml`.
+# See: https://github.com/AbdulmalikAlayande/sorokeep#quick-start
+contracts:
+  - contractId: CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX # Replace with your deployed Contract ID
+    name: openzeppelin-starter
+    network: testnet

@@ -24,6 +24,7 @@ const DISPLAY_NAMES: Record<string, string> = {
     matrix: "Matrix",
     email: "Email",
     googlechat: "Google Chat",
+    sns: "AWS SNS",
 };
 
 describe("README channel comparison table", () => {

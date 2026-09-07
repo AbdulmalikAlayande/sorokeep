@@ -1,0 +1,25 @@
+# Copy this file to the repository root as fly.toml before deploying. The app
+# name must be globally unique; replace the placeholder with your own name.
+app = "sorokeep-your-app-name"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+# The Docker image's ENTRYPOINT is `node /app/dist/index.js`; this command
+# starts the long-running monitoring daemon.
+[processes]
+  daemon = "daemon --network testnet"
+
+# Fly volumes are local to a region. Keep exactly one daemon Machine attached
+# to this volume, unless each Machine is intentionally given its own database.
+[mounts]
+  source = "sorokeep_data"
+  destination = "/home/sorokeep/.sorokeep"
+  initial_size = "1gb"
+  processes = ["daemon"]
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

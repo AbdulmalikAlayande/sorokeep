@@ -228,6 +228,16 @@ volumes:
   grafana-data:
 ```
 
+### Pre-Wired Profile (Prometheus + Grafana, Zero Manual Config)
+
+If you'd rather not hand-assemble the compose file above, `docker-compose.observability.yml` is a ready-to-use overlay with Prometheus and Grafana already pre-wired to scrape sorokeep and auto-provision the dashboard from [§3](#3-build-a-grafana-dashboard) — no manual `prometheus.yml` editing or dashboard import required:
+
+```sh
+docker compose -f docker-compose.yaml -f docker-compose.observability.yml --profile observability up
+```
+
+Prometheus is available at `http://localhost:9090` and Grafana at `http://localhost:3000`. Grafana uses `admin` / `admin` by default (override with `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`) and provisions the **Sorokeep Overview** dashboard automatically. Prometheus scrapes the sorokeep metrics endpoint at `sorokeep:9464` within the Compose network.
+
 ## 6. Troubleshooting
 
 ### Scrape Target Down

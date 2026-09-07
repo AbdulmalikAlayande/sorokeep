@@ -3,6 +3,10 @@ import { Hono } from "hono";
 import http from "node:http";
 import { register, collectAllMetrics } from "./registry.js";
 import type { StellarRpcClient } from "../rpc/client.js";
+import { checkIpAllowlist } from "../core/ipAllowlist.js";
+import { getLogger } from "../logging/index.js";
+
+const ipAllowlistLogger = getLogger().child({ component: "ObservabilityServer" });
 
 // ─── Module-level state ──────────────────────────────────────────────────────
 
@@ -118,8 +122,16 @@ app.get("/readyz", async (c) => {
  *   /readyz's DB check uses it.
  * @param rpcClient Optional Stellar RPC client. When provided, /readyz's
  *   RPC check uses it (a lightweight, cached getCurrentLedger() call).
+ * @param allowedIps Optional CIDR-aware IP allowlist (issue #427). When set,
+ *   requests from any other remote address get a bare 403 before the Hono
+ *   bridge even runs. Unset preserves today's open behavior.
  */
-export function createMetricsServer(port: number, db?: Database.Database, rpcClient?: StellarRpcClient): void {
+export function createMetricsServer(
+    port: number,
+    db?: Database.Database,
+    rpcClient?: StellarRpcClient,
+    allowedIps?: string[],
+): void {
     // Replace any existing server so the caller gets a clean restart.
     if (activeServer) {
         activeServer.close();
@@ -129,7 +141,27 @@ export function createMetricsServer(port: number, db?: Database.Database, rpcCli
     activeRpcClient = rpcClient ?? null;
     rpcCheckCache = null;
 
+    const isIpAllowed = allowedIps ? checkIpAllowlist(allowedIps) : null;
+    let hasWarnedOpenAccess = false;
+
     const server = http.createServer((_req, res) => {
+        // ── IP allowlist gate (issue #427) — real enforcement, checked
+        // against the actual TCP remote address before anything else runs.
+        if (isIpAllowed) {
+            const remoteAddress = _req.socket.remoteAddress;
+            if (!isIpAllowed(remoteAddress)) {
+                ipAllowlistLogger.warn(`Blocked request from unauthorized IP: ${remoteAddress ?? "unknown"}`);
+                res.writeHead(403, { "Content-Type": "text/plain" });
+                res.end("Forbidden");
+                return;
+            }
+        } else if (!hasWarnedOpenAccess) {
+            ipAllowlistLogger.warn(
+                "allowedIps is not configured — the observability HTTP server accepts requests from any address that can reach it.",
+            );
+            hasWarnedOpenAccess = true;
+        }
+
         // Bridge the Node.js IncomingMessage → Hono Request → Node.js ServerResponse
         const chunks: Buffer[] = [];
         _req.on("data", (chunk: Buffer) => chunks.push(chunk));

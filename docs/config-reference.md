@@ -16,6 +16,7 @@ This document provides a complete reference of all supported fields in the `~/.s
 | `vault.token` | string | (none) | Vault authentication token. | `vault`, `extension` | None |
 | `vault.namespace` | string | (none) | Optional Vault namespace (for Vault Enterprise). | `vault`, `extension` | None |
 | `feeSponsorSecret` | string | (none) | Secret key of the fee sponsor account. | `daemon`, `extension` | None |
+| `mcp.mode` | string | `"read-only"` | MCP server permission mode: `read-only` refuses tools that change state, `read-write` allows every registered tool. Unrecognised values fall back to `read-only`. | `mcp` | None |
 | `smtp.host` | string | (none) | SMTP server hostname for email alert delivery. | `email` | `SOROKEEP_SMTP_HOST` |
 | `smtp.port` | number | (none) | SMTP server port. | `email` | `SOROKEEP_SMTP_PORT` |
 | `smtp.user` | string | (none) | SMTP authentication username. | `email` | `SOROKEEP_SMTP_USER` |

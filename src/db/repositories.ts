@@ -35,7 +35,11 @@ export interface ExtensionPolicy {
     extend_when_below_ledgers: number;
     keypair_public: string | null;
     keypair_source: string | null;
+    /** Hard per-transaction fee ceiling in stroops, or null for no ceiling (issue #420). */
+    max_fee_stroops: number | null;
     created_at: Date;
+    /** Number of daemon cycles ahead to project TTL crossing (issue #492). 0 = disabled. */
+    predictive_cycles: number;
 }
 
 export interface AlertConfig {
@@ -112,6 +116,7 @@ export interface StateChange {
 export interface ContractGroup {
     id: number;
     name: string;
+    poll_interval_seconds: number | null;
     created_at: string;
 }
 
@@ -339,28 +344,138 @@ export function upsertExtensionPolicy(db: Database.Database, policy: {
   extend_when_below_ledgers: number;
   keypair_public?: string;
   keypair_source?: string;
+  max_fee_stroops?: number | null;
+  /** Daemon cycles ahead to project TTL crossing (issue #492). Omitted = preserve the existing value (0 for a new policy). */
+  predictive_cycles?: number;
 }): void {
-  db.prepare(`
-    INSERT INTO extension_policies (contract_id, enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source)
-    VALUES (@contract_id, @enabled, @target_ttl_ledgers, @extend_when_below_ledgers, @keypair_public, @keypair_source)
-    ON CONFLICT(contract_id) DO UPDATE SET
-      enabled = @enabled,
-      target_ttl_ledgers = @target_ttl_ledgers,
-      extend_when_below_ledgers = @extend_when_below_ledgers,
-      keypair_public = @keypair_public,
-      keypair_source = @keypair_source
-  `).run({
-    contract_id: policy.contract_id,
-    enabled: policy.enabled !== false ? 1 : 0,
-    target_ttl_ledgers: policy.target_ttl_ledgers,
-    extend_when_below_ledgers: policy.extend_when_below_ledgers,
-    keypair_public: policy.keypair_public ?? null,
-    keypair_source: policy.keypair_source ?? null,
-  });
+  db.transaction(() => {
+    // predictive_cycles is set independently via --predictive; callers updating
+    // other fields (e.g. --disable, --auto-extend) omit it and must not
+    // silently reset it back to 0.
+    const existing = db.prepare(
+      "SELECT predictive_cycles FROM extension_policies WHERE contract_id = ?",
+    ).get(policy.contract_id) as { predictive_cycles: number } | undefined;
+
+    const row = {
+      contract_id: policy.contract_id,
+      enabled: policy.enabled !== false ? 1 : 0,
+      target_ttl_ledgers: policy.target_ttl_ledgers,
+      extend_when_below_ledgers: policy.extend_when_below_ledgers,
+      keypair_public: policy.keypair_public ?? null,
+      keypair_source: policy.keypair_source ?? null,
+      max_fee_stroops: policy.max_fee_stroops ?? null,
+      predictive_cycles: policy.predictive_cycles ?? existing?.predictive_cycles ?? 0,
+    };
+
+    db.prepare(`
+      INSERT INTO extension_policies (contract_id, enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source, max_fee_stroops, predictive_cycles)
+      VALUES (@contract_id, @enabled, @target_ttl_ledgers, @extend_when_below_ledgers, @keypair_public, @keypair_source, @max_fee_stroops, @predictive_cycles)
+      ON CONFLICT(contract_id) DO UPDATE SET
+        enabled = @enabled,
+        target_ttl_ledgers = @target_ttl_ledgers,
+        extend_when_below_ledgers = @extend_when_below_ledgers,
+        keypair_public = @keypair_public,
+        keypair_source = @keypair_source,
+        max_fee_stroops = @max_fee_stroops,
+        predictive_cycles = @predictive_cycles
+    `).run(row);
+
+    // Append-only version history (issue #506) — powers 'sorokeep guard rollback'.
+    db.prepare(`
+      INSERT INTO guard_policy_history (contract_id, enabled, target_ttl_ledgers, extend_when_below_ledgers, keypair_public, keypair_source, predictive_cycles)
+      VALUES (@contract_id, @enabled, @target_ttl_ledgers, @extend_when_below_ledgers, @keypair_public, @keypair_source, @predictive_cycles)
+    `).run(row);
+  })();
 }
 
 export function getExtensionPolicy(db: Database.Database, contractId: string): ExtensionPolicy | undefined {
   return db.prepare("SELECT * FROM extension_policies WHERE contract_id = ?").get(contractId) as ExtensionPolicy | undefined;
+}
+
+export type EntryType = "instance" | "wasm" | "persistent" | "temporary";
+
+/**
+ * Resolves the effective TTL policy for a specific entry type.
+ *
+ * Resolution order:
+ * 1. entry_type_policies row for (contractId, entryType) if it exists
+ * 2. extension_policies row for contractId (contract-level default)
+ * 3. undefined if neither exists (issue #491)
+ */
+export function getEffectivePolicy(
+  db: Database.Database,
+  contractId: string,
+  entryType: EntryType,
+): ExtensionPolicy | undefined {
+  const override = db.prepare(`
+    SELECT target_ttl_ledgers, extend_when_below_ledgers
+    FROM entry_type_policies
+    WHERE contract_id = ? AND entry_type = ?
+  `).get(contractId, entryType) as { target_ttl_ledgers: number; extend_when_below_ledgers: number } | undefined;
+
+  const defaultPolicy = getExtensionPolicy(db, contractId);
+
+  if (!override) {
+    return defaultPolicy;
+  }
+
+  // Type override supplies TTL parameters only — enabled/keypair are still
+  // governed by the contract-level policy (an entry-type override cannot
+  // enable auto-extension on its own, nor supply its own signing key).
+  return {
+    id: defaultPolicy?.id ?? 0,
+    contract_id: contractId,
+    enabled: defaultPolicy?.enabled ?? false,
+    target_ttl_ledgers: override.target_ttl_ledgers,
+    extend_when_below_ledgers: override.extend_when_below_ledgers,
+    keypair_public: defaultPolicy?.keypair_public ?? null,
+    keypair_source: defaultPolicy?.keypair_source ?? null,
+    max_fee_stroops: defaultPolicy?.max_fee_stroops ?? null,
+    created_at: defaultPolicy?.created_at ?? new Date(),
+    predictive_cycles: defaultPolicy?.predictive_cycles ?? 0,
+  };
+}
+
+/**
+ * Sets or updates a per-entry-type policy override. Idempotent (UPSERT).
+ */
+export function setEntryTypePolicy(
+  db: Database.Database,
+  contractId: string,
+  entryType: EntryType,
+  policy: {
+    target_ttl_ledgers: number;
+    extend_when_below_ledgers: number;
+  },
+): void {
+  db.prepare(`
+    INSERT INTO entry_type_policies (contract_id, entry_type, target_ttl_ledgers, extend_when_below_ledgers, created_at, updated_at)
+    VALUES (@contract_id, @entry_type, @target_ttl_ledgers, @extend_when_below_ledgers, datetime('now'), datetime('now'))
+    ON CONFLICT(contract_id, entry_type) DO UPDATE SET
+      target_ttl_ledgers = excluded.target_ttl_ledgers,
+      extend_when_below_ledgers = excluded.extend_when_below_ledgers,
+      updated_at = datetime('now')
+  `).run({
+    contract_id: contractId,
+    entry_type: entryType,
+    target_ttl_ledgers: policy.target_ttl_ledgers,
+    extend_when_below_ledgers: policy.extend_when_below_ledgers,
+  });
+}
+
+/**
+ * Removes a per-entry-type policy override. After removal, the
+ * contract-level default applies again. Idempotent.
+ */
+export function deleteEntryTypePolicy(
+  db: Database.Database,
+  contractId: string,
+  entryType: string,
+): void {
+  db.prepare(`
+    DELETE FROM entry_type_policies
+    WHERE contract_id = ? AND entry_type = ?
+  `).run(contractId, entryType);
 }
 
 // ---------------------------- Database Access Functions For Other Schema: AlertConfig----------------------------
@@ -420,6 +535,23 @@ export function deleteAlertConfig(db: Database.Database, id: number): void {
 
 export function setAlertConfigEnabled(db: Database.Database, id: number, enabled: boolean): void {
   db.prepare("UPDATE alert_configs SET enabled = ? WHERE id = ?").run(enabled ? 1 : 0, id);
+}
+
+/**
+ * Rotate the HMAC signing secret for an existing alert config row.
+ * Only the `webhook_secret` column is touched; every other column is left unchanged.
+ *
+ * @returns `true` if the row was found and updated, `false` if no row with that `id` exists.
+ */
+export function updateAlertConfigSecret(
+  db: Database.Database,
+  id: number,
+  newSecret: string,
+): boolean {
+  const result = db
+    .prepare("UPDATE alert_configs SET webhook_secret = ? WHERE id = ?")
+    .run(newSecret, id);
+  return result.changes > 0;
 }
 
 // ---------------------------- Database Access Functions For Other Schema: AlertFired----------------------------
@@ -1760,13 +1892,28 @@ export function getLatestResourceUsageLog(
  */
 export function createGroup(
     db: Database.Database,
-    group: { name: string },
+    group: { name: string; poll_interval_seconds?: number | null },
 ): number {
     const result = db.prepare(`
-        INSERT INTO contract_groups (name)
-        VALUES (@name)
-    `).run({ name: group.name });
+        INSERT INTO contract_groups (name, poll_interval_seconds)
+        VALUES (@name, @poll_interval_seconds)
+    `).run({ name: group.name, poll_interval_seconds: group.poll_interval_seconds ?? null });
     return result.lastInsertRowid as number;
+}
+
+/**
+ * Set (or clear, with null) a group's default poll interval in seconds.
+ * Consulted by resolvePollIntervalMs as a fallback tier between a
+ * contract's own override and the global --interval flag (issue #400).
+ */
+export function setGroupPollInterval(
+    db: Database.Database,
+    groupId: number,
+    pollIntervalSeconds: number | null,
+): void {
+    db.prepare(`
+        UPDATE contract_groups SET poll_interval_seconds = ? WHERE id = ?
+    `).run(pollIntervalSeconds, groupId);
 }
 
 /**
@@ -1962,4 +2109,76 @@ export function getDigestConfigs(
             `SELECT * FROM digest_configs WHERE network = ? AND enabled = 1 ORDER BY id ASC`,
         )
         .all(network) as DigestConfig[];
+}
+
+// ─── TTL Samples (issue #492 — predictive scheduling) ────────────────────────
+
+/**
+ * Maximum number of TTL samples retained per contract entry.
+ * Older samples beyond this limit are pruned on each insert.
+ */
+export const MAX_TTL_SAMPLES = 10;
+
+export interface TTLSampleRow {
+    id: number;
+    entry_id: number;
+    sampledAtLedger: number;
+    liveUntilLedger: number;
+    recorded_at: string;
+}
+
+/**
+ * Persist a single TTL reading for a contract entry.
+ * Call `pruneOldTTLSamples` after inserting to keep the window bounded.
+ */
+export function insertTTLSample(
+    db: Database.Database,
+    entryId: number,
+    sampledAtLedger: number,
+    liveUntilLedger: number,
+): void {
+    db.prepare(`
+        INSERT INTO ttl_samples (entry_id, sampled_at_ledger, live_until_ledger)
+        VALUES (?, ?, ?)
+    `).run(entryId, sampledAtLedger, liveUntilLedger);
+}
+
+/**
+ * Return up to `limit` TTL samples for an entry, newest first.
+ * Defaults to MAX_TTL_SAMPLES.
+ */
+export function getTTLSamples(
+    db: Database.Database,
+    entryId: number,
+    limit = MAX_TTL_SAMPLES,
+): Array<{ sampledAtLedger: number; liveUntilLedger: number }> {
+    return db.prepare(`
+        SELECT sampled_at_ledger AS sampledAtLedger,
+               live_until_ledger AS liveUntilLedger
+        FROM ttl_samples
+        WHERE entry_id = ?
+        ORDER BY sampled_at_ledger DESC
+        LIMIT ?
+    `).all(entryId, limit) as Array<{ sampledAtLedger: number; liveUntilLedger: number }>;
+}
+
+/**
+ * Delete samples beyond MAX_TTL_SAMPLES for the given entry, keeping the
+ * newest MAX_TTL_SAMPLES rows.  Call this after every insert.
+ */
+export function pruneOldTTLSamples(
+    db: Database.Database,
+    entryId: number,
+    keep = MAX_TTL_SAMPLES,
+): void {
+    db.prepare(`
+        DELETE FROM ttl_samples
+        WHERE entry_id = ?
+          AND id NOT IN (
+              SELECT id FROM ttl_samples
+              WHERE entry_id = ?
+              ORDER BY sampled_at_ledger DESC
+              LIMIT ?
+          )
+    `).run(entryId, entryId, keep);
 }

@@ -171,3 +171,50 @@ export function paginateList<T>(
 export function formatPaginationFooter(meta: PaginationMeta): string {
     return `Page ${meta.page} of ${meta.totalPages} (${meta.totalItems} total)`;
 }
+
+// ── Fleet CSV Export ────────────────────────────────────────────────────────
+
+export interface FleetCSVRow {
+    contractId: string;
+    contractName: string | null;
+    entryKeyXdr: string;
+    entryType: string;
+    remainingTTL: number;
+    status: string;
+}
+
+/**
+ * Escape a single CSV field per RFC 4180.
+ * Fields containing commas, double-quotes, or newlines are wrapped in
+ * double-quotes; any embedded double-quotes are doubled.
+ */
+function escapeCSVField(value: string): string {
+    if (value.includes(",") || value.includes('"') || value.includes("\n")) {
+        return `"${value.replace(/"/g, '""')}"`;
+    }
+    return value;
+}
+
+/**
+ * Format fleet health data as CSV with a header row.
+ *
+ * Output columns: contract_id, contract_name, entry_key_xdr, entry_type,
+ * remaining_ttl, status — one row per tracked entry across all contracts.
+ */
+export function formatFleetCSV(rows: FleetCSVRow[]): string {
+    const header = "contract_id,contract_name,entry_key_xdr,entry_type,remaining_ttl,status";
+
+    const dataLines = rows.map((row) => {
+        const name = row.contractName ?? formatContractID(row.contractId);
+        return [
+            escapeCSVField(row.contractId),
+            escapeCSVField(name),
+            escapeCSVField(row.entryKeyXdr),
+            escapeCSVField(row.entryType),
+            String(row.remainingTTL),
+            escapeCSVField(row.status),
+        ].join(",");
+    });
+
+    return [header, ...dataLines].join("\n");
+}

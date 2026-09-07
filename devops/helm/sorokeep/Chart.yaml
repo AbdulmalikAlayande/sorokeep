@@ -1,0 +1,14 @@
+apiVersion: v2
+name: sorokeep
+description: Helm chart for the Sorokeep Soroban contract TTL monitoring daemon
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - stellar
+  - soroban
+  - monitoring
+  - devops
+home: https://github.com/AbdulmalikAlayande/sorokeep
+sources:
+  - https://github.com/AbdulmalikAlayande/sorokeep

@@ -181,6 +181,96 @@ describe("Database Repositories", () => {
         });
     });
 
+    describe("Entry-type policy overrides (#491)", () => {
+        it("falls back to the contract-level policy when no override exists", () => {
+            repo.insertContract(db, { id: "C1", network: "testnet" });
+            repo.upsertExtensionPolicy(db, {
+                contract_id: "C1",
+                enabled: true,
+                target_ttl_ledgers: 10000,
+                extend_when_below_ledgers: 5000,
+            });
+
+            const effective = repo.getEffectivePolicy(db, "C1", "persistent");
+            expect(effective?.target_ttl_ledgers).toBe(10000);
+            expect(effective?.extend_when_below_ledgers).toBe(5000);
+        });
+
+        it("returns override TTL parameters while inheriting enabled/keypair from the contract-level policy", () => {
+            repo.insertContract(db, { id: "C1", network: "testnet" });
+            repo.upsertExtensionPolicy(db, {
+                contract_id: "C1",
+                enabled: true,
+                target_ttl_ledgers: 10000,
+                extend_when_below_ledgers: 5000,
+                keypair_public: "PUB",
+                keypair_source: "SRC",
+            });
+            repo.setEntryTypePolicy(db, "C1", "temporary", {
+                target_ttl_ledgers: 500,
+                extend_when_below_ledgers: 100,
+            });
+
+            const effective = repo.getEffectivePolicy(db, "C1", "temporary");
+            expect(effective?.target_ttl_ledgers).toBe(500);
+            expect(effective?.extend_when_below_ledgers).toBe(100);
+            expect(effective?.enabled).toBe(1);
+            expect(effective?.keypair_public).toBe("PUB");
+
+            // Other entry types are unaffected by the override.
+            const untouched = repo.getEffectivePolicy(db, "C1", "instance");
+            expect(untouched?.target_ttl_ledgers).toBe(10000);
+        });
+
+        it("does not force-enable auto-extension when the contract-level policy is disabled", () => {
+            repo.insertContract(db, { id: "C1", network: "testnet" });
+            repo.upsertExtensionPolicy(db, {
+                contract_id: "C1",
+                enabled: false,
+                target_ttl_ledgers: 10000,
+                extend_when_below_ledgers: 5000,
+            });
+            repo.setEntryTypePolicy(db, "C1", "wasm", {
+                target_ttl_ledgers: 500,
+                extend_when_below_ledgers: 100,
+            });
+
+            const effective = repo.getEffectivePolicy(db, "C1", "wasm");
+            expect(effective?.enabled).toBe(0);
+        });
+
+        it("upserts an override in place when set again for the same entry type", () => {
+            repo.insertContract(db, { id: "C1", network: "testnet" });
+            repo.upsertExtensionPolicy(db, {
+                contract_id: "C1",
+                enabled: true,
+                target_ttl_ledgers: 10000,
+                extend_when_below_ledgers: 5000,
+            });
+            repo.setEntryTypePolicy(db, "C1", "persistent", { target_ttl_ledgers: 500, extend_when_below_ledgers: 100 });
+            repo.setEntryTypePolicy(db, "C1", "persistent", { target_ttl_ledgers: 800, extend_when_below_ledgers: 200 });
+
+            const effective = repo.getEffectivePolicy(db, "C1", "persistent");
+            expect(effective?.target_ttl_ledgers).toBe(800);
+            expect(effective?.extend_when_below_ledgers).toBe(200);
+        });
+
+        it("removes an override, reverting to the contract-level policy", () => {
+            repo.insertContract(db, { id: "C1", network: "testnet" });
+            repo.upsertExtensionPolicy(db, {
+                contract_id: "C1",
+                enabled: true,
+                target_ttl_ledgers: 10000,
+                extend_when_below_ledgers: 5000,
+            });
+            repo.setEntryTypePolicy(db, "C1", "persistent", { target_ttl_ledgers: 500, extend_when_below_ledgers: 100 });
+            repo.deleteEntryTypePolicy(db, "C1", "persistent");
+
+            const effective = repo.getEffectivePolicy(db, "C1", "persistent");
+            expect(effective?.target_ttl_ledgers).toBe(10000);
+        });
+    });
+
     describe("AlertConfig and Fired Alerts", () => {
         it("inserts configs and gets them", () => {
             repo.insertContract(db, { id: "C1", network: "testnet" });

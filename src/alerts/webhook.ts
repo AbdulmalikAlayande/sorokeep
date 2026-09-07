@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AlertEvent } from "./types.js";
 import { getLogger } from "../logging/index.js";
 import { renderAlertTemplate } from "./templates.js";
@@ -7,6 +7,32 @@ import { getStellarExpertContractUrl } from "./links.js";
 const logger = getLogger().child({ component: "WebhookHandler" });
 
 const TIMEOUT_MS = 10_000;
+
+/**
+ * Verify an incoming webhook HMAC-SHA256 signature.
+ *
+ * @param payload The raw request body string received by the webhook endpoint.
+ * @param signature The signature header string (e.g. `X-Sorokeep-Signature`), with or without `sha256=` prefix.
+ * @param secret The webhook signing secret.
+ * @returns `true` if the signature is valid, `false` otherwise.
+ */
+export function verifyWebhookSignature(payload: string, signature: string, secret: string): boolean {
+    if (!payload || !signature || !secret) {
+        return false;
+    }
+
+    const cleanSignature = signature.startsWith("sha256=") ? signature.slice(7) : signature;
+    const expectedHex = createHmac("sha256", secret).update(payload).digest("hex");
+
+    const sigBuffer = Buffer.from(cleanSignature);
+    const expectedBuffer = Buffer.from(expectedHex);
+
+    if (sigBuffer.length !== expectedBuffer.length) {
+        return false;
+    }
+
+    return timingSafeEqual(sigBuffer, expectedBuffer);
+}
 
 /**
  * Send an AlertEvent to a webhook URL via HTTP POST.

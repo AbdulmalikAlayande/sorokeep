@@ -57,6 +57,8 @@ describe("getContractStatus", () => {
                     remainingTTL: 20_000,
                     approximateTimeRemaining: "~1d 6h",
                     status: "ok",
+                    projectedCrossingLedger: null,
+                    projectedCrossingAt: null,
                 },
                 {
                     label: "WASM Code",
@@ -66,6 +68,8 @@ describe("getContractStatus", () => {
                     remainingTTL: 10_000,
                     approximateTimeRemaining: "~15h 16m",
                     status: "warning",
+                    projectedCrossingLedger: null,
+                    projectedCrossingAt: null,
                 },
             ],
         });

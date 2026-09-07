@@ -1,0 +1,63 @@
+# Railway deployment configuration for Sorokeep.
+#
+# Builds the existing Dockerfile as-is — Dockerfile is out of scope for this
+# change and is NOT modified here. See the KNOWN BUILD FAILURE note below.
+#
+# ── Stellar network / RPC URL ────────────────────────────────────────────────
+# `sorokeep daemon` has no environment-variable inputs of its own — network
+# and RPC URL are CLI flags (see src/commands/daemon.ts). Railway's ${{ VAR }}
+# template syntax interpolates configured service variables into the start
+# command below at deploy time, so this is wired up purely through Railway
+# config — no application source changes required.
+#
+# Set these variables on the Railway service before deploying:
+#   SOROKEEP_NETWORK    = testnet   (the existing --network flag; "testnet" or
+#                                    "mainnet" — testnet is the app's own
+#                                    default per src/utils/config.ts)
+#   SOROKEEP_RPC_URL    = https://soroban-testnet.stellar.org
+#                                   (testnet default baked into
+#                                    src/rpc/client.ts; override for a custom
+#                                    RPC endpoint or mainnet)
+#
+# ── Secret-key configuration ─────────────────────────────────────────────────
+# `sorokeep daemon` does NOT accept a secret key directly, and there is no
+# environment variable it reads for one. The only supported mechanism is
+# `sorokeep guard <contract-id> --keypair-env <VAR> --auto-extend`
+# (src/commands/guard.ts), which persists just the *name* of an environment
+# variable — never the key itself — to the daemon's database. The running
+# daemon then resolves that variable from its own process environment on
+# every cycle (src/core/extension.ts, resolveSecretKey()).
+#
+# This registration step is a one-off CLI invocation against the same
+# persistent volume the daemon uses, and CANNOT be expressed as Railway
+# service/config-as-code — it is not something railway.toml, environment
+# variables, or the start command can complete on their own. Concretely:
+#
+#   1. Set a Railway variable holding the real secret, e.g. STELLAR_SECRET_KEY
+#      (mark it "sealed" in the Railway dashboard so it's never exposed via
+#      the UI/API/CLI variable listing).
+#   2. After the service has deployed at least once (so the persistent
+#      volume + database exist), run, e.g. via `railway run`:
+#        sorokeep guard <contract-id> --keypair-env STELLAR_SECRET_KEY --auto-extend
+#      This is a manual, out-of-band step — not automated by this file.
+#
+# Do not put the secret value in [deploy].startCommand — command-line
+# arguments are visible in process listings and container logs.
+#
+# ── KNOWN BUILD FAILURE (out of scope to fix here) ───────────────────────────
+# The existing Dockerfile's builder stage copies only package*.json,
+# tsconfig.json, and src/ — it does not copy scripts/. `npm run build`
+# unconditionally chains into `npm run build:man`, which runs
+# `tsx scripts/generate-man.ts` (package.json). Since scripts/ is absent from
+# the Docker build context, `docker build .` fails during the Dockerfile's
+# `RUN npm run build` step. This means a fresh Railway deployment using this
+# configuration will NOT currently succeed. Fixing it requires editing
+# Dockerfile, which is out of scope for this change.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "daemon --network ${{SOROKEEP_NETWORK}} --rpc-url ${{SOROKEEP_RPC_URL}}"
+restartPolicyType = "ON_FAILURE"

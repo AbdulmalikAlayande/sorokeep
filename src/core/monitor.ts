@@ -10,11 +10,16 @@ import {
     recordAlertFired,
     resolveAlerts,
     getAlertConfigTargets,
+    insertTTLSample,
+    pruneOldTTLSamples,
+    getTTLSamples,
+    getExtensionPolicy,
 } from "../db/repositories.js";
 import { StellarRpcClient } from "../rpc/client.js";
 import { deliverSingleAlert } from "../alerts/dispatcher.js";
 import { buildAlertEvent } from "../alerts/types.js";
-import { runAutoExtensions } from "./extension.js";
+import { runAutoExtensions, type PredictiveOptions } from "./extension.js";
+import { computeDecayRate, projectCrossingLedger } from "./predictive.js";
 import { getLogger } from "../logging/index.js";
 import { getTracer, endSpan } from "../observability/tracing.js";
 import type { Span } from "@opentelemetry/api";
@@ -22,6 +27,15 @@ import type { Span } from "@opentelemetry/api";
 const logger = getLogger().child({ component: "MonitorCycle" });
 
 // ─── Public contract ──────────────────────────────────────────────────────────
+
+export interface ProjectedCrossing {
+    contractId: string;
+    entryKeyXdr: string;
+    /** Projected ledger at which remainingTTL will fall below threshold. Null when insufficient samples. */
+    projectedCrossingLedger: number | null;
+    /** ISO-8601 string derived from the ledger projection. Null when projection is unavailable. */
+    projectedCrossingAt: string | null;
+}
 
 export interface MonitorCycleResult {
     /** Number of contracts belonging to the target network that were processed. */
@@ -42,6 +56,8 @@ export interface MonitorCycleResult {
     cycleStartedAt: Date;
     /** Timestamp when this cycle completed. */
     cycleFinishedAt: Date;
+    /** Projected TTL crossing ledgers for entries with enough historical samples. */
+    projectedCrossings: ProjectedCrossing[];
 }
 
 // ─── Core implementation ──────────────────────────────────────────────────────
@@ -61,15 +77,18 @@ export interface MonitorCycleResult {
  * returned rather than propagated so that one bad contract cannot abort the
  * entire cycle.
  *
- * @param db      - An open better-sqlite3 Database handle.
- * @param network - The Stellar network to monitor ("testnet" | "mainnet" | …).
- * @param rpcUrl  - Optional override for the RPC endpoint URL.
+ * @param db               - An open better-sqlite3 Database handle.
+ * @param network          - The Stellar network to monitor ("testnet" | "mainnet" | …).
+ * @param rpcUrl           - Optional override for the RPC endpoint URL.
+ * @param feeSponsorSecret - Optional fee sponsor secret key source string.
+ * @param predictiveOpts   - Optional predictive scheduling options (issue #492).
  */
 export async function runMonitorCycle(
     db: Database.Database,
     network: string,
     rpcUrl?: string,
     feeSponsorSecret?: string,
+    predictiveOpts?: PredictiveOptions,
 ): Promise<MonitorCycleResult> {
     const cycleStartedAt = new Date();
 
@@ -83,6 +102,7 @@ export async function runMonitorCycle(
         errors: [],
         cycleStartedAt,
         cycleFinishedAt: cycleStartedAt,   // will be overwritten at the end
+        projectedCrossings: [],
     };
 
     // One RPC client shared across the cycle for the target network.
@@ -117,7 +137,7 @@ export async function runMonitorCycle(
     // Auto-extension phase: check extension_policies and submit transactions for
     // entries whose TTL fell below the configured threshold.
     try {
-        const ext = await runAutoExtensions(db, network, rpcUrl, feeSponsorSecret);
+        const ext = await runAutoExtensions(db, network, rpcUrl, feeSponsorSecret, predictiveOpts);
         result.extensionsTriggered = ext.entriesExtended;
         result.extensionErrors = ext.errors;
         if (ext.entriesExtended > 0) {
@@ -188,6 +208,9 @@ async function processContract(
     // Load alert configurations once per contract.
     const alertConfigs = getAlertConfigsForContract(db, contractId);
 
+    // Load extension policy once — needed for predictive threshold projection.
+    const policy = getExtensionPolicy(db, contractId);
+
     for (const entry of entries) {
         const rpcEntry = rpcMap.get(entry.entry_key_xdr);
 
@@ -212,6 +235,32 @@ async function processContract(
         });
 
         result.entriesUpdated++;
+
+        // 3b. Record TTL sample for predictive decay-rate calculation (issue #492).
+        insertTTLSample(db, entry.id, rpcResult.latestLedger, rpcEntry.liveUntilLedgerSeq);
+        pruneOldTTLSamples(db, entry.id);
+
+        // 3c. Compute projected crossing ledger for this entry when a policy exists.
+        const thresholdLedgers = policy?.extend_when_below_ledgers ?? null;
+        if (thresholdLedgers !== null) {
+            const samples = getTTLSamples(db, entry.id);
+            const decayRate = computeDecayRate(samples);
+            const projectedLedger = projectCrossingLedger(
+                decayRate,
+                rpcEntry.remainingTTL,
+                thresholdLedgers,
+                rpcResult.latestLedger,
+            );
+
+            result.projectedCrossings.push({
+                contractId,
+                entryKeyXdr: entry.entry_key_xdr,
+                projectedCrossingLedger: projectedLedger,
+                projectedCrossingAt: projectedLedger !== null
+                    ? approximateLedgerTimestamp(projectedLedger, rpcResult.latestLedger)
+                    : null,
+            });
+        }
 
         // 4 & 5. Threshold detection and resolution.
         if (alertConfigs.length === 0) continue;
@@ -306,4 +355,15 @@ async function processContract(
             }
         }
     }
+}
+
+/**
+ * Approximate a wall-clock ISO-8601 timestamp for a future ledger.
+ * Stellar closes a ledger roughly every 5 seconds.
+ */
+function approximateLedgerTimestamp(targetLedger: number, currentLedger: number): string {
+    const SECONDS_PER_LEDGER = 5;
+    const deltaLedgers = targetLedger - currentLedger;
+    const deltaMs = deltaLedgers * SECONDS_PER_LEDGER * 1000;
+    return new Date(Date.now() + deltaMs).toISOString();
 }

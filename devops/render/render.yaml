@@ -1,0 +1,32 @@
+services:
+  - type: worker
+    name: sorokeep-daemon
+    env: docker
+    dockerfilePath: Dockerfile
+    dockerContext: .
+    startCommand: daemon --network testnet
+    disk:
+      name: sorokeep-data
+      mountPath: /home/sorokeep/.sorokeep
+      sizeGB: 1
+    envVars:
+      - key: SOROKEEP_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: SOROKEEP_SLACK_TOKEN
+        sync: false
+      - key: SOROKEEP_SMTP_HOST
+        sync: false
+      - key: SOROKEEP_SMTP_PORT
+        sync: false
+      - key: SOROKEEP_SMTP_USER
+        sync: false
+      - key: SOROKEEP_SMTP_PASS
+        sync: false
+      - key: SOROKEEP_MATRIX_ACCESS_TOKEN
+        sync: false
+      - key: SOROKEEP_MATRIX_HOMESERVER
+        sync: false
+      - key: SOROKEEP_METRICS_TOKEN
+        sync: false
+      - key: SOROKEEP_OTLP_ENDPOINT
+        sync: false

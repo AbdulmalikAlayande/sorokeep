@@ -3,7 +3,7 @@ import { Command } from "commander";
 import type Database from "better-sqlite3";
 import { getDatabaseForTesting } from "../../src/db/database";
 import { registerChannelsCommand } from "../../src/commands/channels";
-import { getChannelAccounts, insertChannelAccount } from "../../src/db/repositories";
+import { getChannelAccounts, insertChannelAccount, updateChannelBalance } from "../../src/db/repositories";
 
 let mockDb: Database.Database;
 
@@ -222,6 +222,63 @@ describe("channels command", () => {
             expect(consoleErrorSpy).toHaveBeenCalledWith(
                 expect.stringContaining("No channel accounts")
             );
+        });
+    });
+
+    // ── Issue #504: channels list shows low-balance warning ──────────────
+
+    describe("channels list low-balance", () => {
+        it("shows a warning for channel accounts with low balance", () => {
+            insertChannelAccount(mockDb, {
+                public_key: "GDQJUTQYK2MQX2VGDR2FYWLIYAQIEGXTQVTFEMGH85FYDNE5VRLJQJN5",
+                label: "low-bal",
+                network: "testnet",
+            });
+            updateChannelBalance(mockDb, "GDQJUTQYK2MQX2VGDR2FYWLIYAQIEGXTQVTFEMGH85FYDNE5VRLJQJN5", 1.5);
+
+            const program = new Command();
+            registerChannelsCommand(program);
+
+            program.parse(["node", "sorokeep", "channels", "list", "--network", "testnet"]);
+
+            expect(consoleLogSpy).toHaveBeenCalledWith(
+                expect.stringContaining("GDQJUTQYK2MQX2VGDR2FYWLIYAQIEGXTQVTFEMGH85FYDNE5VRLJQJN5")
+            );
+            const allCalls = consoleLogSpy.mock.calls.flat().join(" ");
+            expect(allCalls).toMatch(/LOW/);
+        });
+
+        it("does not show warning for accounts with sufficient balance", () => {
+            insertChannelAccount(mockDb, {
+                public_key: "GDQJUTQYK2MQX2VGDR2FYWLIYAQIEGXTQVTFEMGH85FYDNE5VRLJQJN5",
+                label: "rich",
+                network: "testnet",
+            });
+            updateChannelBalance(mockDb, "GDQJUTQYK2MQX2VGDR2FYWLIYAQIEGXTQVTFEMGH85FYDNE5VRLJQJN5", 50.0);
+
+            const program = new Command();
+            registerChannelsCommand(program);
+
+            program.parse(["node", "sorokeep", "channels", "list", "--network", "testnet"]);
+
+            const allCalls = consoleLogSpy.mock.calls.flat().join(" ");
+            expect(allCalls).not.toMatch(/LOW/);
+        });
+
+        it("shows 'balance: unknown' for accounts with no recorded balance", () => {
+            insertChannelAccount(mockDb, {
+                public_key: "GDQJUTQYK2MQX2VGDR2FYWLIYAQIEGXTQVTFEMGH85FYDNE5VRLJQJN5",
+                label: "fresh",
+                network: "testnet",
+            });
+
+            const program = new Command();
+            registerChannelsCommand(program);
+
+            program.parse(["node", "sorokeep", "channels", "list", "--network", "testnet"]);
+
+            const allCalls = consoleLogSpy.mock.calls.flat().join(" ");
+            expect(allCalls).toMatch(/balance: unknown/);
         });
     });
 });

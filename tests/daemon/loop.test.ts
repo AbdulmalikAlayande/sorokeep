@@ -51,7 +51,7 @@ vi.mock("../../src/logging/index.js", () => ({
 }));
 
 import { startDaemon, stopDaemon } from "../../src/daemon/loop.js";
-import { insertContract } from "../../src/db/repositories.js";
+import { insertContract, createGroup, addContractToGroup, setGroupPollInterval } from "../../src/db/repositories.js";
 import { daemonCycleDuration, daemonCyclesSkipped } from "../../src/observability/metrics/daemon.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1007,6 +1007,151 @@ describe("daemon loop", () => {
             await vi.advanceTimersByTimeAsync(5000);
             expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
             expect(mockDeliverPendingAlerts).toHaveBeenCalledTimes(2);
+        });
+    });
+
+    // =========================================================================
+    // GROUP-LEVEL POLL INTERVAL PRECEDENCE (issue #400)
+    // =========================================================================
+    describe("Group-level poll interval precedence", () => {
+        /**
+         * Precedence (lowest → highest):
+         *   global --interval  <  per-group default  <  per-contract override
+         */
+
+        it("uses the group's poll_interval_seconds when the contract has no per-contract override", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            const groupId = createGroup(db, { name: "team-alpha" });
+            setGroupPollInterval(db, groupId, 200);
+
+            insertContract(db, {
+                id: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+                name: "group-contract-no-override",
+                network: "testnet",
+            });
+            addContractToGroup(db, {
+                group_id: groupId,
+                contract_id: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+            });
+
+            // Global interval is intentionally much larger so it can't be responsible
+            // for the 200 000 ms tick.
+            await startDaemon(db, "testnet", { intervalMs: 900_000 });
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(199_999);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
+        });
+
+        it("per-contract override always wins over the group's default interval", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            const groupId = createGroup(db, { name: "team-beta" });
+            setGroupPollInterval(db, groupId, 600);
+
+            insertContract(db, {
+                id: "CBEK0975FU6KKOEZHGO098G6HLBS5D6LVATIGCESOGXSZEQ2UWUY8I3O",
+                name: "group-contract-with-override",
+                network: "testnet",
+                poll_interval_seconds: 120,
+            });
+            addContractToGroup(db, {
+                group_id: groupId,
+                contract_id: "CBEK0975FU6KKOEZHGO098G6HLBS5D6LVATIGCESOGXSZEQ2UWUY8I3O",
+            });
+
+            await startDaemon(db, "testnet", { intervalMs: 900_000 });
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(119_999);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            // Exactly at 120 s — per-contract override fires (not the 600 s group default).
+            await vi.advanceTimersByTimeAsync(1);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
+        });
+
+        it("falls back to global interval when no per-contract override and no group membership", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            insertContract(db, {
+                id: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+                name: "ungrouped-no-override",
+                network: "testnet",
+            });
+
+            await startDaemon(db, "testnet", { intervalMs: 10_000 });
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(9_999);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
+        });
+
+        it("when multiple contracts exist, picks the smallest effective interval across all of them", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            const groupA = createGroup(db, { name: "group-a" });
+            setGroupPollInterval(db, groupA, 400);
+            const groupB = createGroup(db, { name: "group-b" });
+            setGroupPollInterval(db, groupB, 250);
+
+            insertContract(db, {
+                id: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+                name: "c1-group-a",
+                network: "testnet",
+            });
+            addContractToGroup(db, { group_id: groupA, contract_id: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6" });
+
+            insertContract(db, {
+                id: "CBEK0975FU6KKOEZHGO098G6HLBS5D6LVATIGCESOGXSZEQ2UWUY8I3O",
+                name: "c2-group-b",
+                network: "testnet",
+            });
+            addContractToGroup(db, { group_id: groupB, contract_id: "CBEK0975FU6KKOEZHGO098G6HLBS5D6LVATIGCESOGXSZEQ2UWUY8I3O" });
+
+            // Global fallback is much larger — should not win.
+            await startDaemon(db, "testnet", { intervalMs: 900_000 });
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(249_999);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            // At 250 s — the smallest group default fires.
+            await vi.advanceTimersByTimeAsync(1);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
+        });
+
+        it("ignores a group with no poll_interval_seconds set (falls back to global)", async () => {
+            mockRunMonitorCycle.mockResolvedValue(makeCycleResult());
+
+            const groupId = createGroup(db, { name: "group-no-interval" });
+
+            insertContract(db, {
+                id: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+                name: "contract-group-no-interval",
+                network: "testnet",
+            });
+            addContractToGroup(db, {
+                group_id: groupId,
+                contract_id: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+            });
+
+            // Global is 10 s; group has no poll_interval_seconds → must fall back to 10 s.
+            await startDaemon(db, "testnet", { intervalMs: 10_000 });
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(9_999);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1);
+            expect(mockRunMonitorCycle).toHaveBeenCalledTimes(2);
         });
     });
 });

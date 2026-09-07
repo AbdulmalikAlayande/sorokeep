@@ -9,6 +9,7 @@ import {
     getAlertConfigById,
     deleteAlertConfig,
     setAlertConfigEnabled,
+    updateAlertConfigSecret,
     insertResourceAlertConfig,
     getContract,
     getAlertHistory,
@@ -642,5 +643,42 @@ export function registerAlertsCommand(program: Command): void {
             const rateColor = stats.successRate >= 90 ? chalk.green : (stats.successRate >= 50 ? chalk.yellow : chalk.red);
             console.log(`  Success Rate:   ${rateColor(stats.successRate.toFixed(1))}%`);
             console.log();
+        });
+
+    // ── alerts rotate-secret ───────────────────────────────────────────
+    alerts
+        .command("rotate-secret")
+        .description("Rotate the HMAC signing secret for a webhook alert config")
+        .requiredOption("--id <id>", "The alert configuration ID whose secret should be rotated")
+        .action((options) => {
+            const id = parseInt(options.id, 10);
+            if (isNaN(id)) {
+                console.error(chalk.red("Error: --id must be a number."));
+                process.exit(1);
+            }
+
+            const db = getDatabase();
+            const config = getAlertConfigById(db, id);
+            if (!config) {
+                console.error(chalk.red(`Error: Alert config ID ${id} not found.`));
+                process.exit(1);
+            }
+
+            const channelDef = getAlertChannel(config.channel_type);
+            if (!channelDef?.supportsSigning) {
+                console.error(
+                    chalk.red(
+                        `Error: Alert config ID ${id} uses channel type '${config.channel_type}', which does not support HMAC signing. Only webhook channels use a shared secret.`,
+                    ),
+                );
+                process.exit(1);
+            }
+
+            const newSecret = randomBytes(32).toString("hex");
+            updateAlertConfigSecret(db, id, newSecret);
+
+            console.log(chalk.green(`Successfully rotated secret for alert config ID ${id}.`));
+            console.log(`  ${chalk.bold("Webhook secret:")} ${newSecret}`);
+            console.log(chalk.dim("  Save this secret — it signs payloads via X-Sorokeep-Signature header."));
         });
 }

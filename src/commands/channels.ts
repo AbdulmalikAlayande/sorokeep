@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { getDatabase } from "../db/database.js";
 import { getChannelAccounts } from "../db/repositories.js";
 import { addChannel, fundChannels } from "../core/channels.js";
+import { MINIMUM_BALANCE_XLM } from "../core/extension.js";
 import { formatContractID } from "../utils/formatting.js";
 
 export function registerChannelsCommand(program: Command): void {
@@ -56,7 +57,20 @@ export function registerChannelsCommand(program: Command): void {
             for (const account of accounts) {
                 const fundedBadge = account.funded ? chalk.green(" [funded]") : chalk.dim(" [unfunded]");
                 const label = account.label ? chalk.yellow(` ${account.label}`) : "";
-                console.log(`  ${chalk.cyan(account.public_key)}${label}${fundedBadge}`);
+
+                // Surface balance info and low-balance warning (issue #504)
+                let balanceInfo: string;
+                if (account.balance_xlm !== null && account.balance_xlm !== undefined) {
+                    const isLow = account.balance_xlm < MINIMUM_BALANCE_XLM;
+                    const balanceStr = `${account.balance_xlm} XLM`;
+                    balanceInfo = isLow
+                        ? chalk.red(` [balance: ${balanceStr} LOW]`)
+                        : chalk.dim(` [balance: ${balanceStr}]`);
+                } else {
+                    balanceInfo = chalk.dim(" [balance: unknown]");
+                }
+
+                console.log(`  ${chalk.cyan(account.public_key)}${label}${fundedBadge}${balanceInfo}`);
             }
             console.log();
         });

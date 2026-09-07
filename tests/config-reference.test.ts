@@ -22,6 +22,7 @@ describe("Config Reference Documentation", () => {
             "vault.token",
             "vault.namespace",
             "feeSponsorSecret",
+            "mcp.mode",
             "smtp.host",
             "smtp.port",
             "smtp.user",

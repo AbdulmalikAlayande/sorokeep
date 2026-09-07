@@ -66,7 +66,7 @@ import {
     insertAlertConfig,
 } from "../../src/db/repositories";
 
-const DUMMY_SECRET = "SBAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIB";
+const DUMMY_SECRET = "SBPQHPF4S2SQ7XMYAC27XZZ3BE4BKXPW2MDJMMNKSAW5GCEYOQUDJPN7";
 
 // ─── Unit tests: buildBudgetExhaustedAlertEvent ───────────────────────────────
 

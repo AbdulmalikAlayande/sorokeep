@@ -1,0 +1,45 @@
+name: Pulumi CI (TDD)
+
+on:
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'devops/pulumi/**'
+      - '.github/workflows/pulumi-ci.yml'
+  pull_request:
+    paths:
+      - 'devops/pulumi/**'
+      - '.github/workflows/pulumi-ci.yml'
+
+jobs:
+  pulumi-preview:
+    name: Pulumi Preview Dry-Run
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./devops/pulumi
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: devops/pulumi/package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Setup Pulumi
+        uses: pulumi/action-pulumi@v3
+        with:
+          pulumi-version: '^3.0.0'
+
+      - name: Run Pulumi Preview (Dry-Run)
+        run: pulumi preview --non-interactive --stack dev
+        env:
+          PULUMI_ACCESS_TOKEN: "mock_pulumi_token_for_ci_preview"
+          AWS_ACCESS_KEY_ID: "mock_access_key"
+          AWS_SECRET_ACCESS_KEY: "mock_secret_key"
+          AWS_DEFAULT_REGION: "us-east-1"

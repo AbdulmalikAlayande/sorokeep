@@ -64,15 +64,18 @@ export async function watchContract(db: Database.Database, options: WatchOptions
     const client = new StellarRpcClient(network, rpcUrl);
 
     try {
-        // 0. Check if already registered on a different network
+        // 0. Check if already registered on a different network or with a different name
         const existing = getContract(db, contractId);
-        if (existing && existing.network !== network) {
-            logger.warn(`Contract ${contractId} is already registered on ${existing.network}. To watch on ${network}, unwatch it first.`);
-            return {
-                success: false,
-                contractId,
-                error: `Contract ${contractId} is already registered on ${existing.network}. To watch on ${network}, unwatch it first.`,
-            };
+        
+        if (existing) {
+            if (existing.network !== network) {
+                logger.warn(`Warning: Contract ${contractId} is already registered on '${existing.network}'. Overwriting to watch on '${network}'.`);
+            }
+            
+            const newName = name ?? null;
+            if (existing.name !== newName) {
+                logger.warn(`Warning: Contract ${contractId} is already registered with name '${existing.name}'. Overwriting with new name '${newName}'.`);
+            }
         }
 
         // ── Introspection cache check ─────────────────────────────────────────

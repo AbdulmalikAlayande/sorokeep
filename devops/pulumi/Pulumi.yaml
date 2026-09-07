@@ -1,0 +1,3 @@
+name: sorokeep-daemon
+runtime: nodejs
+description: Pulumi TypeScript component for deploying the Sorokeep daemon on AWS EC2

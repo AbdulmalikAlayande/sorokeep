@@ -395,50 +395,156 @@ export interface StellarRpcClientOptions {
     rpcCertificateFingerprint?: string;
 }
 
+/** How long a repeatedly-failing endpoint is skipped before being retried (issue #496). */
+const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
+
+interface RpcEndpoint {
+    url: string;
+    /** Already wrapped with wrapServerWithUnreachableDetection. */
+    server: rpc.Server;
+    circuitBrokenUntil: number;
+}
+
+/**
+ * Whether an error from one endpoint should trigger a failover attempt
+ * against the next configured endpoint, rather than surfacing immediately.
+ * Network-level failures and rate-limit/server-error HTTP statuses are
+ * endpoint problems worth retrying elsewhere; anything else (a simulation
+ * error, a bad request) would just fail identically on any endpoint.
+ */
+function isFailoverEligible(error: unknown): boolean {
+    if (error instanceof RpcUnreachableError) return true;
+    const err = error as ErrorLike;
+    const status = err?.response?.status;
+    if (status === 429 || (typeof status === "number" && status >= 500 && status < 600)) return true;
+    return isNetworkError(error);
+}
+
 export class StellarRpcClient {
     private readonly network: string;
-    private readonly server: rpc.Server;
+    private readonly endpoints: RpcEndpoint[];
     private readonly maxRequestsPerSecond: number;
     private readonly requestIntervalMs: number;
     private recentRequestTimes: number[] = [];
 
-    constructor(network: string, customUrl?: string, options: StellarRpcClientOptions = {}) {
+    /**
+     * A Proxy standing in for a single rpc.Server, transparently retrying
+     * every method call against subsequent configured endpoints when the
+     * active one fails with a network-level or rate-limit/server error
+     * (issue #496). Built once and kept as a stable, reassignable property —
+     * not a getter that synthesizes a new object per access — so tests can
+     * still `vi.spyOn(client["server"], "methodName")` (spying overrides the
+     * proxy's own get/set trap for that one property, bypassing failover for
+     * it) or replace `.server` wholesale with a bare mock, exactly as before
+     * this issue. With a single configured URL this behaves exactly as
+     * before — one endpoint, no failover possible or attempted.
+     */
+    private server: rpc.Server;
+
+    constructor(network: string, customUrl?: string | string[], options: StellarRpcClientOptions = {}) {
         this.network = network;
         const configured = options.maxRequestsPerSecond ?? 5;
         this.maxRequestsPerSecond = configured > 0 ? configured : 5;
         this.requestIntervalMs = Math.ceil(1000 / this.maxRequestsPerSecond);
-        const url = customUrl ?? RPC_URLS[network];
-        if (!url) {
-            throw new Error(`Unknown network "${network}". Use "testnet", "mainnet", or provide a custom URL.`);
+
+        let urls: string[];
+        if (Array.isArray(customUrl)) {
+            urls = customUrl.map((u) => u.trim()).filter(Boolean);
+        } else if (typeof customUrl === "string" && customUrl.length > 0) {
+            urls = customUrl.split(",").map((u) => u.trim()).filter(Boolean);
+        } else {
+            const defaultUrl = RPC_URLS[network];
+            if (!defaultUrl) {
+                throw new Error(`Unknown network "${network}". Use "testnet", "mainnet", or provide a custom URL.`);
+            }
+            urls = [defaultUrl];
         }
-        const serverOptions: rpc.Server.Options = { allowHttp: url.startsWith("http://") };
-        if (options.rpcCertificateFingerprint) {
-            const expectedFingerprint = options.rpcCertificateFingerprint.toLowerCase().replace(/:/g, '');
-            const dispatcher = new undici.Agent({
-                connect: {
-                    rejectUnauthorized: true,
-                    checkServerIdentity: (hostname, cert) => {
-                        const actualFingerprint = crypto.createHash('sha256').update(cert.raw).digest('hex').toLowerCase();
-                        if (actualFingerprint !== expectedFingerprint) {
-                            return new Error(`Certificate fingerprint mismatch. Expected ${expectedFingerprint}, got ${actualFingerprint}`);
-                        }
-                        return undefined;
-                    }
-                }
-            });
-            // We pass a custom fetch to rpc.Server Options so it uses our pinned dispatcher
-            serverOptions.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-                const initOptions = init ?? {};
-                // The stellar-sdk might not pass dispatcher as part of RequestInit types, so we cast it to any
-                (initOptions as any).dispatcher = dispatcher;
-                return fetch(input, initOptions);
-            };
+        if (urls.length === 0) {
+            throw new Error("No RPC URLs provided.");
         }
 
-        this.server = wrapServerWithUnreachableDetection(
-            new rpc.Server(url, serverOptions),
+        this.endpoints = urls.map((url) => ({
             url,
-        );
+            server: wrapServerWithUnreachableDetection(
+                new rpc.Server(url, { allowHttp: url.startsWith("http://") }),
+                url,
+            ),
+            circuitBrokenUntil: 0,
+        }));
+
+        const target = {} as Record<string | symbol, unknown>;
+        this.server = new Proxy(target as unknown as rpc.Server, {
+            get: (t, prop) => {
+                const raw = t as unknown as Record<string | symbol, unknown>;
+                if (Object.prototype.hasOwnProperty.call(raw, prop)) {
+                    return raw[prop];
+                }
+                return (...args: unknown[]): unknown => this.callWithFailover(prop as string, args);
+            },
+            set: (t, prop, value) => {
+                (t as unknown as Record<string | symbol, unknown>)[prop] = value;
+                return true;
+            },
+            has: () => true,
+            // Synthesizes a real property descriptor for any method name so
+            // Object.getOwnPropertyDescriptor (and therefore vi.spyOn) sees a
+            // normal, spy-able function rather than "does not exist" — the
+            // target object itself only gains own properties once something
+            // is actually get/set through the proxy.
+            getOwnPropertyDescriptor: (t, prop) => {
+                const raw = t as unknown as Record<string | symbol, unknown>;
+                if (Object.prototype.hasOwnProperty.call(raw, prop)) {
+                    return Object.getOwnPropertyDescriptor(raw, prop);
+                }
+                return {
+                    configurable: true,
+                    enumerable: true,
+                    writable: true,
+                    value: (...args: unknown[]): unknown => this.callWithFailover(prop as string, args),
+                };
+            },
+        });
+    }
+
+    private getOrderedEndpoints(): RpcEndpoint[] {
+        const now = Date.now();
+        const available = this.endpoints.filter((ep) => now >= ep.circuitBrokenUntil);
+        // If every endpoint is currently in its cooldown window, attempt them
+        // anyway rather than hard-failing — better to try a "known-bad"
+        // endpoint than to refuse to make any request at all.
+        return available.length > 0 ? available : this.endpoints;
+    }
+
+    private markEndpointFailed(endpoint: RpcEndpoint, error: unknown): void {
+        logger.warn("RPC endpoint failed, skipping for cooldown period", {
+            url: endpoint.url,
+            error: error instanceof Error ? error.message : String(error),
+        });
+        endpoint.circuitBrokenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+    }
+
+    private async callWithFailover(methodName: string, args: unknown[]): Promise<unknown> {
+        const endpoints = this.getOrderedEndpoints();
+        let lastError: unknown;
+
+        for (const endpoint of endpoints) {
+            try {
+                const server = endpoint.server as unknown as Record<string, (...a: unknown[]) => unknown>;
+                const method = server[methodName];
+                if (typeof method !== "function") {
+                    return method;
+                }
+                return await Reflect.apply(method, endpoint.server, args);
+            } catch (error) {
+                lastError = error;
+                if (!isFailoverEligible(error) || endpoints.length === 1) {
+                    throw error;
+                }
+                this.markEndpointFailed(endpoint, error);
+            }
+        }
+
+        throw lastError;
     }
 
     getNetwork(): string {

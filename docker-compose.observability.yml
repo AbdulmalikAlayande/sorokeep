@@ -1,0 +1,47 @@
+# Prometheus and Grafana overlay for local Sorokeep observability.
+#
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.observability.yml --profile observability up
+
+services:
+  sorokeep:
+    expose:
+      - "9464"
+
+  prometheus:
+    image: prom/prometheus:v3.3.0
+    profiles: ["observability"]
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./devops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    networks:
+      - sorokeep-network
+
+  grafana:
+    image: grafana/grafana:11.6.0
+    profiles: ["observability"]
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./devops/grafana/provisioning:/etc/grafana/provisioning:ro
+    restart: unless-stopped
+    networks:
+      - sorokeep-network
+
+volumes:
+  prometheus-data:
+  grafana-data:

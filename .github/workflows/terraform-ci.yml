@@ -1,0 +1,38 @@
+name: Terraform CI (TDD)
+
+on:
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'devops/terraform/**'
+      - '.github/workflows/terraform-ci.yml'
+  pull_request:
+    paths:
+      - 'devops/terraform/**'
+      - '.github/workflows/terraform-ci.yml'
+
+jobs:
+  terraform:
+    name: Validate and Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./devops/terraform
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan (Dry Run)
+        run: terraform plan -var="ami_id=ami-1234567890abcdef0" -var="ci_dry_run=true"
+        env:
+          AWS_ACCESS_KEY_ID: "mock_access_key"
+          AWS_SECRET_ACCESS_KEY: "mock_secret_key"
+          AWS_DEFAULT_REGION: "us-east-1"

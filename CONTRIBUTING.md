@@ -36,7 +36,7 @@ If you want to work on something, check the [open issues](https://github.com/Abd
 
 For how the pieces actually work together at runtime (the daemon cycle, fault isolation, where a new alert channel or command plugs in), read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The [Project Structure](#project-structure) section below covers the directory layout; ARCHITECTURE.md covers the data flow.
 
-If you're reporting a security issue (key leakage, unintended transactions, signature bypass), see [SECURITY.md](SECURITY.md) instead of opening a public issue. This project is also governed by a [Code of Conduct](CODE_OF_CONDUCT.md).
+If you're reporting a security issue (key leakage, unintended transactions, signature bypass), see [SECURITY.md](SECURITY.md) instead of opening a public issue. To understand our security boundaries and assets, read the [Threat Model](docs/THREAT_MODEL.md). This project is also governed by a [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Quick Start
 
@@ -107,9 +107,40 @@ If you're adding a new feature, the logic goes in `core/`, the CLI wiring goes i
 
 ## Development Workflow
 
+### Docker Vulnerability Scanning
+
+
+
+We use [Trivy](https://aquasecurity.github.io/trivy/) to scan our Docker images for OS and library vulnerabilities. The CI pipeline will automatically fail if any `HIGH` or `CRITICAL` vulnerabilities are detected.
+
+
+
+To run this scan locally before opening a PR:
+
+
+
+```bash
+
+# 1. Build the image locally
+
+docker build -t sorokeep:local .
+
+
+
+# 2. Run the Trivy scan (requires Trivy to be installed on your machine)
+
+trivy image --severity HIGH,CRITICAL --ignore-unfixed sorokeep:local
+
+```
+
+
+
+
 ### Test-Driven Development
 
 We enforce strict test-driven development. Your PR will not be accepted without comprehensive tests.
+
+For a full explanation of the conventions — the `tests/` directory mirroring rule, the `getDatabaseForTesting()` pattern, the `vi.mock()` patterns for RPC and channel modules, and how to read a coverage report — see **[docs/testing-philosophy.md](docs/testing-philosophy.md)**.
 
 The process is:
 

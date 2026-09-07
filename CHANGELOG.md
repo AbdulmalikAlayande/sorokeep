@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- MCP server permission modes: `mcp.mode` config option, defaulting to `read-only`, which refuses tools not tagged read-only
 - Pluggable alert channel registry with built-in channel registration
 - Contributor guide for adding new alert channels
 - Architecture documentation explaining daemon cycle data flow

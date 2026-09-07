@@ -110,6 +110,15 @@ export function registerStatusCommand(program: Command): void {
                     console.log(
                         `  ${paddedLabel}  TTL: ${entry.remainingTTL!.toLocaleString().padStart(9)} ledgers (${entry.approximateTimeRemaining})  ${statusIndicator(entry.status)}`,
                     );
+
+                    if (entry.projectedCrossingLedger != null) {
+                        const projTime = entry.projectedCrossingAt
+                            ? ` (~${new Date(entry.projectedCrossingAt).toUTCString()})`
+                            : "";
+                        console.log(
+                            chalk.dim(`  ${"".padEnd(maxLabelLen)}  Predicted threshold crossing: ledger ${entry.projectedCrossingLedger.toLocaleString()}${projTime}`),
+                        );
+                    }
                 }
 
                 console.log();

@@ -127,6 +127,26 @@ describe("get_extension_costs MCP tool", () => {
         });
     });
 
+    it("returns a clear error when the database has no watched contracts", async () => {
+        mockDb = getDatabaseForTesting();
+
+        const result = await client.callTool({
+            name: GET_EXTENSION_COSTS_TOOL_NAME,
+            arguments: {
+                contractId: CONTRACT_ID,
+            },
+        });
+
+        expect(result.isError).toBe(true);
+        expect(result.content).toHaveLength(1);
+        expect(result.content[0]).toMatchObject({ type: "text" });
+        expect(JSON.parse((result.content[0] as { text: string }).text)).toEqual({
+            success: false,
+            error: "contract_not_found",
+            contractId: CONTRACT_ID,
+        });
+    });
+
     it("returns an error when period is invalid", async () => {
         const result = await client.callTool({
             name: GET_EXTENSION_COSTS_TOOL_NAME,

@@ -14,6 +14,7 @@ export interface GuardPolicyInput {
     extend_when_below_ledgers: number;
     keypair_public?: string;
     keypair_source?: string;
+    max_fee_stroops?: number | null;
 }
 
 /**
@@ -50,6 +51,7 @@ export function applyGuardPolicyByTag(
                 extend_when_below_ledgers: policy.extend_when_below_ledgers,
                 keypair_public: policy.keypair_public,
                 keypair_source: policy.keypair_source,
+                max_fee_stroops: policy.max_fee_stroops ?? null,
             });
             results.push({
                 contractId: contract.id,

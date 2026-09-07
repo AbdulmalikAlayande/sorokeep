@@ -1,0 +1,20 @@
+name: Sorokeep TTL Check
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Run daily
+  workflow_dispatch:
+
+jobs:
+  check-ttl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Sorokeep Check
+        uses: AbdulmalikAlayande/sorokeep@main
+        with:
+          contract-id: CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX # Replace with your deployed Contract ID
+          network: testnet
+          threshold: '500'

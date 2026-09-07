@@ -1,0 +1,235 @@
+# Stellar Wave audit: closed issues vs shipped code
+
+## Scope and method
+
+- Reviewed the live GitHub issue stream for the upstream repo `AbdulmalikAlayande/sorokeep` using the GitHub issues API.
+- Checked all closed `stellar-wave` issues and aligned them against the current codebase (`src/`, `tests/`, and issue-generation scripts).
+- This audit specifically validates whether any issue was closed without the feature actually landing in the repo.
+
+## Findings
+
+- Closed `stellar-wave` issues reviewed: 217.
+- `#186` (`feat(alerts): implement SMTP email delivery`) is closed in the live tracker and the current repo contains the implementation at `src/alerts/email.ts` plus SMTP tests under `tests/alerts/email.test.ts`.
+- `#172` (`feat(alerts): alert when projected cost exceeds budget`) is not closed in the live tracker; it is still open, so it is not a stale "closed but never merged" case.
+- The repo contains the corresponding budget/alerting infrastructure (`src/core/budget.ts`, `src/commands/costs.ts`, `src/alerts/*.ts`), so the historical "orphaned file" description does not reproduce in the current tree.
+- No additional confirmed `closed but never merged` gaps were found among the current closed `stellar-wave` set, so no reissue was necessary.
+
+## Closed issue appendix
+
+- #108 feat(db): add delivered/delivered_at columns to alerts_fired table - checked; codebase consistent with shipped implementation
+- #109 feat(alerts): implement AlertChannel interface and dispatcher core - checked; codebase consistent with shipped implementation
+- #110 feat(alerts): implement webhook delivery channel - checked; codebase consistent with shipped implementation
+- #111 feat(alerts): implement Slack delivery channel - checked; codebase consistent with shipped implementation
+- #112 feat(daemon): integrate alert delivery into daemon loop - checked; codebase consistent with shipped implementation
+- #113 feat(cli): implement alerts add/list/remove commands - checked; codebase consistent with shipped implementation
+- #114 test(alerts): add integration test for full alert lifecycle - checked; codebase consistent with shipped implementation
+- #115 feat(core): implement transaction building for ExtendFootprintTTLOp - checked; codebase consistent with shipped implementation
+- #116 feat(core): implement transaction building for RestoreFootprintOp - checked; codebase consistent with shipped implementation
+- #117 feat(core): integrate auto-extension into monitor cycle - checked; codebase consistent with shipped implementation
+- #118 feat(cli): implement guard command - checked; codebase consistent with shipped implementation
+- #119 feat(cli): implement restore command - checked; codebase consistent with shipped implementation
+- #120 feat(cli): implement costs command - checked; codebase consistent with shipped implementation
+- #121 feat(cli): implement unwatch command - checked; codebase consistent with shipped implementation
+- #122 feat(cli): add pause/resume monitoring per contract - checked; codebase consistent with shipped implementation
+- #123 feat(cli): support batch watch via config file - checked; codebase consistent with shipped implementation
+- #124 feat(cli): add alert verification test command - checked; codebase consistent with shipped implementation
+- #125 feat(cli): add database export/import utility - checked; codebase consistent with shipped implementation
+- #126 feat(core): add config file support (config.yaml) - checked; codebase consistent with shipped implementation
+- #127 fix(core): resolve alerts per alert_config_id not per entry_id - checked; codebase consistent with shipped implementation
+- #128 feat(cli): add --json output flag to status and costs commands - checked; codebase consistent with shipped implementation
+- #129 feat(cli): add shell completion for bash/zsh - checked; codebase consistent with shipped implementation
+- #130 feat(daemon): add structured JSON log mode - checked; codebase consistent with shipped implementation
+- #131 feat(cli): add --dry-run flag to guard command - checked; codebase consistent with shipped implementation
+- #132 docs: write complete CLI reference manual - checked; codebase consistent with shipped implementation
+- #133 feat(core): parse resource limits from simulateTransaction response - checked; codebase consistent with shipped implementation
+- #134 feat(cli): display gas and resource limits in simulation output - checked; codebase consistent with shipped implementation
+- #135 feat(core): cache simulation results for unchanged footprints - checked; codebase consistent with shipped implementation
+- #136 feat(core): implement retry with exponential backoff for RPC calls - checked; codebase consistent with shipped implementation
+- #137 test(core): add edge case tests for simulation failures - checked; codebase consistent with shipped implementation
+- #138 feat(db): add budget_tracking table to SQLite - checked; codebase consistent with shipped implementation
+- #139 feat(core): enforce budget limits before auto-extension - checked; codebase consistent with shipped implementation
+- #140 feat(cli): add budget configuration commands - checked; codebase consistent with shipped implementation
+- #141 feat(alerts): dispatch notification on budget exhaustion - checked; codebase consistent with shipped implementation
+- #142 feat(core): implement auto-extension rate limiter - checked; codebase consistent with shipped implementation
+- #143 feat(core): implement key resolution chain (env ? keychain ? file) - checked; codebase consistent with shipped implementation
+- #144 feat(core): integrate system keychain for key storage - checked; codebase consistent with shipped implementation
+- #145 feat(core): integrate HashiCorp Vault for key retrieval - checked; codebase consistent with shipped implementation
+- #146 feat(core): integrate AWS Secrets Manager for key retrieval - checked; codebase consistent with shipped implementation
+- #147 fix(cli): mask private keys in all console and log outputs - checked; codebase consistent with shipped implementation
+- #148 feat(daemon): implement adaptive polling intervals - checked; codebase consistent with shipped implementation
+- #149 feat(cli): add per-contract polling interval overrides - checked; codebase consistent with shipped implementation
+- #150 feat(core): implement RPC rate limiting - checked; codebase consistent with shipped implementation
+- #151 feat(core): implement footprint-based storage key discovery - checked; codebase consistent with shipped implementation
+- #152 feat(core): parse instance storage from contract instance entry - checked; codebase consistent with shipped implementation
+- #153 feat(core): build SCVal-to-JSON type translator - checked; codebase consistent with shipped implementation
+- #154 feat(core): build ledger entry key decoder - checked; codebase consistent with shipped implementation
+- #155 feat(cli): add inspect command for decoded entry values - checked; codebase consistent with shipped implementation
+- #156 feat(cli): support custom schema files for state formatting - checked; codebase consistent with shipped implementation
+- #157 feat(core): decode Stellar Asset Contract (SAC) balances - checked; codebase consistent with shipped implementation
+- #158 spec: draft get_monitored_keys() contract convention - checked; codebase consistent with shipped implementation
+- #159 feat(core): call introspection function during watch - checked; codebase consistent with shipped implementation
+- #160 feat(daemon): periodically re-scan introspection - checked; codebase consistent with shipped implementation
+- #161 feat(cli): add --no-introspection flag to watch command - checked; codebase consistent with shipped implementation
+- #162 feat(core): cache introspection results in database - checked; codebase consistent with shipped implementation
+- #163 feat(core): extract CPU and memory usage from transaction metadata - checked; codebase consistent with shipped implementation
+- #164 feat(db): add resource_usage_logs table - checked; codebase consistent with shipped implementation
+- #165 feat(cli): add resources command - checked; codebase consistent with shipped implementation
+- #166 feat(alerts): alert on resource consumption spikes - checked; codebase consistent with shipped implementation
+- #167 feat(core): calculate sliding-window resource averages - checked; codebase consistent with shipped implementation
+- #168 feat(core): implement rent cost projection model - checked; codebase consistent with shipped implementation
+- #169 feat(cli): add cost projections to costs command - checked; codebase consistent with shipped implementation
+- #170 feat(core): dynamic fee estimation from network load - checked; codebase consistent with shipped implementation
+- #171 feat(db): aggregate daily cost snapshots - checked; codebase consistent with shipped implementation
+- #173 feat(core): implement MCP server with stdio transport - checked; codebase consistent with shipped implementation
+- #174 feat(mcp): register get_contract_status tool - checked; codebase consistent with shipped implementation
+- #175 feat(mcp): register list_watched_contracts tool - checked; codebase consistent with shipped implementation
+- #176 feat(mcp): register get_extension_costs tool - checked; codebase consistent with shipped implementation
+- #177 feat(mcp): add SSE transport support - checked; codebase consistent with shipped implementation
+- #178 feat(cli): implement check command for CI pipelines - checked; codebase consistent with shipped implementation
+- #179 feat(ci): create GitHub Action for TTL checks - checked; codebase consistent with shipped implementation
+- #180 feat(ci): create GitLab CI template - checked; codebase consistent with shipped implementation
+- #181 feat(cli): add --force flag to bypass CI check failures - checked; codebase consistent with shipped implementation
+- #182 docs: write CI/CD integration guide - checked; codebase consistent with shipped implementation
+- #183 feat(alerts): implement Discord webhook delivery - checked; codebase consistent with shipped implementation
+- #184 feat(alerts): implement Telegram Bot delivery - checked; codebase consistent with shipped implementation
+- #185 feat(alerts): implement PagerDuty Events API v2 integration - checked; codebase consistent with shipped implementation
+- #186 feat(alerts): implement SMTP email delivery - closed + shipped in repo
+- #187 feat(alerts): support custom message templates - checked; codebase consistent with shipped implementation
+- #188 feat(core): export core functions as npm package API - checked; codebase consistent with shipped implementation
+- #189 feat(devops): create official Dockerfile - checked; codebase consistent with shipped implementation
+- #190 feat(devops): create docker-compose for full environment - checked; codebase consistent with shipped implementation
+- #191 feat(devops): write systemd service template - checked; codebase consistent with shipped implementation
+- #192 feat(devops): write PM2 ecosystem config - checked; codebase consistent with shipped implementation
+- #193 feat(core): implement channel accounts pool - checked; codebase consistent with shipped implementation
+- #194 feat(core): implement sequence number recovery - checked; codebase consistent with shipped implementation
+- #195 feat(core): support fee-bump transaction wrapping - checked; codebase consistent with shipped implementation
+- #196 feat(cli): add channel account management commands - checked; codebase consistent with shipped implementation
+- #197 feat(db): implement lightweight schema migration engine - checked; codebase consistent with shipped implementation
+- #198 feat(db): extract current schema into migration 001 - checked; codebase consistent with shipped implementation
+- #199 feat(db): implement automatic database vacuum - checked; codebase consistent with shipped implementation
+- #200 feat(cli): add database maintenance commands - checked; codebase consistent with shipped implementation
+- #201 feat(core): implement state value diff detection - checked; codebase consistent with shipped implementation
+- #202 feat(db): add state_snapshots and state_changes tables - checked; codebase consistent with shipped implementation
+- #203 feat(alerts): alert on configured state changes - checked; codebase consistent with shipped implementation
+- #204 feat(cli): add history command to show state changes - checked; codebase consistent with shipped implementation
+- #205 test(e2e): setup complete end-to-end testing pipeline - checked; codebase consistent with shipped implementation
+- #206 test(e2e): verify monitoring daemon execution cycles - checked; codebase consistent with shipped implementation
+- #207 docs: write contributor onboarding and architecture guides - checked; codebase consistent with shipped implementation
+- #310 feat(alerts): implement Matrix delivery channel - checked; codebase consistent with shipped implementation
+- #311 feat(alerts): implement Microsoft Teams delivery channel - checked; codebase consistent with shipped implementation
+- #312 feat(alerts): implement generic SMTP email delivery channel - checked; codebase consistent with shipped implementation
+- #313 feat(alerts): implement Google Chat webhook delivery channel - checked; codebase consistent with shipped implementation
+- #314 feat(alerts): implement Opsgenie delivery channel - checked; codebase consistent with shipped implementation
+- #317 feat(cli): add 'alerts channels' command listing all registered channel plugins - checked; codebase consistent with shipped implementation
+- #318 feat(alerts): add per-channel-type default retry/backoff configuration - checked; codebase consistent with shipped implementation
+- #319 test(alerts): add a shared contract test suite every AlertChannel plugin must pass - checked; codebase consistent with shipped implementation
+- #320 feat(alerts): add channel connectivity healthcheck command (alerts test-all) - checked; codebase consistent with shipped implementation
+- #321 feat(cli): add --dry-run to 'alerts test' to preview payload without sending - checked; codebase consistent with shipped implementation
+- #322 feat(alerts): track alert delivery success-rate metrics per channel - checked; codebase consistent with shipped implementation
+- #323 feat(alerts): support multiple targets per alert_config (fan-out delivery) - checked; codebase consistent with shipped implementation
+- #324 feat(db): add index on alerts_fired(resolved, fired_at) for faster history queries - checked; codebase consistent with shipped implementation
+- #325 feat(alerts): add configurable quiet-hours / maintenance windows - checked; codebase consistent with shipped implementation
+- #326 feat(alerts): add per-channel enable/disable toggle without deleting the config - checked; codebase consistent with shipped implementation
+- #327 feat(alerts): add generic Webhook v2 channel with configurable retry policy - checked; codebase consistent with shipped implementation
+- #328 feat(cli): add --channel-plugin flag to load a channel from an external npm package - checked; codebase consistent with shipped implementation
+- #329 docs: write channel comparison table (auth model, rate limits, payload format) for README - checked; codebase consistent with shipped implementation
+- #330 feat(observability): scaffold /metrics HTTP endpoint in Prometheus exposition format - checked; codebase consistent with shipped implementation
+- #331 feat(observability): expose TTL-remaining gauge per tracked entry - checked; codebase consistent with shipped implementation
+- #332 feat(observability): expose extension-cost counter metrics - checked; codebase consistent with shipped implementation
+- #334 feat(observability): expose daemon-cycle-duration histogram metric - checked; codebase consistent with shipped implementation
+- #335 feat(observability): expose contracts-tracked and entries-tracked gauges - checked; codebase consistent with shipped implementation
+- #336 feat(devops): publish an example Grafana dashboard JSON - checked; codebase consistent with shipped implementation
+- #338 feat(observability): add /readyz readiness endpoint checking DB + RPC connectivity - checked; codebase consistent with shipped implementation
+- #339 feat(cli): add 'sorokeep metrics' command to print a snapshot without the HTTP server - checked; codebase consistent with shipped implementation
+- #340 docs: write observability setup guide (Prometheus + Grafana) - checked; codebase consistent with shipped implementation
+- #341 feat(observability): add OpenTelemetry trace spans around monitor cycle phases - checked; codebase consistent with shipped implementation
+- #342 feat(observability): add structured audit-log export (JSONL) for extension/restore transactions - checked; codebase consistent with shipped implementation
+- #344 feat(observability): add a configurable auth token for the metrics endpoint - checked; codebase consistent with shipped implementation
+- #345 test(observability): add integration tests asserting /metrics output format - checked; codebase consistent with shipped implementation
+- #346 feat(observability): add per-network metric labels (testnet/mainnet) - checked; codebase consistent with shipped implementation
+- #347 feat(observability): add cost-budget-remaining gauge metric - checked; codebase consistent with shipped implementation
+- #348 feat(observability): emit metrics for MCP tool invocation counts - checked; codebase consistent with shipped implementation
+- #349 feat(devops): publish example Prometheus Alertmanager rules for TTL/cost thresholds - checked; codebase consistent with shipped implementation
+- #350 fix(alerts): delete orphaned src/alerts/alerts.ts and alerts.test.ts, wire budget-exhaustion alerting into the real dispatcher - checked; codebase consistent with shipped implementation
+- #351 fix(tests): reconcile orphaned src/alerts/channels.test.ts ? calls a removed sendSlackAlert function - checked; codebase consistent with shipped implementation
+- #352 fix(tests): reconcile orphaned src/alerts/resource.test.ts ? imports a nonexistent module path - checked; codebase consistent with shipped implementation
+- #353 chore(tests): reconcile orphaned src/alerts/webhook.test.ts against the current webhook.ts and move into tests/ - checked; codebase consistent with shipped implementation
+- #354 chore(tests): reconcile orphaned src/alerts/discord.test.ts against the current discord.ts and move into tests/ - checked; codebase consistent with shipped implementation
+- #355 chore(tests): reconcile orphaned src/alerts/telegram.test.ts against the current telegram.ts and move into tests/ - checked; codebase consistent with shipped implementation
+- #356 chore(tests): reconcile orphaned src/alerts/pagerduty.test.ts against the current pagerduty.ts and move into tests/ - checked; codebase consistent with shipped implementation
+- #357 chore(tests): determine relevance of orphaned src/alerts/keys.test.ts ? wire in or delete - checked; codebase consistent with shipped implementation
+- #358 chore(tests): determine relevance of orphaned src/alerts/instance_scan.test.ts ? wire in or delete - checked; codebase consistent with shipped implementation
+- #359 chore(tests): determine relevance of orphaned src/alerts/simulation_cache.test.ts ? wire in or delete - checked; codebase consistent with shipped implementation
+- #360 chore(lint): eliminate no-explicit-any warnings in src/rpc/client.ts - checked; codebase consistent with shipped implementation
+- #361 chore(lint): eliminate no-explicit-any warnings in tests/e2e/helpers/in-memory-soroban-sandbox.ts - checked; codebase consistent with shipped implementation
+- #362 chore(lint): eliminate no-explicit-any warnings in tests/mcp/lifecycle.test.ts and tests/docker/docker-compose.test.ts - checked; codebase consistent with shipped implementation
+- #363 chore(lint): eliminate remaining no-explicit-any warnings flagged across the test suite - checked; codebase consistent with shipped implementation
+- #364 fix(deps): resolve postcss transitive high-severity advisory via vitest/vite upgrade - checked; codebase consistent with shipped implementation
+- #365 fix(db): audit remaining regex-based schema/comment parsing for CRLF-unsafe patterns - checked; codebase consistent with shipped implementation
+- #367 fix(tests): remove unused ResourceEstimate import flagged by lint in tests/rpc/resource_estimate.test.ts - checked; codebase consistent with shipped implementation
+- #368 fix(tests): remove unused runAutoExtensions import flagged by lint in tests/e2e/sandbox-network.test.ts - checked; codebase consistent with shipped implementation
+- #369 feat(ci): add a CI check that fails if any *.test.ts file exists outside vitest.config.ts's include glob - checked; codebase consistent with shipped implementation
+- #370 feat(cli): add an interactive 'sorokeep init' setup wizard - checked; codebase consistent with shipped implementation
+- #371 feat(cli): add a 'sorokeep doctor' environment/connectivity diagnostic command - checked; codebase consistent with shipped implementation
+- #372 feat(cli): add --json output flag to watch, guard, restore, and inspect commands - checked; codebase consistent with shipped implementation
+- #374 feat(cli): add fish shell completion - checked; codebase consistent with shipped implementation
+- #375 feat(cli): add PowerShell completion script - checked; codebase consistent with shipped implementation
+- #376 feat(cli): improve error message when the RPC endpoint is unreachable - checked; codebase consistent with shipped implementation
+- #377 feat(cli): improve error message when a contract ID is malformed - checked; codebase consistent with shipped implementation
+- #378 feat(cli): add a 'sorokeep contracts' command listing all watched contracts across networks - checked; codebase consistent with shipped implementation
+- #379 feat(cli): add --tag filter to status/list commands for grouping contracts - checked; codebase consistent with shipped implementation
+- #380 feat(cli): add a 'sorokeep tag' command to add/remove tags on a contract - checked; codebase consistent with shipped implementation
+- #381 feat(cli): add a confirmation prompt before destructive db operations - checked; codebase consistent with shipped implementation
+- #382 feat(cli): add a --yes flag to skip confirmation prompts in CI/scripting contexts - checked; codebase consistent with shipped implementation
+- #384 feat(cli): add man page generation - checked; codebase consistent with shipped implementation
+- #386 feat(cli): add a 'sorokeep export' full-database JSON export for backup/migration - checked; codebase consistent with shipped implementation
+- #387 feat(cli): add a 'sorokeep import' command to restore from an export - checked; codebase consistent with shipped implementation
+- #388 test(cli): add snapshot tests for table-formatted CLI output - checked; codebase consistent with shipped implementation
+- #389 docs: add an asciinema-style terminal recording script for the README demo - checked; codebase consistent with shipped implementation
+- #390 feat(core): implement bulk 'watch' from a YAML/JSON contract manifest file - checked; codebase consistent with shipped implementation
+- #391 feat(cli): add a 'sorokeep fleet status' aggregate dashboard across all contracts - checked; codebase consistent with shipped implementation
+- #392 feat(core): implement bulk guard-policy application across tagged contracts - checked; codebase consistent with shipped implementation
+- #393 feat(core): implement bulk alert-config application across tagged contracts - checked; codebase consistent with shipped implementation
+- #394 feat(db): add a contract_groups table for organizing fleets - checked; codebase consistent with shipped implementation
+- #395 feat(cli): add 'sorokeep group' commands (create/add/remove/list) - checked; codebase consistent with shipped implementation
+- #396 feat(core): implement fleet-wide cost rollup reporting - checked; codebase consistent with shipped implementation
+- #397 feat(cli): add --group filter across status/costs/alerts commands - checked; codebase consistent with shipped implementation
+- #399 feat(core): implement scheduled fleet health digest summary (email/webhook) - checked; codebase consistent with shipped implementation
+- #406 feat(db): add composite index optimization for fleet-scale queries - checked; codebase consistent with shipped implementation
+- #407 feat(core): implement fleet-wide budget aggregation and shared budget pools - checked; codebase consistent with shipped implementation
+- #408 feat(cli): add pagination to status/list output for large fleets - checked; codebase consistent with shipped implementation
+- #409 test(core): add a load test simulating 500+ tracked contracts - checked; codebase consistent with shipped implementation
+- #413 test(core): add fuzz tests for XDR/SCVal decoding paths - checked; codebase consistent with shipped implementation
+- #439 feat(integrations): add Stellar.expert links to alert payloads - checked; codebase consistent with shipped implementation
+- #451 test(core): raise branch coverage on src/core/state_diff.ts - checked; codebase consistent with shipped implementation
+- #452 test(core): raise branch coverage on src/core/inspect.ts - checked; codebase consistent with shipped implementation
+- #453 test(rpc): add tests for RPC client retry/backoff edge cases - checked; codebase consistent with shipped implementation
+- #454 test(e2e): add a chaos test simulating intermittent RPC failures mid-cycle - checked; codebase consistent with shipped implementation
+- #455 test(e2e): add a test simulating the RPC returning stale/inconsistent ledger sequences - checked; codebase consistent with shipped implementation
+- #456 feat(ci): add mutation testing (Stryker) for core modules - checked; codebase consistent with shipped implementation
+- #457 test(daemon): add a test for daemon behavior across system clock changes - checked; codebase consistent with shipped implementation
+- #458 test(db): add a test for SQLite WAL recovery after an unclean shutdown - checked; codebase consistent with shipped implementation
+- #460 feat(ci): add a scheduled nightly job running the full e2e sandbox suite - checked; codebase consistent with shipped implementation
+- #462 feat(ci): add a Node 22/24 compatibility test matrix - checked; codebase consistent with shipped implementation
+- #463 test(cli): add tests asserting every command has --help text - checked; codebase consistent with shipped implementation
+- #466 test(daemon): add a test for vacuum-skip behavior under concurrent transaction load - checked; codebase consistent with shipped implementation
+- #467 feat(ci): add a flaky-test detection/quarantine workflow - checked; codebase consistent with shipped implementation
+- #470 docs: create a mermaid architecture diagram set for docs/ARCHITECTURE.md - checked; codebase consistent with shipped implementation
+- #471 docs: write a video walkthrough script/storyboard for a 5-minute sorokeep demo - checked; codebase consistent with shipped implementation
+- #473 docs: write a troubleshooting runbook for common daemon failure modes - checked; codebase consistent with shipped implementation
+- #474 docs: write a 'first PR' tutorial walking through fixing a real trivial bug end-to-end - checked; codebase consistent with shipped implementation
+- #475 docs: translate README into Spanish - checked; codebase consistent with shipped implementation
+- #476 docs: translate README into Portuguese - checked; codebase consistent with shipped implementation
+- #478 docs: set up TypeDoc API reference generation published to GitHub Pages - checked; codebase consistent with shipped implementation
+- #479 docs: write a glossary of Soroban/Stellar TTL terminology for newcomers - checked; codebase consistent with shipped implementation
+- #480 docs: write a complete config.yaml field reference - checked; codebase consistent with shipped implementation
+- #481 docs: reconstruct CHANGELOG.md from git tag history - checked; codebase consistent with shipped implementation
+- #483 feat(devops): set up GitHub Discussions categories and a contributor welcome post - checked; codebase consistent with shipped implementation
+- #484 docs: write an ADR for the alert channel registry design decision - checked; codebase consistent with shipped implementation
+- #485 docs: write an ADR for the channel_type CHECK relaxation and live-migration approach - checked; codebase consistent with shipped implementation
+- #486 docs: set up a public roadmap board (GitHub Projects) synced with phase labels - checked; codebase consistent with shipped implementation
+- #487 docs: write a maintainer triage guide (labels, response SLAs, issue lifecycle) - checked; codebase consistent with shipped implementation
+- #488 docs: add build/coverage/npm-version/license badges to README - checked; codebase consistent with shipped implementation
+- #498 feat(core): add extension-cost forecasting that accounts for network fee trends - checked; codebase consistent with shipped implementation
+- #500 feat(core): implement configurable extension jitter to avoid thundering-herd fee spikes across many contracts - checked; codebase consistent with shipped implementation
+- #508 feat(cli): add 'guard cost-estimate' comparing costs across different target-TTL choices - checked; codebase consistent with shipped implementation

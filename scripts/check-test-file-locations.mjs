@@ -18,8 +18,12 @@
 import { globSync } from "node:fs";
 import { relative, sep } from "node:path";
 
-// Directories to skip entirely.
-const EXCLUDED_DIRS = new Set(["node_modules", "dist", ".npm-cache"]);
+// Directories to skip entirely. vscode-extension/ is a self-contained
+// sub-package with its own package.json, tsconfig, and vitest.config.ts —
+// its tests/ directory is relative to that sub-package, not the repo root,
+// and it is run via its own separate test command, not the main vitest
+// include glob this guard protects.
+const EXCLUDED_DIRS = new Set(["node_modules", "dist", ".npm-cache", "vscode-extension"]);
 
 /**
  * Return true if any path segment of `relPath` is in EXCLUDED_DIRS.

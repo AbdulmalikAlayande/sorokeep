@@ -2,6 +2,7 @@ import * as z from "zod/v4";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { getDatabase } from "../../db/database.js";
 import { getExtensionCosts } from "../../core/costs.js";
+import { READ_ONLY_ANNOTATIONS } from "../permissions.js";
 
 export const GET_EXTENSION_COSTS_TOOL_NAME = "get_extension_costs";
 
@@ -22,6 +23,7 @@ export function registerGetExtensionCostsTool(server: McpServer): void {
                     .optional()
                     .describe("Number of days of extension history to include (default: 30)"),
             },
+            annotations: READ_ONLY_ANNOTATIONS,
         },
         async ({ contractId, period }) => {
             const db = getDatabase();

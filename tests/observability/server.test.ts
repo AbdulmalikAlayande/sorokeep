@@ -307,4 +307,64 @@ describe("Observability metrics server", () => {
             db.close();
         });
     });
+
+    describe("IP allowlist (issue #427)", () => {
+        it("succeeds with no allowedIps configured (default, open access)", async () => {
+            const port = nextPort();
+            createMetricsServer(port);
+
+            const res = await fetchMetrics(port);
+            expect(res.status).toBe(200);
+        });
+
+        it("returns 403 when the requester's real IP is not on the allowlist", async () => {
+            const port = nextPort();
+            // The test client connects from 127.0.0.1; excluding it must reject.
+            createMetricsServer(port, undefined, undefined, ["10.0.0.0/8"]);
+
+            const res = await fetchMetrics(port);
+            expect(res.status).toBe(403);
+            expect(res.body).toBe("Forbidden");
+        });
+
+        it("succeeds when the requester's real IP exactly matches the allowlist", async () => {
+            const port = nextPort();
+            createMetricsServer(port, undefined, undefined, ["127.0.0.1"]);
+
+            const res = await fetchMetrics(port);
+            expect(res.status).toBe(200);
+        });
+
+        it("succeeds when the requester's real IP matches a CIDR range on the allowlist", async () => {
+            const port = nextPort();
+            createMetricsServer(port, undefined, undefined, ["127.0.0.0/8"]);
+
+            const res = await fetchMetrics(port);
+            expect(res.status).toBe(200);
+        });
+
+        it("rejects before the Hono bridge runs — /readyz is also blocked, not just /metrics", async () => {
+            const db = getDatabaseForTesting();
+            const port = nextPort();
+            createMetricsServer(port, db, undefined, ["10.0.0.0/8"]);
+
+            const status = await new Promise<number>((resolve, reject) => {
+                http.get(`http://127.0.0.1:${port}/readyz`, (res) => {
+                    res.resume();
+                    resolve(res.statusCode ?? 0);
+                }).on("error", reject);
+            });
+            expect(status).toBe(403);
+
+            db.close();
+        });
+
+        it("ignores an invalid CIDR entry in the allowlist rather than crashing, and still enforces the valid ones", async () => {
+            const port = nextPort();
+            createMetricsServer(port, undefined, undefined, ["not-a-real-ip", "127.0.0.1"]);
+
+            const res = await fetchMetrics(port);
+            expect(res.status).toBe(200);
+        });
+    });
 });

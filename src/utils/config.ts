@@ -17,6 +17,26 @@ export interface VaultConfig {
     namespace?: string;
 }
 
+/**
+ * Permission posture of the MCP server.
+ *
+ * - `read-only`  — only tools tagged as read-only may be invoked. Safe to expose
+ *                  to an untrusted agent.
+ * - `read-write` — every registered tool may be invoked, including tools that
+ *                  change state. For trusted internal tooling only.
+ */
+export type McpMode = "read-only" | "read-write";
+
+export const MCP_MODES: readonly McpMode[] = ["read-only", "read-write"];
+
+/** The posture used when nothing is configured: the restrictive one. */
+export const DEFAULT_MCP_MODE: McpMode = "read-only";
+
+export interface McpConfig {
+    /** Permission mode the MCP server runs in. Defaults to `read-only`. */
+    mode: McpMode;
+}
+
 export interface SorokeepConfig {
     /** Default network to use. */
     network: string;
@@ -47,6 +67,12 @@ export interface SorokeepConfig {
      */
     feeSponsorSecret?: string;
 
+    /**
+     * MCP server settings. Omitting this section leaves the server in
+     * `read-only` mode, which is the intended default for untrusted agents.
+     */
+    mcp?: McpConfig;
+
     /** SMTP configuration for email alert delivery. */
     smtp?: {
         host: string;
@@ -55,6 +81,29 @@ export interface SorokeepConfig {
         pass: string;
     };
 
+    /**
+     * Authentication token for the MCP server. When set, HTTP-transport tool
+     * calls must present it as a Bearer token. Prefer SOROKEEP_MCP_TOKEN over
+     * this field so the token itself is never written to disk in plaintext.
+     */
+    mcpAuthToken?: string;
+
+    /**
+     * CIDR-aware IP allowlist for sorokeep's HTTP-exposing features (the
+     * Prometheus /metrics and /readyz endpoints). Entries may be bare IPs
+     * (treated as /32 or /128) or CIDR ranges (e.g. "10.0.0.0/8"). Unset
+     * preserves today's open behavior — defense in depth for deployments
+     * where the daemon might be bound beyond localhost.
+     */
+    allowedIps?: string[];
+
+    /**
+     * Maximum MCP tool invocations allowed per tool name per 60-second
+     * window. Protects the daemon's shared SQLite connection from being
+     * hammered by a runaway AI loop or a malicious client. Defaults to 60.
+     */
+    requestsPerMinute?: number;
+
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
@@ -62,6 +111,7 @@ export interface SorokeepConfig {
 const DEFAULT_CONFIG: SorokeepConfig = {
   network: "testnet",
   pollingIntervalSeconds: 300,
+  mcp: { mode: DEFAULT_MCP_MODE },
 };
 
 const SOROKEEP_DIR = path.join(os.homedir(), ".sorokeep");
@@ -111,8 +161,16 @@ export function loadConfig(customPath?: string): SorokeepConfig {
                 : undefined,
 
             vault,
+            mcp: parseMcpConfig(parsed.mcp),
             feeSponsorSecret: typeof parsed.feeSponsorSecret === "string" ? parsed.feeSponsorSecret : undefined,
             smtp: parseSmtpConfig(parsed.smtp),
+            mcpAuthToken: typeof parsed.mcpAuthToken === "string" ? parsed.mcpAuthToken : undefined,
+            allowedIps: Array.isArray(parsed.allowedIps) && parsed.allowedIps.every((ip) => typeof ip === "string")
+                ? parsed.allowedIps
+                : undefined,
+            requestsPerMinute: typeof parsed.requestsPerMinute === "number" && parsed.requestsPerMinute > 0
+                ? parsed.requestsPerMinute
+                : undefined,
 
         };
     } catch (err: unknown) {
@@ -144,6 +202,14 @@ export function saveConfig(config: SorokeepConfig, customPath?: string): void {
 }
 
 /**
+ * Resolve the MCP permission mode for a config, falling back to the default
+ * when the section is absent — callers never have to repeat the default.
+ */
+export function getMcpMode(config: SorokeepConfig): McpMode {
+  return config.mcp?.mode ?? DEFAULT_MCP_MODE;
+}
+
+/**
  * Get the Sorokeep data directory path.
  */
 export function getSorokeepDir(): string {
@@ -151,6 +217,22 @@ export function getSorokeepDir(): string {
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
+
+function parseMcpConfig(raw: unknown): McpConfig {
+    if (!raw || typeof raw !== "object") return { mode: DEFAULT_MCP_MODE };
+
+    const mode = (raw as Record<string, unknown>).mode;
+    if (mode === undefined) return { mode: DEFAULT_MCP_MODE };
+
+    if (typeof mode !== "string" || !MCP_MODES.includes(mode as McpMode)) {
+        logger.warn(
+            `Unrecognised mcp.mode "${String(mode)}". Expected one of ${MCP_MODES.join(", ")}. Falling back to ${DEFAULT_MCP_MODE}.`,
+        );
+        return { mode: DEFAULT_MCP_MODE };
+    }
+
+    return { mode: mode as McpMode };
+}
 
 function parseSmtpConfig(raw: unknown): SorokeepConfig["smtp"] {
     if (!raw || typeof raw !== "object") return undefined;

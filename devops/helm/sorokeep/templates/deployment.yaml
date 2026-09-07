@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sorokeep.fullname" . }}
+  labels:
+    {{- include "sorokeep.labels" . | nindent 4 }}
+spec:
+  # Hardcoded, intentionally not wired to any value: SQLite/WAL supports
+  # exactly one writer. See README "Exactly one instance".
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sorokeep.selectorLabels" . | nindent 6 }}
+  # Recreate (not RollingUpdate) so the old pod is fully terminated —
+  # releasing its lock on the PVC — before a replacement pod starts.
+  # RollingUpdate would briefly run two daemon pods against one SQLite
+  # file. See README "Recreate deployment behavior".
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        {{- include "sorokeep.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "sorokeep.serviceAccountName" . }}
+      securityContext:
+        fsGroup: {{ .Values.podSecurityContext.fsGroup }}
+      # The application only reads a single ~/.sorokeep/config.yaml file
+      # with no include/merge mechanism, and several sensitive fields
+      # (slackToken, feeSponsorSecret) have no environment-variable
+      # fallback — they can only arrive via that one file. This init
+      # container merges the ConfigMap's non-sensitive fragment with any
+      # non-empty Secret-provided fields into the final config.yaml,
+      # written directly onto the PVC the main container also mounts.
+      # See README "Secret handling".
+      initContainers:
+        - name: merge-config
+          image: "busybox:1.36"
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              cp /config-src/config.yaml /data/config.yaml
+              if [ -s /secret-src/slackToken ]; then
+                printf 'slackToken: "%s"\n' "$(cat /secret-src/slackToken)" >> /data/config.yaml
+              fi
+              if [ -s /secret-src/telegramBotToken ]; then
+                printf 'telegramBotToken: "%s"\n' "$(cat /secret-src/telegramBotToken)" >> /data/config.yaml
+              fi
+              if [ -s /secret-src/feeSponsorSecret ]; then
+                printf 'feeSponsorSecret: "%s"\n' "$(cat /secret-src/feeSponsorSecret)" >> /data/config.yaml
+              fi
+              chmod 644 /data/config.yaml
+              echo "sorokeep: merged config.yaml into /data/config.yaml"
+          volumeMounts:
+            - name: data
+              mountPath: /home/sorokeep/.sorokeep
+            - name: config-src
+              mountPath: /config-src
+              readOnly: true
+            - name: secret-src
+              mountPath: /secret-src
+              readOnly: true
+      containers:
+        - name: sorokeep
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Preserves the existing Dockerfile's ENTRYPOINT
+          # (["node","/app/dist/index.js"]) unmodified — only the
+          # `daemon` subcommand and flags it already supports
+          # (src/commands/daemon.ts) are supplied here, matching the
+          # same flag set the repo's own docker-compose.yaml uses.
+          args:
+            - daemon
+            - --network
+            - {{ .Values.config.network | quote }}
+            {{- if .Values.config.rpcUrl }}
+            - --rpc-url
+            - {{ .Values.config.rpcUrl | quote }}
+            {{- end }}
+            - --interval
+            - {{ mul (.Values.config.pollingIntervalSeconds | int) 1000 | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /home/sorokeep/.sorokeep
+          # No /healthz exists, and /readyz is opt-in + loopback-only
+          # (bound to 127.0.0.1, only started when --metrics-port is
+          # passed — see README "Health probes"). PID 1 in this
+          # container is always the `node` process directly (the
+          # Dockerfile's ENTRYPOINT has no shell wrapper), so checking
+          # /proc/1/cmdline is a dependency-free way to confirm the
+          # daemon process is still the one running, without assuming
+          # pgrep/ps are installed in the image.
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - grep -qa "dist/index.js" /proc/1/cmdline
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - grep -qa "dist/index.js" /proc/1/cmdline
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sorokeep.fullname" . }}-data
+        - name: config-src
+          configMap:
+            name: {{ include "sorokeep.fullname" . }}-config
+        - name: secret-src
+          secret:
+            secretName: {{ include "sorokeep.fullname" . }}-secret
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

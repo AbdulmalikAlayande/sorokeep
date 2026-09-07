@@ -1,0 +1,19 @@
+Sorokeep has been installed as release "{{ .Release.Name }}".
+
+IMPORTANT — read before relying on this release:
+
+  * Exactly ONE daemon replica runs, and the chart does not expose a way
+    to change that (SQLite/WAL supports only a single writer). See the
+    chart README's "Exactly one instance" section.
+  * Liveness/readiness probes are process-based (exec), not HTTP: the
+    application does not yet expose /healthz, and /readyz is opt-in and
+    loopback-only. See the README's "Health probes" section.
+  * If you left `image.repository` at its default, the pod will fail to
+    pull an image — no sorokeep image is published anywhere yet. Build
+    one from the repo root Dockerfile, push it somewhere you control,
+    and override `image.repository`/`image.tag`. See the README's
+    "Image prerequisite" section.
+
+Check status with:
+  kubectl get pods -l "app.kubernetes.io/instance={{ .Release.Name }}"
+  kubectl logs -l "app.kubernetes.io/instance={{ .Release.Name }}" -f

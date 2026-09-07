@@ -2,11 +2,12 @@ import type Database from "better-sqlite3";
 import { runMonitorCycle, type MonitorCycleResult } from "../core/monitor.js";
 import { deliverPendingAlerts } from "../alerts/dispatcher.js";
 import { vacuumDatabase } from "../db/database.js";
-import { aggregateDailyCostSnapshots, getAllContracts, getDigestConfigs } from "../db/repositories.js";
+import { aggregateDailyCostSnapshots, getAllContracts, getDigestConfigs, getGroupsForContract } from "../db/repositories.js";
 import { buildFleetDigest, deliverDigestPayload } from "../core/digest.js";
 import { getLogger } from "../logging/index.js";
 import type { Logger } from "../logging/types.js";
 import { createMetricsServer, stopMetricsServer } from "../observability/server.js";
+import { loadConfig } from "../utils/config.js";
 import { daemonCycleDuration, daemonCyclesSkipped } from "../observability/metrics/daemon.js";
 import { StellarRpcClient } from "../rpc/client.js";
 import { initTracing, getTracer, endSpan } from "../observability/tracing.js";
@@ -94,7 +95,8 @@ export async function startDaemon(
     if (options?.metricsPort !== undefined) {
         try {
             const readyzRpcClient = new StellarRpcClient(network, rpcUrl);
-            createMetricsServer(options.metricsPort, db, readyzRpcClient);
+            const allowedIps = loadConfig().allowedIps;
+            createMetricsServer(options.metricsPort, db, readyzRpcClient, allowedIps);
             logger().info(`Metrics server listening on http://127.0.0.1:${options.metricsPort}/metrics`);
         } catch (err: unknown) {
             logger().error("Failed to start metrics server", err);
@@ -349,15 +351,52 @@ function safeOnCycle(
     }
 }
 
+/**
+ * Determine the effective poll interval in milliseconds for the given network.
+ *
+ * Precedence — lowest to highest (a higher tier always wins):
+ *
+ *   1. Global default (`fallbackIntervalMs`) — the `--interval` CLI flag or
+ *      the built-in 5-minute constant.
+ *   2. Per-group default — `contract_groups.poll_interval_seconds` for any
+ *      group the contract belongs to. Only consulted when the contract
+ *      itself has no per-contract override.
+ *   3. Per-contract override — `contracts.poll_interval_seconds`.
+ *
+ * Across all contracts on the network we collect their *effective* interval
+ * (resolved through the precedence chain above) and return the smallest
+ * value, so the contract with the shortest desired cadence is always
+ * satisfied. If no contract supplies an override at either tier, the global
+ * fallback is returned unchanged.
+ */
 function resolvePollIntervalMs(db: Database.Database, network: string, fallbackIntervalMs: number): number {
     const contracts = getAllContracts(db).filter((contract) => contract.network === network);
-    const overrides = contracts
-        .map((contract) => contract.poll_interval_seconds)
-        .filter((value): value is number => typeof value === "number" && value > 0);
 
-    if (overrides.length === 0) {
+    const effectiveSeconds: number[] = [];
+
+    for (const contract of contracts) {
+        // Tier 3 — per-contract override wins unconditionally.
+        if (typeof contract.poll_interval_seconds === "number" && contract.poll_interval_seconds > 0) {
+            effectiveSeconds.push(contract.poll_interval_seconds);
+            continue;
+        }
+
+        // Tier 2 — smallest per-group default among the contract's groups.
+        const groups = getGroupsForContract(db, contract.id);
+        const groupIntervals = groups
+            .map((group) => group.poll_interval_seconds)
+            .filter((value): value is number => typeof value === "number" && value > 0);
+
+        if (groupIntervals.length > 0) {
+            effectiveSeconds.push(Math.min(...groupIntervals));
+        }
+        // Tier 1 — no override at any tier; this contract contributes
+        // nothing and is polled on the global fallback interval.
+    }
+
+    if (effectiveSeconds.length === 0) {
         return fallbackIntervalMs;
     }
 
-    return Math.min(...overrides) * 1000;
+    return Math.min(...effectiveSeconds) * 1000;
 }

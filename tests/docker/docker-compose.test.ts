@@ -5,6 +5,13 @@ import YAML from "yaml";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const COMPOSE_FILE = path.join(ROOT, "docker-compose.yaml");
+const OBSERVABILITY_COMPOSE_FILE = path.join(ROOT, "docker-compose.observability.yml");
+const PROMETHEUS_CONFIG_FILE = path.join(ROOT, "devops/prometheus/prometheus.yml");
+const GRAFANA_DASHBOARD_PROVIDER_FILE = path.join(
+    ROOT,
+    "devops/grafana/provisioning/dashboards/dashboard.yml",
+);
+const GRAFANA_DASHBOARD_FILE = path.join(ROOT, "devops/grafana/provisioning/dashboards/sorokeep-overview.json");
 
 type ComposeScalar = string | number | boolean;
 type ComposeList = ComposeScalar[];
@@ -26,6 +33,7 @@ interface ComposeService {
         condition?: string;
     }>;
     environment?: ComposeEnvironment;
+    profiles?: string[];
 }
 
 interface DockerComposeConfig {
@@ -35,11 +43,15 @@ interface DockerComposeConfig {
 }
 
 let composeConfig: DockerComposeConfig;
+let observabilityComposeConfig: DockerComposeConfig;
 
 beforeAll(() => {
     if (fs.existsSync(COMPOSE_FILE)) {
         const raw = fs.readFileSync(COMPOSE_FILE, "utf8");
         composeConfig = YAML.parse(raw) as DockerComposeConfig;
+    }
+    if (fs.existsSync(OBSERVABILITY_COMPOSE_FILE)) {
+        observabilityComposeConfig = YAML.parse(fs.readFileSync(OBSERVABILITY_COMPOSE_FILE, "utf8")) as DockerComposeConfig;
     }
 });
 
@@ -169,5 +181,30 @@ describe("docker-compose.yaml configuration", () => {
             const networks = Object.keys(composeConfig.networks);
             expect(networks.length).toBeGreaterThanOrEqual(1);
         });
+    });
+});
+
+describe("observability compose overlay", () => {
+    it("defines profiled Prometheus and Grafana services", () => {
+        expect(fs.existsSync(OBSERVABILITY_COMPOSE_FILE)).toBe(true);
+        expect(observabilityComposeConfig.services.prometheus.profiles).toContain("observability");
+        expect(observabilityComposeConfig.services.grafana.profiles).toContain("observability");
+    });
+
+    it("wires Prometheus to Sorokeep's metrics endpoint", () => {
+        expect(fs.existsSync(PROMETHEUS_CONFIG_FILE)).toBe(true);
+        const prometheusConfig = YAML.parse(fs.readFileSync(PROMETHEUS_CONFIG_FILE, "utf8"));
+        const targets = prometheusConfig.scrape_configs.flatMap((job: any) =>
+            job.static_configs.flatMap((config: any) => config.targets),
+        );
+        expect(targets).toContain("sorokeep:9464");
+    });
+
+    it("provisions the Sorokeep Grafana dashboard", () => {
+        expect(fs.existsSync(GRAFANA_DASHBOARD_PROVIDER_FILE)).toBe(true);
+        expect(fs.existsSync(GRAFANA_DASHBOARD_FILE)).toBe(true);
+        const dashboard = JSON.parse(fs.readFileSync(GRAFANA_DASHBOARD_FILE, "utf8"));
+        expect(dashboard.title).toBe("Sorokeep Overview");
+        expect(dashboard.panels.length).toBeGreaterThan(0);
     });
 });

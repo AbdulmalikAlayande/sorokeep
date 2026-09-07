@@ -7,7 +7,7 @@ import { runChannelContractTests } from "./channel-contract.js";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-import { sendWebhookAlert } from "../../src/alerts/webhook";
+import { sendWebhookAlert, verifyWebhookSignature } from "../../src/alerts/webhook";
 import type { AlertEvent } from "../../src/alerts/types";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -356,6 +356,44 @@ describe("sendWebhookAlert", () => {
             expect(aborted).toBe(false);
 
             vi.useRealTimers();
+        });
+    });
+
+    // =========================================================================
+    // 8. VERIFY WEBHOOK SIGNATURE
+    // =========================================================================
+    describe("verifyWebhookSignature", () => {
+        const payload = JSON.stringify({ event: "threshold_crossed", contractId: "CDEF1234" });
+        const secret = "super-secret-key-12345";
+        const validHex = createHmac("sha256", secret).update(payload).digest("hex");
+        const validHeaderSignature = `sha256=${validHex}`;
+
+        it("verifies true for a correctly signed payload with sha256= prefix", () => {
+            expect(verifyWebhookSignature(payload, validHeaderSignature, secret)).toBe(true);
+        });
+
+        it("verifies true for a correctly signed payload without sha256= prefix (raw hex)", () => {
+            expect(verifyWebhookSignature(payload, validHex, secret)).toBe(true);
+        });
+
+        it("verifies false for a tampered payload", () => {
+            const tamperedPayload = JSON.stringify({ event: "threshold_crossed", contractId: "CDEF9999" });
+            expect(verifyWebhookSignature(tamperedPayload, validHeaderSignature, secret)).toBe(false);
+        });
+
+        it("verifies false for an incorrect secret", () => {
+            expect(verifyWebhookSignature(payload, validHeaderSignature, "wrong-secret")).toBe(false);
+        });
+
+        it("verifies false for an invalid or corrupted signature", () => {
+            expect(verifyWebhookSignature(payload, "sha256=badhexsignature", secret)).toBe(false);
+            expect(verifyWebhookSignature(payload, "invalid_sig", secret)).toBe(false);
+        });
+
+        it("returns false for missing or empty parameters", () => {
+            expect(verifyWebhookSignature("", validHeaderSignature, secret)).toBe(false);
+            expect(verifyWebhookSignature(payload, "", secret)).toBe(false);
+            expect(verifyWebhookSignature(payload, validHeaderSignature, "")).toBe(false);
         });
     });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { convertLedgerCloseTimeToSeconds, formatTimeToCloseLedger, classifyTTL, statusIndicator, formatContractID, formatSecretKey, validateContractId, paginateList, formatPaginationFooter, formatBytes } from "../../src/utils/formatting";
+import { convertLedgerCloseTimeToSeconds, formatTimeToCloseLedger, classifyTTL, statusIndicator, formatContractID, formatSecretKey, validateContractId, paginateList, formatPaginationFooter, formatBytes, formatFleetCSV } from "../../src/utils/formatting";
 
 describe("convertLedgerCloseTimeToSeconds", () => {
     it("should convert ledger close time to seconds using 5.5s average", () => {
@@ -270,5 +270,89 @@ describe("formatPaginationFooter", () => {
   it("handles a single page", () => {
     expect(formatPaginationFooter({ page: 1, pageSize: 25, totalItems: 5, totalPages: 1 }))
       .toBe("Page 1 of 1 (5 total)");
+  });
+});
+
+describe("formatFleetCSV", () => {
+  it("returns a header row plus one row per entry", () => {
+    const rows = formatFleetCSV([
+      {
+        contractId: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+        contractName: "Alpha",
+        entryKeyXdr: "AAAA1234",
+        entryType: "instance",
+        remainingTTL: 50000,
+        status: "ok",
+      },
+      {
+        contractId: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+        contractName: "Alpha",
+        entryKeyXdr: "AAAA5678",
+        entryType: "wasm",
+        remainingTTL: 48000,
+        status: "ok",
+      },
+    ]);
+
+    const lines = rows.split("\n").filter((l) => l.length > 0);
+    expect(lines).toHaveLength(3); // header + 2 data rows
+    expect(lines[0]).toBe("contract_id,contract_name,entry_key_xdr,entry_type,remaining_ttl,status");
+  });
+
+  it("quotes a contract name containing a comma", () => {
+    const rows = formatFleetCSV([
+      {
+        contractId: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+        contractName: "DeFi, Protocol",
+        entryKeyXdr: "AAAA1234",
+        entryType: "instance",
+        remainingTTL: 30000,
+        status: "warning",
+      },
+    ]);
+
+    const lines = rows.split("\n").filter((l) => l.length > 0);
+    expect(lines).toHaveLength(2);
+    // The name "DeFi, Protocol" must be quoted
+    expect(lines[1]).toContain('"DeFi, Protocol"');
+  });
+
+  it("escapes a contract name containing double quotes", () => {
+    const rows = formatFleetCSV([
+      {
+        contractId: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+        contractName: 'Token "V2"',
+        entryKeyXdr: "AAAA1234",
+        entryType: "persistent",
+        remainingTTL: 5000,
+        status: "critical",
+      },
+    ]);
+
+    const lines = rows.split("\n").filter((l) => l.length > 0);
+    expect(lines[1]).toContain('"Token ""V2"""');
+  });
+
+  it("handles a null contract name gracefully", () => {
+    const rows = formatFleetCSV([
+      {
+        contractId: "CBEOJUP5FU6KKOEZ7RMTSKZ7YLBS5D6LVATIGCESOGXSZEQ2UWQFKZW6",
+        contractName: null,
+        entryKeyXdr: "AAAA1234",
+        entryType: "instance",
+        remainingTTL: 0,
+        status: "expired",
+      },
+    ]);
+
+    const lines = rows.split("\n").filter((l) => l.length > 0);
+    expect(lines[1]).toContain("CBEOJUP5...");
+  });
+
+  it("returns only the header row for an empty input", () => {
+    const rows = formatFleetCSV([]);
+    const lines = rows.split("\n").filter((l) => l.length > 0);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toBe("contract_id,contract_name,entry_key_xdr,entry_type,remaining_ttl,status");
   });
 });

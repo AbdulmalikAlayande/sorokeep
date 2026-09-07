@@ -5,6 +5,7 @@ import { SlackChannel } from "./slack.js";
 import { sendPagerDutyAlert } from "./pagerduty.js";
 import { sendOpsgenieAlert } from "./opsgenie.js";
 import { sendGoogleChatAlert } from "./googlechat.js";
+import { sendSnsAlert } from "./sns.js";
 
 let registered = false;
 
@@ -56,6 +57,13 @@ export function registerBuiltinChannels(): void {
             channel: { send: sendGoogleChatAlert },
             targetOption: "url",
             missingTargetError: "Error: --url is required when --type is googlechat.",
+            supportsSigning: false,
+        },
+        {
+            name: "sns",
+            channel: { send: (target, event) => sendSnsAlert(target, event) },
+            targetOption: "url",
+            missingTargetError: "Error: --url is required when --type is sns. Paste the full SNS topic ARN.",
             supportsSigning: false,
         },
         {

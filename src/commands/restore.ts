@@ -20,6 +20,7 @@ export function registerRestoreCommand(program: Command): void {
         .option("--all", "Restore all tracked entries for the contract")
         .option("--json", "Output machine-readable JSON")
         .action(async (contractId: string, options: { json?: boolean; keypair?: string; keypairEnv?: string; entry?: string[]; all?: boolean } = {}) => {
+            let spinner: ReturnType<typeof ora> | undefined;
             try {
                 const contractIdValidation = validateContractId(contractId);
                 if (!contractIdValidation.valid) {
@@ -123,7 +124,7 @@ export function registerRestoreCommand(program: Command): void {
                     }
                     return;
                 }
-                const spinner = ora(`Restoring ${entryKeys.length} entries for ${displayName}...`).start();
+                spinner = ora(`Restoring ${entryKeys.length} entries for ${displayName}...`).start();
 
                 const result = await restoreEntries(db, contractId, entryKeys, secretKey!);
 
@@ -145,7 +146,13 @@ export function registerRestoreCommand(program: Command): void {
                     process.exit(1);
                 }
             } catch (error: unknown) {
+                if (error instanceof Error && error.message === "process.exit called") {
+                    throw error;
+                }
                 const msg = error instanceof Error ? error.message : String(error);
+                if (spinner?.isSpinning) {
+                    spinner.fail(chalk.red(`Restore failed: ${msg}`));
+                }
                 logger.error("Restore command failed", { error: msg });
                 if (options.json) {
                     printOutput({ success: false, error: msg, contractId }, true);

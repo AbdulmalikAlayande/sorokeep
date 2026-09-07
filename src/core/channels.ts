@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { Keypair } from "@stellar/stellar-sdk";
 import { StellarRpcClient } from "../rpc/client.js";
 import {
     getChannelAccounts,
@@ -10,6 +11,37 @@ import {
 import { getLogger } from "../logging/index.js";
 
 const logger = getLogger().child({ component: "ChannelAccountPool" });
+
+/**
+ * Zeroize the raw secret key buffer of a Stellar Keypair after use.
+ *
+ * The Stellar SDK's `Keypair.rawSecretKey()` returns the **same** underlying
+ * ArrayBuffer that backs the keypair's internal secret-key storage (verified
+ * against @stellar/stellar-sdk). Filling that buffer with zeros therefore
+ * removes the key material from the Keypair object's memory immediately,
+ * rather than leaving it live until the garbage collector reclaims the object.
+ *
+ * ⚠️  Defense-in-depth limitations (be honest, not marketing):
+ * - The original secret key *string* (the "S…" stroop passed to
+ *   `Keypair.fromSecret`) is a JavaScript primitive. Strings are immutable and
+ *   may be interned by V8. There is no portable way to zero a JS string, so
+ *   that copy of the key material will persist until GC collects it.
+ * - V8's heap compaction may have duplicated the Buffer's bytes elsewhere in
+ *   memory before this function is called. No hard erasure guarantee is
+ *   possible in a garbage-collected runtime.
+ * - This function only zeroes the keypair it receives. It has no effect on
+ *   keypairs created inside other functions (e.g., inside `client.sendPayments`
+ *   in rpc/client.ts) — those are out of scope per issue #428.
+ *
+ * Despite these limitations, zeroing the buffer shortens the window in which a
+ * memory scrape or heap dump can recover the raw key material, which is a
+ * meaningful improvement over leaving the bytes live indefinitely.
+ *
+ * @param keypair - The Stellar Keypair whose secret key buffer should be zeroed.
+ */
+export function zeroizeKeypair(keypair: Keypair): void {
+    keypair.rawSecretKey().fill(0);
+}
 
 export interface ChannelSlot {
     publicKey: string;
@@ -180,7 +212,21 @@ export async function fundChannels(
         amountXlm,
     }));
 
-    const result = await client.sendPayments(destinations, masterSecretKey);
+    // Create a local Keypair so we can zero its buffer immediately after the
+    // payment completes. The signing copy held inside client.sendPayments()
+    // is a separate object in rpc/client.ts and is outside the scope of this
+    // function; see the zeroizeKeypair() doc comment for the full picture.
+    const keypair = Keypair.fromSecret(masterSecretKey);
+
+    let result;
+    try {
+        result = await client.sendPayments(destinations, masterSecretKey);
+    } finally {
+        // Zero the raw key buffer in all outcomes — success, failure, or thrown
+        // error. This shortens the window the key material sits in this
+        // Keypair object's backing buffer. See zeroizeKeypair() for limits.
+        zeroizeKeypair(keypair);
+    }
 
     if (!result.success) {
         return { funded: 0, txHash: result.txHash, errors: [result.error ?? "Transaction failed"] };

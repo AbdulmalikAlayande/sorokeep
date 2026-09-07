@@ -34,3 +34,8 @@ export type { AWSSecretsResolverConfig } from "./core/aws_secrets.js";
 
 export { registerAlertChannel } from "./alerts/registry.js";
 export type { ChannelDefinition } from "./alerts/registry.js";
+
+// ─── Webhook verification ────────────────────────────────────────────────────
+
+export { verifyWebhookSignature } from "./alerts/webhook.js";
+

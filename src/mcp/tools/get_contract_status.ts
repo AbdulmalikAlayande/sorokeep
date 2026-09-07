@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import * as z from "zod/v4";
+import { READ_ONLY_ANNOTATIONS } from "../permissions.js";
 import {
     ContractNotFoundError,
     getContractStatus,
@@ -46,6 +47,7 @@ export function registerGetContractStatusTool(
             inputSchema: {
                 contractId: z.string().describe("Stellar contract address (C... format)"),
             },
+            annotations: READ_ONLY_ANNOTATIONS,
         },
         async ({ contractId }) => invokeGetContractStatus(getDb(), contractId),
     );

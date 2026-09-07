@@ -4,6 +4,22 @@ import { Command } from "commander";
 import * as dbLib from "../../src/db/database";
 import * as repos from "../../src/db/repositories";
 import * as extensionLib from "../../src/core/extension";
+import ora from "ora";
+
+const { mockSpinner } = vi.hoisted(() => {
+    return {
+        mockSpinner: {
+            start: vi.fn().mockReturnThis(),
+            succeed: vi.fn().mockReturnThis(),
+            fail: vi.fn().mockReturnThis(),
+            isSpinning: true,
+        },
+    };
+});
+
+vi.mock("ora", () => ({
+    default: vi.fn(() => mockSpinner),
+}));
 
 vi.mock("../../src/db/database");
 vi.mock("../../src/db/repositories");
@@ -19,6 +35,12 @@ describe("Restore Command CLI", () => {
     beforeEach(() => {
         program = new Command();
 
+        mockSpinner.start.mockReturnThis();
+        mockSpinner.succeed.mockReturnThis();
+        mockSpinner.fail.mockReturnThis();
+        mockSpinner.isSpinning = true;
+        vi.mocked(ora).mockReturnValue(mockSpinner as any);
+
         vi.spyOn(Command.prototype, "action").mockImplementation(function (this: any, fn: any) {
             actionFn = fn;
             return this;
@@ -33,7 +55,7 @@ describe("Restore Command CLI", () => {
     });
 
     afterEach(() => {
-        vi.restoreAllMocks();
+        vi.clearAllMocks();
     });
 
     it("exits with 1 if contract is not found", async () => {
@@ -133,5 +155,59 @@ describe("Restore Command CLI", () => {
             ["KEY1", "KEY2"],
             "SKEY"
         );
+    });
+
+    it("calls spinner.succeed on successful restore and spinner.fail on failure", async () => {
+        vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet", name: "MyContract" } as any);
+        vi.mocked(repos.getEntriesForContract).mockReturnValue([{ entry_key_xdr: "AAAA" } as any]);
+        vi.mocked(extensionLib.restoreEntries).mockResolvedValue({
+            success: true,
+            entriesRestored: 1,
+            txHash: "tx123",
+            ledger: 100,
+        } as any);
+
+        await actionFn("CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526", { keypair: "SKEY", all: true });
+
+        expect(ora).toHaveBeenCalledWith(expect.stringContaining("Restoring 1 entries for MyContract..."));
+        expect(mockSpinner.start).toHaveBeenCalled();
+        expect(mockSpinner.succeed).toHaveBeenCalledWith(expect.stringContaining("Restored 1 entries for MyContract"));
+
+        vi.mocked(extensionLib.restoreEntries).mockResolvedValue({
+            success: false,
+            error: "Transaction failed",
+        } as any);
+
+        await actionFn("CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526", { keypair: "SKEY", all: true });
+        expect(mockSpinner.fail).toHaveBeenCalledWith(expect.stringContaining("Restore failed: Transaction failed"));
+    });
+
+    it("calls spinner.fail when restoreEntries throws an error", async () => {
+        vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet", name: "MyContract" } as any);
+        vi.mocked(repos.getEntriesForContract).mockReturnValue([{ entry_key_xdr: "AAAA" } as any]);
+        vi.mocked(extensionLib.restoreEntries).mockRejectedValue(new Error("RPC timeout"));
+
+        await actionFn("CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526", { keypair: "SKEY", all: true });
+
+        expect(mockSpinner.fail).toHaveBeenCalledWith(expect.stringContaining("Restore failed: RPC timeout"));
+        expect(mockExit).toHaveBeenCalledWith(1);
+    });
+
+    it("does not start spinner in json mode", async () => {
+        vi.mocked(repos.getContract).mockReturnValue({ id: "X", network: "testnet", name: "MyContract" } as any);
+        vi.mocked(repos.getEntriesForContract).mockReturnValue([{ entry_key_xdr: "AAAA" } as any]);
+        vi.mocked(extensionLib.restoreEntries).mockResolvedValue({
+            success: true,
+            entriesRestored: 1,
+            txHash: "tx123",
+        } as any);
+
+        vi.mocked(ora).mockClear();
+        mockSpinner.start.mockClear();
+
+        await actionFn("CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526", { keypair: "SKEY", all: true, json: true });
+
+        expect(ora).not.toHaveBeenCalled();
+        expect(mockSpinner.start).not.toHaveBeenCalled();
     });
 });

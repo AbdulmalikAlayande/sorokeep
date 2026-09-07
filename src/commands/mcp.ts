@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getDatabase } from "../db/database.js";
 import { createMcpServer } from "../mcp/server.js";
+import { loadConfig } from "../utils/config.js";
 
 export function registerMcpCommand(program: Command): void {
   program
@@ -9,7 +10,7 @@ export function registerMcpCommand(program: Command): void {
     .description("Start the Model Context Protocol (MCP) server on stdio transport")
     .action(async () => {
       try {
-        const server = createMcpServer(() => getDatabase());
+        const server = createMcpServer(() => getDatabase(), loadConfig());
         const transport = new StdioServerTransport();
         await server.connect(transport);
       } catch (error: unknown) {

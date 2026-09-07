@@ -14,6 +14,10 @@ import {
     addBudgetSpent,
     countExtensionsInLastHour,
     getAlertConfigsForContract,
+    getExtensionHistory,
+    getEffectivePolicy,
+    getTTLSamples,
+    type EntryType,
 
 } from "../db/repositories.js";
 import { ChannelAccountPool } from "./channels.js";
@@ -21,10 +25,25 @@ import { getLogger } from "../logging/index.js";
 import { formatSecretKey } from "../utils/formatting.js";
 import { VaultResolver } from "./vault.js";
 import { loadConfig } from "../utils/config.js";
-import { buildBudgetExhaustedAlertEvent } from "../alerts/types.js";
+import { buildBudgetExhaustedAlertEvent, buildAlertEvent } from "../alerts/types.js";
 import { deliverSingleAlert } from "../alerts/dispatcher.js";
+import { SimulationCacheManager, computeFootprintHash } from "./simulation_cache.js";
+import { computeDecayRate, projectCrossingLedger } from "./predictive.js";
 
 const logger = getLogger().child({ component: "Extension" });
+
+// Shared across all contracts to minimize redundant RPC simulateTransaction
+// calls during auto-extension cycles (issue #501).
+const simulationCache = new SimulationCacheManager();
+
+/**
+ * Clear the global simulation cache. Used for testing and when contract
+ * state changes significantly.
+ * @internal
+ */
+export function clearSimulationCache(): void {
+    simulationCache.clearAll();
+}
 
 
 // ─── Rate limiter ─────────────────────────────────────────────────────────────
@@ -34,6 +53,26 @@ const logger = getLogger().child({ component: "Extension" });
  * Prevents runaway fee submissions under extreme network load (issue #142).
  */
 export const HOURLY_RATE_LIMIT = 5;
+
+/**
+ * Minimum XLM balance a channel account must hold before Sorokeep will submit
+ * an extension transaction through it. Covers the base reserve (1 XLM) plus
+ * a safety margin for transaction fees. Accounts below this threshold are
+ * skipped and an alert is fired rather than attempting a failing transaction
+ * (issue #504).
+ */
+export const MINIMUM_BALANCE_XLM = 5;
+
+/**
+ * Minimum time (in milliseconds) that must pass between two consecutive
+ * extensions of the same contract entry. Prevents the same entry being
+ * extended twice in quick succession when the threshold is very tight
+ * relative to the target TTL (issue #510).
+ *
+ * Default 5 minutes — slightly below the typical polling interval so it
+ * does not interfere with normal operation.
+ */
+export const EXTENSION_COOLDOWN_MS = 5 * 60 * 1000;
 
 /**
  * Check whether the given contract has reached its hourly auto-extension rate limit.
@@ -98,6 +137,25 @@ export interface AutoExtensionResult {
     }>;
 }
 
+/**
+ * Options for predictive TTL extension scheduling (issue #492).
+ * When `predictiveCycles` > 0, entries whose projected crossing ledger falls
+ * within the next `predictiveCycles` daemon cycles are extended proactively,
+ * even if their current TTL is still above the reactive threshold.
+ */
+export interface PredictiveOptions {
+    /**
+     * Number of daemon cycles ahead to project TTL crossing.
+     * 0 or undefined disables predictive mode.
+     */
+    predictiveCycles?: number;
+    /**
+     * Approximate ledger interval between daemon cycles.
+     * Defaults to 60 ledgers (~5 minutes at 5 s/ledger).
+     */
+    ledgersPerCycle?: number;
+}
+
 export interface RestoreResult {
     success: boolean;
     contractId: string;
@@ -130,9 +188,20 @@ export async function simulateExtension(
 
     const client = new StellarRpcClient(contract.network, rpcUrl);
 
+    const footprintHash = computeFootprintHash(entryKeyXdrs);
+    const wasmHash = contract.wasm_hash || "unknown";
+
     let sim;
     try {
-        sim = await client.simulateExtension(entryKeyXdrs, extendToLedgers, sourcePublicKey);
+        sim = await simulationCache.getSimulation(
+            footprintHash,
+            wasmHash,
+            contractId,
+            async () => {
+                logger.debug(`Cache miss for ${contractId} — running fresh simulation`);
+                return await client.simulateExtension(entryKeyXdrs, extendToLedgers, sourcePublicKey);
+            },
+        );
     } catch (err: any) {
         logger.warn(`Simulation warning for ${contractId}: ${err.message}`);
         return {
@@ -278,6 +347,9 @@ export async function extendEntries(
     });
     updateDb();
 
+    // The entries' TTLs just changed, so any cached simulation is now stale.
+    simulationCache.invalidate(computeFootprintHash(entryKeyXdrs));
+
     return {
         success: true,
         contractId,
@@ -297,6 +369,7 @@ export async function runAutoExtensions(
     network: string,
     rpcUrl?: string,
     sponsorSecret?: string,
+    predictiveOpts?: PredictiveOptions,
 ): Promise<AutoExtensionResult> {
     const result: AutoExtensionResult = {
         contractsChecked: 0,
@@ -334,8 +407,43 @@ export async function runAutoExtensions(
         const entries = getEntriesForContract(db, contract.id);
         const needsExtension = entries.filter(e => {
             if (!e.live_until_ledger) return false;
+            // Per-entry-type policies (issue #491): an override supplies its
+            // own extend_when_below_ledgers threshold; entries without an
+            // override fall back to the contract-level policy unchanged.
+            const effectivePolicy = getEffectivePolicy(db, contract.id, e.entry_type as EntryType) ?? policy;
             const remaining = e.live_until_ledger - latestLedger;
-            return remaining >= 0 && remaining < policy.extend_when_below_ledgers;
+
+            // Reactive path: TTL already below threshold.
+            if (remaining >= 0 && remaining < effectivePolicy.extend_when_below_ledgers) return true;
+
+            // Predictive path (opt-in, issue #492): trigger early when the
+            // decay-rate projection crosses the threshold within the next
+            // N daemon cycles, even though the current TTL is still above it.
+            const cycles = predictiveOpts?.predictiveCycles ?? policy.predictive_cycles ?? 0;
+            if (cycles > 0 && remaining >= effectivePolicy.extend_when_below_ledgers) {
+                const ledgersPerCycle = predictiveOpts?.ledgersPerCycle ?? 60;
+                const horizonLedgers = latestLedger + cycles * ledgersPerCycle;
+
+                const samples = getTTLSamples(db, e.id);
+                const decayRate = computeDecayRate(samples);
+                const projectedCrossing = projectCrossingLedger(
+                    decayRate,
+                    remaining,
+                    effectivePolicy.extend_when_below_ledgers,
+                    latestLedger,
+                );
+
+                if (projectedCrossing !== null && projectedCrossing <= horizonLedgers) {
+                    logger.info(
+                        `Predictive extension triggered for ${e.entry_key_xdr} ` +
+                        `(contract ${contract.id}): projected crossing at ledger ${projectedCrossing}, ` +
+                        `horizon ${horizonLedgers}`,
+                    );
+                    return true;
+                }
+            }
+
+            return false;
         });
 
         if (needsExtension.length > 0) {
@@ -358,6 +466,44 @@ export async function runAutoExtensions(
                 const msg = `Contract ${contract.id}: rate limit reached — ${count}/${HOURLY_RATE_LIMIT} extensions in the last hour. Skipping.`;
                 logger.warn(msg);
                 result.errors.push(msg);
+                return;
+            }
+
+            // ── Cooldown check per entry (issue #510) ──────────────────────
+            // Filter out entries that were extended within the cooldown window
+            // to prevent redundant back-to-back extensions of the same entry.
+            const recentHistory = getExtensionHistory(db, contract.id, 1);
+            const lastExtendedAt = new Map<number, Date>();
+            for (const record of recentHistory) {
+                const entryId = record.contract_entry_id;
+                // executed_at is stored as UTC (SQLite CURRENT_TIMESTAMP); append
+                // "Z" so the timestamp is parsed as UTC regardless of the host
+                // machine's timezone.
+                const executedAt = new Date(record.executed_at + "Z");
+                const existing = lastExtendedAt.get(entryId);
+                if (!existing || executedAt > existing) {
+                    lastExtendedAt.set(entryId, executedAt);
+                }
+            }
+
+            const cooldownEligible = needsExtension.filter(e => {
+                const lastExt = lastExtendedAt.get(e.id);
+                if (!lastExt) return true; // never extended → eligible
+                const elapsed = Date.now() - lastExt.getTime();
+                if (elapsed < EXTENSION_COOLDOWN_MS) {
+                    logger.info(
+                        `Entry ${e.entry_key_xdr} for ${contract.id} was extended ` +
+                        `${Math.round(elapsed / 1000)}s ago — skipping (cooldown: ${EXTENSION_COOLDOWN_MS / 1000}s)`,
+                    );
+                    return false;
+                }
+                return true;
+            });
+
+            if (cooldownEligible.length === 0) {
+                logger.info(
+                    `All ${needsExtension.length} entries for ${contract.id} are within cooldown — skipping`,
+                );
                 return;
             }
 
@@ -385,14 +531,88 @@ export async function runAutoExtensions(
                 return;
             }
 
-            const entryKeys = needsExtension.map(e => e.entry_key_xdr);
+            // ── Minimum-balance check (issue #504) ──────────────────────────
+            // If using a channel account, verify it has enough XLM to cover the
+            // transaction fee and base reserve before attempting submission.
+            if (slot) {
+                const accounts = getChannelAccounts(db, network);
+                const channelAccount = accounts.find(a => a.public_key === slot!.publicKey);
+                const balance = channelAccount?.balance_xlm;
+
+                if (balance === null || balance === undefined) {
+                    const msg = `Contract ${contract.id}: Channel account ${slot.publicKey} balance is unknown — skipping extension. Run 'sorokeep channels list' to refresh balances.`;
+                    logger.warn(msg);
+                    result.errors.push(msg);
+                    pool!.release(slot.publicKey);
+                    return;
+                }
+
+                if (balance < MINIMUM_BALANCE_XLM) {
+                    const msg = `Contract ${contract.id}: Channel account ${slot.publicKey} balance ${balance} XLM is below minimum ${MINIMUM_BALANCE_XLM} XLM — skipping extension.`;
+                    logger.warn(msg);
+                    result.errors.push(msg);
+
+                    // Fire an alert through the contract's configured channels,
+                    // using the first entry that needed extension for context.
+                    const sampleEntry = needsExtension[0]!;
+                    const contractRecord = getContract(db, contract.id);
+                    const alertConfigs = getAlertConfigsForContract(db, contract.id);
+                    for (const config of alertConfigs) {
+                        const event = buildAlertEvent({
+                            type: "threshold_crossed",
+                            contractId: contract.id,
+                            contractName: contractRecord?.name ?? null,
+                            network,
+                            entryKeyXdr: sampleEntry.entry_key_xdr,
+                            entryType: sampleEntry.entry_type,
+                            entryLabel: sampleEntry.label,
+                            configuredLedgers: MINIMUM_BALANCE_XLM,
+                            remainingTTL: sampleEntry.live_until_ledger
+                                ? Math.max(0, sampleEntry.live_until_ledger - latestLedger)
+                                : 0,
+                            firedAtLedger: latestLedger,
+                        });
+                        deliverSingleAlert(
+                            config.channel_type,
+                            config.channel_target,
+                            event,
+                            config.webhook_secret,
+                        ).catch((err: unknown) => {
+                            logger.warn(
+                                `Low-balance alert delivery failed for channel ${config.channel_type}: ${err instanceof Error ? err.message : String(err)}`,
+                            );
+                        });
+                    }
+
+                    pool!.release(slot.publicKey);
+                    return;
+                }
+            }
+
+            // Group cooldown-eligible entries by their effective target TTL
+            // (issue #491's per-entry-type overrides). ExtendFootprintTTLOp
+            // sets one new TTL for an entire batch of keys, so entries whose
+            // effective policy resolves to different target_ttl_ledgers
+            // values cannot share a single extension transaction.
+            const groupsByTarget = new Map<number, typeof cooldownEligible>();
+            for (const entry of cooldownEligible) {
+                const effectivePolicy = getEffectivePolicy(db, contract.id, entry.entry_type as EntryType) ?? policy;
+                const target = effectivePolicy.target_ttl_ledgers;
+                const group = groupsByTarget.get(target) ?? [];
+                group.push(entry);
+                groupsByTarget.set(target, group);
+            }
+
+            try {
+            for (const [targetTtlLedgers, groupEntries] of groupsByTarget) {
+            const entryKeys = groupEntries.map(e => e.entry_key_xdr);
 
             logger.info(
                 `Auto-extending ${entryKeys.length} entries for ${contract.id} ` +
-                `(below ${policy.extend_when_below_ledgers}, target ${policy.target_ttl_ledgers})`,
+                `(target ${targetTtlLedgers})`,
             );
 
-            try {
+            {
                 const billingCycle = new Date().toISOString().slice(0, 7);
 
                 // Pool membership takes precedence over the contract's individual
@@ -426,16 +646,27 @@ export async function runAutoExtensions(
                 let estimatedFeeXlm = 0;
                 let reservedPoolSpend = 0;
 
-                if (sharedBudget || budget) {
+                if (sharedBudget || budget || policy.max_fee_stroops != null) {
                     const { Keypair } = await import("@stellar/stellar-sdk");
                     const pubKey = Keypair.fromSecret(secretKey).publicKey();
-                    const simResult = await simulateExtension(db, contract.id, entryKeys, policy.target_ttl_ledgers, pubKey, rpcUrl);
+                    const simResult = await simulateExtension(db, contract.id, entryKeys, targetTtlLedgers, pubKey, rpcUrl);
 
                     if (!simResult.success) {
                         throw new Error(`Simulation failed: ${simResult.error}`);
                     }
 
                     estimatedFeeXlm = (simResult.estimatedFee || 0) / 10000000;
+
+                    // Hard per-transaction fee ceiling (issue #420) — an
+                    // independent safety net from the monthly budget checks
+                    // below. Blocks submission outright if the RPC's fee
+                    // estimate is anomalously high (bad estimate, misconfigured
+                    // node, or a network fee spike).
+                    if (policy.max_fee_stroops != null && (simResult.estimatedFee || 0) > policy.max_fee_stroops) {
+                        throw new Error(
+                            `Estimated fee (${simResult.estimatedFee} stroops) exceeds max fee ceiling (${policy.max_fee_stroops} stroops)`,
+                        );
+                    }
 
                     if (sharedBudget) {
                         // Atomic reserve-if-under-limit: the WHERE clause re-checks
@@ -498,7 +729,7 @@ export async function runAutoExtensions(
                     db,
                     contract.id,
                     entryKeys,
-                    policy.target_ttl_ledgers,
+                    targetTtlLedgers,
                     secretKey,
                     rpcUrl,
                     sponsorSecret,
@@ -548,6 +779,8 @@ export async function runAutoExtensions(
                         `Contract ${contract.id}: Extension failed — ${extResult.error}`,
                     );
                 }
+            }
+            }
             } finally {
                 if (slot && pool) pool.release(slot.publicKey);
             }

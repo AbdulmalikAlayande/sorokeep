@@ -33,9 +33,30 @@ CREATE TABLE IF NOT EXISTS extension_policies (
     extend_when_below_ledgers INTEGER NOT NULL,
     keypair_public TEXT,
     keypair_source TEXT,
+    -- Hard per-transaction fee ceiling in stroops (issue #420). NULL means
+    -- no ceiling — the existing monthly budget check is the only guard.
+    max_fee_stroops INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Number of daemon cycles ahead to project TTL crossing via linear-regression
+    -- decay rate (issue #492). 0 = predictive scheduling disabled (reactive only).
+    predictive_cycles INTEGER NOT NULL DEFAULT 0,
     UNIQUE(contract_id)
 );
+
+-- Periodic live_until_ledger readings per contract entry, powering the
+-- decay-rate calculation behind predictive TTL extension scheduling (#492).
+-- Only the most recent MAX_TTL_SAMPLES (10) rows per entry are kept; older
+-- rows are pruned by the application layer on each insert.
+CREATE TABLE IF NOT EXISTS ttl_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_id INTEGER NOT NULL REFERENCES contract_entries(id) ON DELETE CASCADE,
+    sampled_at_ledger INTEGER NOT NULL,
+    live_until_ledger INTEGER NOT NULL,
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ttl_samples_entry_ledger
+    ON ttl_samples(entry_id, sampled_at_ledger DESC);
 
 -- channel_type is validated against the alert channel registry
 -- (src/alerts/registry.ts) at the application layer, not a fixed SQL enum —
@@ -202,6 +223,10 @@ CREATE TABLE IF NOT EXISTS contract_budgets (
 CREATE TABLE IF NOT EXISTS contract_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    -- Group-level default poll interval in seconds, consulted by
+    -- resolvePollIntervalMs as a fallback tier between the per-contract
+    -- override and the global --interval flag (issue #400).
+    poll_interval_seconds INTEGER,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -285,3 +310,35 @@ CREATE TABLE IF NOT EXISTS shared_budget_pool_contracts (
 
 CREATE INDEX IF NOT EXISTS idx_shared_budget_pool_contracts_pool_id
     ON shared_budget_pool_contracts(pool_id);
+
+-- Per-entry-type TTL policy overrides, falling back to extension_policies
+-- (contract-level default) when no type-specific override exists (#491).
+CREATE TABLE IF NOT EXISTS entry_type_policies (
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    entry_type TEXT NOT NULL CHECK(entry_type IN ('instance', 'wasm', 'persistent', 'temporary')),
+    target_ttl_ledgers INTEGER NOT NULL,
+    extend_when_below_ledgers INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (contract_id, entry_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_entry_type_policies_contract_id
+    ON entry_type_policies(contract_id);
+
+-- Append-only version history of extension_policies, populated by every
+-- upsertExtensionPolicy() call. Powers 'sorokeep guard rollback' (#506).
+CREATE TABLE IF NOT EXISTS guard_policy_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    enabled INTEGER NOT NULL,
+    target_ttl_ledgers INTEGER NOT NULL,
+    extend_when_below_ledgers INTEGER NOT NULL,
+    keypair_public TEXT,
+    keypair_source TEXT,
+    predictive_cycles INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_guard_policy_history_contract_id
+    ON guard_policy_history(contract_id, id DESC);

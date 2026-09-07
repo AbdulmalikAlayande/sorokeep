@@ -422,6 +422,82 @@ describe("StellarRpcClient", () => {
         });
     });
 
+    describe("RPC failover and circuit breaker (#496)", () => {
+        it("accepts multiple RPC URLs as a comma-separated string", () => {
+            const multiClient = new StellarRpcClient("testnet", "https://timeout.com,https://healthy.com");
+            expect(multiClient["endpoints"]).toHaveLength(2);
+            expect(multiClient["endpoints"][0].url).toBe("https://timeout.com");
+            expect(multiClient["endpoints"][1].url).toBe("https://healthy.com");
+        });
+
+        it("accepts multiple RPC URLs as an array", () => {
+            const multiClient = new StellarRpcClient("testnet", ["https://a.com", "https://b.com"]);
+            expect(multiClient["endpoints"]).toHaveLength(2);
+        });
+
+        it("a single-URL client behaves exactly as before — one endpoint, no failover attempted", async () => {
+            const singleClient = new StellarRpcClient("testnet", "https://healthy.com");
+            expect(singleClient["endpoints"]).toHaveLength(1);
+            const health = await singleClient.checkHealth();
+            expect(health.status).toBe("healthy");
+        });
+
+        it("a failing first endpoint causes a retry against the second endpoint, not an immediate error", async () => {
+            const multiClient = new StellarRpcClient("testnet", "https://timeout.com,https://healthy.com");
+            const health = await multiClient.checkHealth();
+            expect(health.status).toBe("healthy");
+        });
+
+        it("throws the original error when every configured endpoint fails", async () => {
+            const multiClient = new StellarRpcClient("testnet", "https://timeout.com,https://refused.com");
+            await expect(multiClient.checkHealth()).rejects.toThrow();
+        });
+
+        it("does not fail over on a non-network application error (e.g. a bad request)", async () => {
+            const multiClient = new StellarRpcClient("testnet", "https://healthy.com,https://also-healthy.com");
+            const appError = Object.assign(new Error("Bad request"), { response: { status: 400 } });
+            const spySecond = vi.spyOn(multiClient["endpoints"][1].server, "getHealth");
+            vi.spyOn(multiClient["endpoints"][0].server, "getHealth").mockRejectedValueOnce(appError);
+
+            await expect(multiClient.checkHealth()).rejects.toThrow("Bad request");
+            expect(spySecond).not.toHaveBeenCalled();
+        });
+
+        it("temporarily skips a repeatedly failing endpoint rather than retrying it every call", async () => {
+            const multiClient = new StellarRpcClient("testnet", "https://timeout.com,https://healthy.com");
+
+            // First call fails over from timeout.com to healthy.com, which
+            // marks timeout.com's endpoint as circuit-broken.
+            await multiClient.checkHealth();
+
+            const spyFirst = vi.spyOn(multiClient["endpoints"][0].server, "getHealth");
+            const spySecond = vi.spyOn(multiClient["endpoints"][1].server, "getHealth");
+
+            // Second call should go straight to healthy.com without even
+            // attempting the known-bad endpoint.
+            await multiClient.checkHealth();
+
+            expect(spyFirst).not.toHaveBeenCalled();
+            expect(spySecond).toHaveBeenCalledTimes(1);
+        });
+
+        it("retries a circuit-broken endpoint again after the cooldown window elapses", async () => {
+            vi.useFakeTimers();
+            try {
+                const multiClient = new StellarRpcClient("testnet", "https://timeout.com,https://healthy.com");
+                await multiClient.checkHealth();
+
+                const spyFirst = vi.spyOn(multiClient["endpoints"][0].server, "getHealth");
+
+                vi.advanceTimersByTime(60_000);
+
+                await multiClient.checkHealth().catch(() => {});
+                expect(spyFirst).toHaveBeenCalled();
+            } finally {
+                vi.useRealTimers();
+            }
+        });
+    });
 
     describe("RPC rate limiting", () => {
         it("does not exceed the configured requests per second", async () => {

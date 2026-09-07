@@ -1,11 +1,12 @@
 import type Database from "better-sqlite3";
-import { getContract, getEntriesForContract } from "../db/repositories.js";
+import { getContract, getEntriesForContract, getExtensionPolicy, getTTLSamples } from "../db/repositories.js";
 import type { ContractEntry } from "../db/repositories.js";
 import {
     classifyTTL,
     formatTimeToCloseLedger,
     type TTLStatus,
 } from "../utils/formatting.js";
+import { computeDecayRate, projectCrossingLedger } from "./predictive.js";
 
 export type EntryTTLStatus = TTLStatus | "unknown";
 
@@ -17,6 +18,10 @@ export type ContractStatusEntry = {
     remainingTTL: number | null;
     approximateTimeRemaining: string | null;
     status: EntryTTLStatus;
+    /** Projected ledger at which TTL will cross the guard threshold. Null if not enough data. */
+    projectedCrossingLedger: number | null;
+    /** ISO-8601 approximate wall-clock time for the projected crossing. */
+    projectedCrossingAt: string | null;
 };
 
 export type ContractStatus = {
@@ -41,8 +46,10 @@ function getEntryLabel(entry: ContractEntry): string {
 }
 
 function mapEntryStatus(
+    db: Database.Database,
     entry: ContractEntry,
     lastCheckedLedger: number | null,
+    thresholdLedgers: number | null,
 ): ContractStatusEntry {
     const label = getEntryLabel(entry);
     const liveUntilLedger = entry.live_until_ledger ?? null;
@@ -56,11 +63,34 @@ function mapEntryStatus(
             remainingTTL: null,
             approximateTimeRemaining: null,
             status: "unknown",
+            projectedCrossingLedger: null,
+            projectedCrossingAt: null,
         };
     }
 
     const remainingTTL = liveUntilLedger - lastCheckedLedger;
     const status = classifyTTL(remainingTTL);
+
+    // Compute projected crossing if a threshold is configured and enough samples exist.
+    let projectedCrossingLedger: number | null = null;
+    let projectedCrossingAt: string | null = null;
+
+    if (thresholdLedgers !== null) {
+        const samples = getTTLSamples(db, entry.id);
+        const decayRate = computeDecayRate(samples);
+        projectedCrossingLedger = projectCrossingLedger(
+            decayRate,
+            remainingTTL,
+            thresholdLedgers,
+            lastCheckedLedger,
+        );
+
+        if (projectedCrossingLedger !== null) {
+            const SECONDS_PER_LEDGER = 5;
+            const deltaMs = (projectedCrossingLedger - lastCheckedLedger) * SECONDS_PER_LEDGER * 1000;
+            projectedCrossingAt = new Date(Date.now() + deltaMs).toISOString();
+        }
+    }
 
     return {
         label,
@@ -70,6 +100,8 @@ function mapEntryStatus(
         remainingTTL,
         approximateTimeRemaining: formatTimeToCloseLedger(remainingTTL),
         status,
+        projectedCrossingLedger,
+        projectedCrossingAt,
     };
 }
 
@@ -81,8 +113,13 @@ export function getContractStatus(db: Database.Database, contractId: string): Co
     }
 
     const lastCheckedLedger = contract.last_checked_ledger ?? null;
+
+    // Determine the configured extension threshold (if any) for projection display.
+    const policy = getExtensionPolicy(db, contractId);
+    const thresholdLedgers = policy?.extend_when_below_ledgers ?? null;
+
     const entries = getEntriesForContract(db, contractId).map((entry) =>
-        mapEntryStatus(entry, lastCheckedLedger),
+        mapEntryStatus(db, entry, lastCheckedLedger, thresholdLedgers),
     );
 
     return {

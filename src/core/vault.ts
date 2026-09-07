@@ -39,6 +39,23 @@ export class VaultSecretError extends Error {
  *   secret_key, private_key, secret, value, stellar_secret, key
  *
  * You can also specify a custom field with a fragment: vault:secret/data/foo#my_field
+ *
+ * Memory-safety note (issue #428)
+ * ───────────────────────────────
+ * VaultResolver resolves secrets over HTTPS and returns them as JavaScript
+ * strings. Because JS strings are immutable and may be interned by V8, there
+ * is no portable way to zero the returned string in memory from this layer.
+ *
+ * Callers that derive a Stellar `Keypair` from the returned secret should use
+ * `zeroizeKeypair()` from `src/core/channels.ts` immediately after the signing
+ * operation completes, to zero the Buffer-backed key material inside the Keypair
+ * object. That is the best mitigation available from JS/Node — see the
+ * `zeroizeKeypair` doc comment for the full set of limitations.
+ *
+ * This function deliberately does NOT cache the resolved secret string beyond
+ * the duration of a single `getSecret()` call. The `VaultResolver` instance
+ * retains only the Vault URL, token, and (optionally) namespace — never the
+ * resolved key material. See SECURITY.md invariant #3.
  */
 export class VaultResolver {
     private url: string;

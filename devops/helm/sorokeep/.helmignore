@@ -1,0 +1,19 @@
+# Patterns to ignore when building packages.
+.git/
+.gitignore
+.bzr/
+.hgignore
+.hg/
+.svn/
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.project
+.idea/
+*.tmproj
+.vscode/
+
+# This chart's own test/check harness — not part of the packaged chart.
+tests/

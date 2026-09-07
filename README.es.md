@@ -41,6 +41,10 @@ Sorokeep es la capa de operaciones unificada que maneja todo esto.
 
 > Los auditores de seguridad han comenzado a señalar el mal manejo del TTL como un área de riesgo en los contratos Soroban. [Veridise](https://veridise.com/audits/soroban/) incluye el manejo del TTL en el alcance de sus auditorías. La [auditoría del endpoint de LayerZero en Stellar](https://code4rena.com/audits/2026-04-layerzero-stellar-endpoint) lista explícitamente los casos extremos de expiración del TTL como una preocupación. La [biblioteca de contratos Stellar de OpenZeppelin](https://docs.openzeppelin.com/stellar-contracts) deja deliberadamente la gestión del TTL del almacenamiento de instancias al desarrollador de la aplicación.
 
+## Seguridad y SBOM
+
+Sorokeep genera una Lista de Materiales de Software (SBOM) en formato CycloneDX para cada release. Puedes encontrar el archivo `bom.json` adjunto como recurso de la release en la [página de Releases de GitHub](https://github.com/AbdulmalikAlayande/sorokeep/releases).
+
 ## Características
 
 - **Observación e Introspección** — Registra contratos, descubre footprints a partir de transacciones en cadena y especificaciones de introspección
@@ -686,6 +690,16 @@ npx vitest
 
 Todas las pruebas utilizan bases de datos SQLite en memoria y respuestas RPC simuladas — sin llamadas de red, sin efectos secundarios en el sistema de archivos. El TDD se practica en todo.
 
+## Seguridad y Procedencia
+
+Los paquetes de Sorokeep publicados en npm incluyen una [declaración de procedencia verificada](https://docs.npmjs.com/generating-provenance-statements). Esto proporciona un vínculo criptográfico y auditable entre el paquete npm publicado y la ejecución exacta de GitHub Actions y el commit que lo generó.
+
+Para verificar la procedencia de tu paquete de Sorokeep instalado, puedes consultar la [página del paquete en el registro de npm](https://www.npmjs.com/package/sorokeep) en busca del distintivo de procedencia, o ejecutar el siguiente comando para verificar las firmas de auditoría de npm:
+
+```bash
+npm audit signatures
+```
+
 ## Preguntas Frecuentes (FAQ)
 
 ### ¿Por qué TypeScript y no Rust?
@@ -710,9 +724,53 @@ Cada fase (monitoreo, entrega, auto-extensión) está envuelta en un manejo de e
 
 Testnet (`https://soroban-testnet.stellar.org`) y Mainnet (`https://mainnet.sorobanrpc.com`). También puedes apuntar Sorokeep a cualquier endpoint RPC personalizado con `--rpc-url`.
 
+### ¿Cómo registro un contrato para monitoreo?
+
+Ejecuta `sorokeep watch <contract-id>` y proporciona las opciones de red y RPC necesarias para tu despliegue. Las configuraciones de alerta requieren que el contrato ya haya sido registrado; usa `sorokeep status <contract-id>` para inspeccionar su estado actual.
+
+### ¿Cómo puedo verificar un canal de alerta antes de ponerlo en producción?
+
+Crea la configuración de alerta y luego ejecuta `sorokeep alerts test --id <alert-config-id>`. El comando envía un evento sintético `threshold_crossed` a través de la ruta de entrega real; agrega `--dry-run` para imprimir el payload sin enviarlo.
+
+### ¿Puede una alerta ir a más de un destino?
+
+Sí. Para alertas de TTL, repite `--target <type:target>` al ejecutar `sorokeep alerts add`, por ejemplo `--target webhook:https://... --target slack:alerts`. Las alertas de recursos actualmente solo admiten su destino principal.
+
+### ¿Por qué una alerta no llegó de inmediato?
+
+Una alerta puede diferirse cuando su ventana de horario silencioso configurada está activa; permanece pendiente sin consumir un reintento. Los fallos de entrega son reintentados por el demonio, y una entrega se abandona una vez alcanzado el límite de reintentos del canal.
+
+### ¿Qué canales de alerta están disponibles?
+
+El registro integrado actualmente incluye Webhook, Webhook v2, Slack, PagerDuty, Google Chat, Discord, Telegram, Opsgenie, Microsoft Teams, Matrix y correo electrónico. Ejecuta `sorokeep alerts channels` para ver los canales registrados en la instalación actual, incluyendo los canales provistos por plugins.
+
+### ¿Qué sucede cuando una entrada de contrato ya expiró?
+
+Una entrada expirada se archiva y no puede extenderse hasta que se restaure. Ejecuta `sorokeep restore <contract-id> --entry <key-xdr> --keypair-env <var>` (o usa `--all`), y deja que el watch existente continúe; la restauración requiere una clave de firma y XLM para las tarifas de red.
+
 ### ¿Qué pasa con las alertas por correo electrónico?
 
-El correo electrónico aún no está implementado. La CLI rechazará `--type email` con un mensaje de error claro. Webhook y Slack son los canales admitidos hoy en día.
+Las alertas por correo electrónico son compatibles. Configura las credenciales SMTP (host/puerto/usuario/contraseña) en `~/.sorokeep/config.yaml` o mediante las variables de entorno correspondientes; los envíos por correo usan la misma cola de reintentos respaldada por base de datos que los demás canales. Consulta la [Referencia de Configuración](docs/config-reference.md) para conocer los nombres exactos de los campos.
+
+### ¿Cómo uso un endpoint RPC personalizado?
+
+Pasa `--rpc-url <url>` a `sorokeep watch` o `sorokeep daemon`, o define `rpcUrl` en `~/.sorokeep/config.yaml`. Un endpoint personalizado sustituye la URL RPC predeterminada de Testnet o Mainnet para ese comando.
+
+### ¿Puedo ejecutar un ciclo de monitoreo sin el demonio?
+
+Sí — `sorokeep check <contract-id> --fail-under <ledgers>` ejecuta un único ciclo de monitoreo puntual y sale con código 1 si alguna entrada rastreada está por debajo de ese TTL. Usa `--force` en CI cuando quieras reportar la salud del TTL sin hacer fallar el build.
+
+### ¿Cómo restauro una entrada archivada?
+
+Ejecuta `sorokeep restore <contract-id> --keypair-env STELLAR_SECRET_KEY --all` para restaurar todas las entradas rastreadas, o pasa `--entry <base64-xdr>` para restaurar una entrada específica. El comando requiere `--keypair` o `--keypair-env`.
+
+### ¿Cómo veo cuánto he gastado en extensiones?
+
+Ejecuta `sorokeep costs <contract-id>` para ver el total de extensiones, el costo total en XLM, un desglose por tipo de entrada y una proyección a 30 días. Usa `--period <days>` para cambiar la ventana de consulta o `--all` para el historial completo.
+
+### ¿Qué hace `sorokeep guard --dry-run`?
+
+Ejecuta `sorokeep guard <contract-id> --keypair S... --dry-run` para simular la transacción de extensión y ver la tarifa estimada sin enviar nada a la red. Esto es útil para verificar el costo antes de habilitar la extensión automática o realizar una extensión puntual.
 
 ## Hoja de Ruta
 
